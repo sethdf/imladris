@@ -10,7 +10,7 @@ tailscale_auth_key = "tskey-auth-xxxxx"
 # tailscale_hostname = "devbox"
 
 # Optional: Email for spot interruption notifications
-# notification_email = "you@example.com"
+notification_email = "your-email@example.com"
 
 # Spot instances (default: enabled for ~70% cost savings)
 # use_spot              = true
