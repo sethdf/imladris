@@ -58,15 +58,47 @@ ssh ubuntu@$(terraform output -raw public_ip)
 
 ## What's Installed
 
-The user-data script automatically installs:
-
+### Core Development
 - Docker + Docker Compose
-- AWS CLI v2
-- GitHub CLI (`gh`)
 - Node.js LTS
 - Python 3 + pip + venv
 - Zsh + Oh My Zsh
-- Common tools: git, curl, jq, htop, tmux, ripgrep, fd, bat
+- git, curl, jq, htop, tmux
+
+### Productivity Tools
+| Tool | Description | Alias |
+|------|-------------|-------|
+| `fzf` | Fuzzy finder (Ctrl-r for history) | - |
+| `zoxide` | Smarter cd that learns your dirs | `z` |
+| `direnv` | Auto-load .envrc per directory | - |
+| `lazygit` | Git TUI | `lg` |
+| `lazydocker` | Docker TUI | `ld` |
+| `delta` | Better git diffs (auto-configured) | - |
+| `mise` | Version manager (node/python/go) | - |
+| `eza` | Modern ls with git status | `ls`, `ll`, `lt` |
+| `bat` | Cat with syntax highlighting | `cat` |
+| `ripgrep` | Fast grep | `rg` |
+| `fd` | Fast find | `fd` |
+| `ncdu` | Interactive disk usage | `ncdu` |
+| `tldr` | Simplified man pages | `tldr` |
+
+### Cloud Provider CLIs
+| Tool | Description | Alias |
+|------|-------------|-------|
+| AWS CLI v2 | Amazon Web Services | `aws-whoami` |
+| AWS SSM Plugin | Session Manager support | - |
+| Azure CLI | Microsoft Azure | `az-whoami` |
+| Google Cloud CLI | GCP | `gcp-whoami` |
+
+### Windows / Microsoft 365 Admin
+| Tool | Description |
+|------|-------------|
+| PowerShell Core | Cross-platform PowerShell (`pwsh`) |
+| CLI for Microsoft 365 | M365 administration (`m365`) |
+| Microsoft.Graph | PowerShell module for Graph API |
+| Az | PowerShell module for Azure |
+| ExchangeOnlineManagement | Exchange Online admin |
+| MicrosoftTeams | Teams admin |
 
 ## VS Code Remote Setup
 
@@ -80,6 +112,31 @@ Host devbox
 ```
 
 Then in VS Code: `Remote-SSH: Connect to Host...` → `devbox`
+
+## Cloud Authentication
+
+```bash
+# AWS
+aws configure
+# or
+aws sso login --profile your-profile
+
+# Azure
+az login
+
+# GCP
+gcloud auth login
+gcloud config set project YOUR_PROJECT
+
+# Microsoft 365
+m365 login
+
+# PowerShell (Graph/Exchange/Teams)
+pwsh
+Connect-MgGraph -Scopes "User.Read.All"
+Connect-ExchangeOnline
+Connect-MicrosoftTeams
+```
 
 ## Cost Management
 
