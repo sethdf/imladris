@@ -129,8 +129,9 @@ npm install -g @pnp/cli-microsoft365
 # SYSTEM CONFIGURATION
 # =============================================================================
 
-# 23. Set hostname
+# 23. Set hostname and timezone
 hostnamectl set-hostname ${hostname}
+timedatectl set-timezone ${timezone}
 
 # 24. Configure sysctl for development
 cat >> /etc/sysctl.conf <<EOF
@@ -160,11 +161,126 @@ cat > /etc/gitconfig <<EOF
     colorMoved = default
 EOF
 
+# 26. Create shutdown warning script and timers
+cat > /usr/local/bin/shutdown-warning <<'SCRIPT'
+#!/bin/bash
+MINS=$1
+wall "⚠️  DEVBOX HIBERNATING IN $MINS MINUTES ⚠️
+Your session will be saved (hibernation preserves RAM state).
+To keep working: manually restart after 11pm, or stop the schedule."
+SCRIPT
+chmod +x /usr/local/bin/shutdown-warning
+
+# 15-minute warning timer (10:45pm)
+cat > /etc/systemd/system/shutdown-warning-15.service <<'SERVICE'
+[Unit]
+Description=Shutdown warning (15 minutes)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/shutdown-warning 15
+SERVICE
+
+cat > /etc/systemd/system/shutdown-warning-15.timer <<'TIMER'
+[Unit]
+Description=15-minute shutdown warning
+
+[Timer]
+OnCalendar=*-*-* 22:45:00
+Persistent=false
+
+[Install]
+WantedBy=timers.target
+TIMER
+
+# 5-minute warning timer (10:55pm)
+cat > /etc/systemd/system/shutdown-warning-5.service <<'SERVICE'
+[Unit]
+Description=Shutdown warning (5 minutes)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/shutdown-warning 5
+SERVICE
+
+cat > /etc/systemd/system/shutdown-warning-5.timer <<'TIMER'
+[Unit]
+Description=5-minute shutdown warning
+
+[Timer]
+OnCalendar=*-*-* 22:55:00
+Persistent=false
+
+[Install]
+WantedBy=timers.target
+TIMER
+
+systemctl daemon-reload
+systemctl enable --now shutdown-warning-15.timer
+systemctl enable --now shutdown-warning-5.timer
+
+# 27. Create spot interruption watcher
+cat > /usr/local/bin/spot-watcher <<'SCRIPT'
+#!/bin/bash
+# Polls EC2 metadata for spot interruption notices
+METADATA_URL="http://169.254.169.254/latest/meta-data/spot/instance-action"
+TOKEN_URL="http://169.254.169.254/latest/api/token"
+NOTIFIED=false
+
+while true; do
+    # Get IMDSv2 token
+    TOKEN=$(curl -s -X PUT "$TOKEN_URL" -H "X-aws-ec2-metadata-token-ttl-seconds: 60" 2>/dev/null)
+
+    # Check for spot interruption
+    RESPONSE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" -w "%{http_code}" -o /tmp/spot-action "$METADATA_URL" 2>/dev/null)
+
+    if [ "$RESPONSE" = "200" ] && [ "$NOTIFIED" = "false" ]; then
+        ACTION=$(cat /tmp/spot-action | jq -r '.action' 2>/dev/null)
+        TIME=$(cat /tmp/spot-action | jq -r '.time' 2>/dev/null)
+
+        wall "🚨 SPOT INTERRUPTION NOTICE 🚨
+Action: $ACTION
+Time: $TIME
+
+Your instance will hibernate in ~2 minutes.
+All RAM state will be saved - you can resume after restart."
+
+        NOTIFIED=true
+
+        # Also send to any tmux sessions
+        for session in $(tmux list-sessions -F '#{session_name}' 2>/dev/null); do
+            tmux display-message -t "$session" "🚨 SPOT INTERRUPTION - Hibernating in ~2 min"
+        done
+    fi
+
+    sleep 5
+done
+SCRIPT
+chmod +x /usr/local/bin/spot-watcher
+
+cat > /etc/systemd/system/spot-watcher.service <<'SERVICE'
+[Unit]
+Description=Spot interruption watcher
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/spot-watcher
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+
+systemctl daemon-reload
+systemctl enable --now spot-watcher
+
 # =============================================================================
 # USER ENVIRONMENT SETUP
 # =============================================================================
 
-# 26. Setup ubuntu user environment
+# 28. Setup ubuntu user environment
 sudo -u ubuntu bash <<'USEREOF'
 # Install Oh My Zsh
 sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended

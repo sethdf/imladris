@@ -155,6 +155,7 @@ resource "aws_instance" "devbox" {
 
   user_data = templatefile("${path.module}/scripts/user-data.sh", {
     hostname = var.hostname
+    timezone = var.schedule_timezone
   })
 
   # Don't recreate instance if user-data changes
