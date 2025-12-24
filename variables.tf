@@ -99,3 +99,77 @@ variable "tailscale_hostname" {
   type        = string
   default     = "devbox"
 }
+
+variable "git_crypt_key_b64" {
+  description = "Base64-encoded git-crypt key for claude-sessions-config repo"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "github_ssh_key_home_b64" {
+  description = "Base64-encoded SSH private key for GitHub (home account - sethdf)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "github_ssh_key_work_b64" {
+  description = "Base64-encoded SSH private key for GitHub (work account - sfoleybuxton)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+# AWS SSO Configuration for home account (Bedrock access)
+variable "aws_sso_start_url" {
+  description = "AWS SSO start URL for home account"
+  type        = string
+  default     = ""
+}
+
+variable "aws_sso_account_id" {
+  description = "AWS account ID for home account"
+  type        = string
+  default     = ""
+}
+
+variable "aws_sso_role_name" {
+  description = "AWS SSO role name for home account"
+  type        = string
+  default     = "AdministratorAccess"
+}
+
+# Git identity for home account
+variable "git_user_name_home" {
+  description = "Git user.name for home account"
+  type        = string
+  default     = "Seth"
+}
+
+variable "git_user_email_home" {
+  description = "Git user.email for home account"
+  type        = string
+  default     = "your-email@example.com"
+}
+
+# Git identity for work account
+variable "git_user_name_work" {
+  description = "Git user.name for work account"
+  type        = string
+  default     = "Your Name"
+}
+
+variable "git_user_email_work" {
+  description = "Git user.email for work account"
+  type        = string
+  default     = "your-work-email@example.com"
+}
+
+# GitHub CLI authentication
+variable "github_token" {
+  description = "GitHub personal access token for gh CLI authentication"
+  type        = string
+  sensitive   = true
+  default     = ""
+}

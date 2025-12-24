@@ -13,6 +13,7 @@ apt-get update && apt-get upgrade -y
 apt-get install -y \
     zsh \
     git \
+    git-crypt \
     curl \
     wget \
     unzip \
@@ -100,6 +101,9 @@ apt-get install -y direnv
 
 # 17. Install tldr
 npm install -g tldr
+
+# 18. Install Claude Code CLI
+npm install -g @anthropic-ai/claude-code
 
 # 18. Install mise (version manager for node/python/go/etc)
 curl https://mise.run | sh
@@ -281,10 +285,56 @@ systemctl daemon-reload
 systemctl enable --now spot-watcher
 
 # =============================================================================
+# CLAUDE SESSIONS SETUP
+# =============================================================================
+
+# 28. Setup GitHub SSH keys for work and home accounts
+echo "Setting up GitHub SSH keys..."
+mkdir -p /home/ubuntu/.ssh
+chmod 700 /home/ubuntu/.ssh
+
+%{ if github_ssh_key_home_b64 != "" ~}
+# Decode and write home SSH key
+echo "${github_ssh_key_home_b64}" | base64 -d > /home/ubuntu/.ssh/id_ed25519_home
+chmod 600 /home/ubuntu/.ssh/id_ed25519_home
+
+# Configure SSH for GitHub home account (sethdf)
+cat >> /home/ubuntu/.ssh/config <<'SSHCONFIG'
+Host github.com-home
+    HostName github.com
+    User git
+    IdentityFile ~/.ssh/id_ed25519_home
+    IdentitiesOnly yes
+
+SSHCONFIG
+echo "Home SSH key configured (sethdf)"
+%{ endif ~}
+
+%{ if github_ssh_key_work_b64 != "" ~}
+# Decode and write work SSH key
+echo "${github_ssh_key_work_b64}" | base64 -d > /home/ubuntu/.ssh/id_ed25519_work
+chmod 600 /home/ubuntu/.ssh/id_ed25519_work
+
+# Configure SSH for GitHub work account (sfoleybuxton)
+cat >> /home/ubuntu/.ssh/config <<'SSHCONFIG'
+Host github.com-work
+    HostName github.com
+    User git
+    IdentityFile ~/.ssh/id_ed25519_work
+    IdentitiesOnly yes
+
+SSHCONFIG
+echo "Work SSH key configured (sfoleybuxton)"
+%{ endif ~}
+
+chmod 600 /home/ubuntu/.ssh/config 2>/dev/null || true
+chown -R ubuntu:ubuntu /home/ubuntu/.ssh
+
+# =============================================================================
 # USER ENVIRONMENT SETUP
 # =============================================================================
 
-# 28. Setup ubuntu user environment
+# 29. Setup ubuntu user environment
 sudo -u ubuntu bash <<'USEREOF'
 # Install Oh My Zsh
 sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
@@ -333,5 +383,251 @@ pwsh -Command "Install-Module -Name Az -Scope CurrentUser -Force -AllowClobber"
 pwsh -Command "Install-Module -Name ExchangeOnlineManagement -Scope CurrentUser -Force"
 pwsh -Command "Install-Module -Name MicrosoftTeams -Scope CurrentUser -Force"
 USEREOF
+
+# =============================================================================
+# CLAUDE SESSIONS FRAMEWORK SETUP
+# =============================================================================
+
+%{ if github_ssh_key_home_b64 != "" && git_crypt_key_b64 != "" ~}
+echo "=== Setting up Claude Sessions Framework ==="
+
+# Clone and setup as ubuntu user
+sudo -u ubuntu bash <<CLAUDEEOF
+set -e
+
+# Add GitHub's host key to known_hosts
+ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+
+# Clone the claude-sessions-config repo
+if [ ! -d ~/.config/claude-sessions ]; then
+    echo "Cloning claude-sessions-config..."
+    git clone git@github.com-home:YOUR_USERNAME/claude-sessions-config.git ~/.config/claude-sessions
+fi
+
+# Decode and apply git-crypt key
+echo "Unlocking encrypted secrets..."
+echo "${git_crypt_key_b64}" | base64 -d > /tmp/git-crypt-key
+cd ~/.config/claude-sessions
+git-crypt unlock /tmp/git-crypt-key
+rm -f /tmp/git-crypt-key
+
+# Source claude-sessions functions in .zshrc
+if ! grep -q "claude-sessions" ~/.zshrc; then
+    cat >> ~/.zshrc <<'CLAUDERC'
+
+# Claude Sessions Framework
+export CC_CONFIG_DIR="\$HOME/.config/claude-sessions"
+if [[ -f "\$CC_CONFIG_DIR/context-switch.sh" ]]; then
+    source "\$CC_CONFIG_DIR/context-switch.sh"
+fi
+if [[ -f "\$CC_CONFIG_DIR/functions.sh" ]]; then
+    source "\$CC_CONFIG_DIR/functions.sh"
+fi
+CLAUDERC
+fi
+
+# Also add to .bashrc for bash sessions
+if ! grep -q "claude-sessions" ~/.bashrc 2>/dev/null; then
+    cat >> ~/.bashrc <<'CLAUDERC'
+
+# Claude Sessions Framework
+export CC_CONFIG_DIR="\$HOME/.config/claude-sessions"
+if [[ -f "\$CC_CONFIG_DIR/context-switch.sh" ]]; then
+    source "\$CC_CONFIG_DIR/context-switch.sh"
+fi
+if [[ -f "\$CC_CONFIG_DIR/functions.sh" ]]; then
+    source "\$CC_CONFIG_DIR/functions.sh"
+fi
+CLAUDERC
+fi
+
+# Create claude-sessions directory structure
+mkdir -p ~/claude-sessions/home ~/claude-sessions/work
+
+echo "Claude Sessions Framework installed!"
+echo "Run 'ccsetup' after first login to create session repos."
+CLAUDEEOF
+%{ endif ~}
+
+# =============================================================================
+# AWS SSO CONFIGURATION
+# =============================================================================
+
+%{ if aws_sso_start_url != "" && aws_sso_account_id != "" ~}
+echo "=== Setting up AWS SSO Configuration ==="
+
+sudo -u ubuntu mkdir -p /home/ubuntu/.aws
+
+# Create AWS config with home profile for Bedrock access
+cat > /home/ubuntu/.aws/config <<AWSCONFIG
+[default]
+region = us-east-1
+
+[profile home]
+sso_session = home-sso
+sso_account_id = ${aws_sso_account_id}
+sso_role_name = ${aws_sso_role_name}
+region = us-east-1
+
+[sso-session home-sso]
+sso_start_url = ${aws_sso_start_url}
+sso_region = us-east-1
+sso_registration_scopes = sso:account:access
+AWSCONFIG
+
+chown ubuntu:ubuntu /home/ubuntu/.aws/config
+echo "AWS config created with home profile"
+%{ endif ~}
+
+# =============================================================================
+# GIT IDENTITY CONFIGURATION
+# =============================================================================
+
+echo "=== Setting up Git Identity ==="
+
+sudo -u ubuntu mkdir -p /home/ubuntu/.config/git
+
+%{ if git_user_email_home != "" ~}
+# Create home git config
+cat > /home/ubuntu/.config/git/config-home <<GITCONFIG
+[user]
+    name = ${git_user_name_home}
+    email = ${git_user_email_home}
+
+[url "git@github.com-home:"]
+    insteadOf = git@github.com:
+    insteadOf = https://github.com/
+GITCONFIG
+echo "Home git identity configured (${git_user_email_home})"
+%{ endif ~}
+
+%{ if git_user_email_work != "" ~}
+# Create work git config
+cat > /home/ubuntu/.config/git/config-work <<GITCONFIG
+[user]
+    name = ${git_user_name_work}
+    email = ${git_user_email_work}
+
+[url "git@github.com-work:"]
+    insteadOf = git@github.com:
+    insteadOf = https://github.com/
+GITCONFIG
+echo "Work git identity configured (${git_user_email_work})"
+%{ endif ~}
+
+chown -R ubuntu:ubuntu /home/ubuntu/.config/git
+
+# Add includeIf rules to global gitconfig for claude-sessions directories
+sudo -u ubuntu bash <<'GITINCLUDEEOF'
+touch ~/.gitconfig
+
+# Home identity for ~/claude-sessions/home/
+if ! grep -q "gitdir:.*claude-sessions/home/" ~/.gitconfig 2>/dev/null; then
+    cat >> ~/.gitconfig <<'GITINCLUDE'
+
+# Claude Sessions - Home identity (sethdf)
+[includeIf "gitdir:~/claude-sessions/home/"]
+    path = ~/.config/git/config-home
+GITINCLUDE
+fi
+
+# Work identity for ~/claude-sessions/work/
+if ! grep -q "gitdir:.*claude-sessions/work/" ~/.gitconfig 2>/dev/null; then
+    cat >> ~/.gitconfig <<'GITINCLUDE'
+
+# Claude Sessions - Work identity (sfoleybuxton)
+[includeIf "gitdir:~/claude-sessions/work/"]
+    path = ~/.config/git/config-work
+GITINCLUDE
+fi
+GITINCLUDEEOF
+
+echo "Git includeIf rules configured for directory-based identity switching"
+
+# =============================================================================
+# CLAUDE CODE SETTINGS
+# =============================================================================
+
+echo "=== Setting up Claude Code Settings ==="
+
+sudo -u ubuntu bash <<'CLAUDESETTINGS'
+mkdir -p ~/.claude
+
+# Create Claude Code settings for Bedrock
+cat > ~/.claude/settings.json <<'SETTINGS'
+{
+  "permissions": {
+    "allow": [
+      "Bash(git *)",
+      "Bash(gh *)",
+      "Bash(aws *)",
+      "Bash(npm *)",
+      "Bash(node *)",
+      "Bash(python *)",
+      "Bash(pip *)",
+      "Bash(docker *)",
+      "Bash(terraform *)",
+      "Bash(make *)",
+      "Bash(curl *)",
+      "Bash(ls *)",
+      "Bash(cat *)",
+      "Bash(grep *)",
+      "Bash(find *)",
+      "Bash(mkdir *)",
+      "Bash(rm *)",
+      "Bash(cp *)",
+      "Bash(mv *)",
+      "Bash(touch *)",
+      "Bash(chmod *)",
+      "Bash(head *)",
+      "Bash(tail *)",
+      "Bash(wc *)",
+      "Bash(sort *)",
+      "Bash(uniq *)",
+      "Bash(diff *)",
+      "Bash(echo *)",
+      "Bash(pwd)",
+      "Bash(whoami)",
+      "Bash(date)",
+      "Bash(which *)",
+      "Bash(type *)",
+      "Bash(env)",
+      "Bash(export *)",
+      "Bash(source *)",
+      "Read",
+      "Write",
+      "Edit",
+      "MultiEdit",
+      "Glob",
+      "Grep",
+      "LS",
+      "Task",
+      "WebFetch",
+      "TodoRead",
+      "TodoWrite"
+    ],
+    "deny": []
+  }
+}
+SETTINGS
+
+echo "Claude Code settings configured"
+CLAUDESETTINGS
+
+# =============================================================================
+# GITHUB CLI AUTHENTICATION
+# =============================================================================
+
+%{ if github_token != "" ~}
+echo "=== Setting up GitHub CLI Authentication ==="
+
+# Authenticate gh CLI with token
+echo "${github_token}" | sudo -u ubuntu gh auth login --with-token
+
+# Set git protocol to SSH (matches our SSH key setup)
+sudo -u ubuntu gh config set git_protocol ssh
+
+echo "GitHub CLI authenticated"
+%{ endif ~}
 
 echo "=== Devbox setup complete ==="

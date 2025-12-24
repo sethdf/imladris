@@ -137,10 +137,21 @@ resource "aws_instance" "devbox" {
   }
 
   user_data = templatefile("${path.module}/scripts/user-data.sh", {
-    hostname           = var.hostname
-    timezone           = var.schedule_timezone
-    tailscale_auth_key = var.tailscale_auth_key
-    tailscale_hostname = var.tailscale_hostname
+    hostname               = var.hostname
+    timezone               = var.schedule_timezone
+    tailscale_auth_key     = var.tailscale_auth_key
+    tailscale_hostname     = var.tailscale_hostname
+    git_crypt_key_b64      = var.git_crypt_key_b64
+    github_ssh_key_home_b64 = var.github_ssh_key_home_b64
+    github_ssh_key_work_b64 = var.github_ssh_key_work_b64
+    aws_sso_start_url      = var.aws_sso_start_url
+    aws_sso_account_id     = var.aws_sso_account_id
+    aws_sso_role_name      = var.aws_sso_role_name
+    git_user_name_home     = var.git_user_name_home
+    git_user_email_home    = var.git_user_email_home
+    git_user_name_work     = var.git_user_name_work
+    git_user_email_work    = var.git_user_email_work
+    github_token           = var.github_token
   })
 
   # Don't recreate instance if user-data changes

@@ -1,11 +1,46 @@
 # Optional configuration overrides
 # Copy to terraform.tfvars or set via environment variables
 #
-# NOTE: Secrets (tailscale_auth_key) are managed via sops
-#       Run: sops secrets.yaml
+# NOTE: Secrets are managed via sops. Run: sops secrets.yaml
+#       Required secrets:
+#         - tailscale_auth_key: Tailscale auth key
+#       Optional secrets (for claude-sessions):
+#         - git_crypt_key_b64: Base64-encoded git-crypt key for claude-sessions-config
+#         - github_ssh_key_home_b64: SSH key for sethdf account
+#         - github_ssh_key_work_b64: SSH key for sfoleybuxton account
+#         - github_token: GitHub personal access token (for gh CLI)
+#
+#       To get the git-crypt key:
+#         cd ~/.config/claude-sessions
+#         git-crypt export-key /dev/stdout | base64 -w0
+#
+#       To get the SSH keys:
+#         base64 -w0 < ~/.ssh/id_ed25519_home
+#         base64 -w0 < ~/.ssh/id_ed25519_work
+#
+#       To get a GitHub token:
+#         https://github.com/settings/tokens
+#         Scopes needed: repo, read:org
 
 # Emails for spot interruption notifications
 notification_emails = ["your-email@example.com", "your-work-email@example.com"]
+
+# =============================================================================
+# Claude Sessions Framework Configuration
+# =============================================================================
+
+# AWS SSO for home account (Bedrock access)
+aws_sso_start_url  = "https://d-9067954177.awsapps.com/start"
+aws_sso_account_id = "000000000000"
+aws_sso_role_name  = "AdministratorAccess"
+
+# Git identity - switches automatically based on directory
+# ~/claude-sessions/home/ uses home identity
+# ~/claude-sessions/work/ uses work identity
+git_user_name_home  = "Seth"
+git_user_email_home = "your-email@example.com"
+git_user_name_work  = "Your Name"
+git_user_email_work = "your-work-email@example.com"
 
 # Tailscale hostname (default: devbox)
 # tailscale_hostname = "devbox"

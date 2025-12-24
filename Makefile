@@ -41,6 +41,17 @@ setup: check-deps
 	@if [ ! -f $(SECRETS_FILE) ]; then \
 		echo "# Edit this file with: sops secrets.yaml" > secrets.yaml.tmp; \
 		echo "tailscale_auth_key: \"tskey-auth-REPLACE-ME\"" >> secrets.yaml.tmp; \
+		echo "" >> secrets.yaml.tmp; \
+		echo "# Claude Sessions Framework secrets" >> secrets.yaml.tmp; \
+		echo "# Get git-crypt key: cd ~/.config/claude-sessions && git-crypt export-key /dev/stdout | base64 -w0" >> secrets.yaml.tmp; \
+		echo "git_crypt_key_b64: \"\"" >> secrets.yaml.tmp; \
+		echo "" >> secrets.yaml.tmp; \
+		echo "# GitHub SSH keys (base64 -w0 < ~/.ssh/id_ed25519_home)" >> secrets.yaml.tmp; \
+		echo "github_ssh_key_home_b64: \"\"" >> secrets.yaml.tmp; \
+		echo "github_ssh_key_work_b64: \"\"" >> secrets.yaml.tmp; \
+		echo "" >> secrets.yaml.tmp; \
+		echo "# GitHub token: https://github.com/settings/tokens (needs repo, read:org scopes)" >> secrets.yaml.tmp; \
+		echo "github_token: \"\"" >> secrets.yaml.tmp; \
 		sops -e secrets.yaml.tmp > $(SECRETS_FILE); \
 		rm secrets.yaml.tmp; \
 		echo "Created encrypted secrets.yaml - edit with: sops secrets.yaml"; \
@@ -101,6 +112,10 @@ lock:
 decrypt-secrets:
 	@if [ -f $(SECRETS_FILE) ]; then \
 		echo "tailscale_auth_key = \"$$(sops -d --extract '[\"tailscale_auth_key\"]' $(SECRETS_FILE))\"" > .secrets.auto.tfvars; \
+		echo "git_crypt_key_b64 = \"$$(sops -d --extract '[\"git_crypt_key_b64\"]' $(SECRETS_FILE) 2>/dev/null || echo '')\"" >> .secrets.auto.tfvars; \
+		echo "github_ssh_key_home_b64 = \"$$(sops -d --extract '[\"github_ssh_key_home_b64\"]' $(SECRETS_FILE) 2>/dev/null || echo '')\"" >> .secrets.auto.tfvars; \
+		echo "github_ssh_key_work_b64 = \"$$(sops -d --extract '[\"github_ssh_key_work_b64\"]' $(SECRETS_FILE) 2>/dev/null || echo '')\"" >> .secrets.auto.tfvars; \
+		echo "github_token = \"$$(sops -d --extract '[\"github_token\"]' $(SECRETS_FILE) 2>/dev/null || echo '')\"" >> .secrets.auto.tfvars; \
 	fi
 
 # Export keys for backup (SAVE THIS OUTPUT!)
