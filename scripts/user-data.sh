@@ -1,99 +1,221 @@
 #!/bin/bash
-set -euo pipefail
+# Devbox user-data script with robust error handling
+# Does NOT use set -e - handles errors explicitly per step
 
 # Log output for debugging
 exec > >(tee /var/log/user-data.log | logger -t user-data -s 2>/dev/console) 2>&1
 
-echo "=== Starting devbox setup ==="
+CHECKPOINT_FILE="/var/log/user-data-progress"
+FAILED_STEPS=""
 
-# Architecture detection (from Terraform variable)
-ARCH="${architecture}"
-echo "Architecture: $ARCH"
+# =============================================================================
+# Helper Functions
+# =============================================================================
 
-# Map architecture to various naming conventions used by different tools
-if [ "$ARCH" = "arm64" ]; then
-    AWS_ARCH="aarch64"
-    LAZYGIT_ARCH="arm64"
-    LAZYDOCKER_ARCH="arm64"
-    HIMALAYA_ARCH="aarch64-linux"
-else
-    AWS_ARCH="x86_64"
-    LAZYGIT_ARCH="x86_64"
-    LAZYDOCKER_ARCH="x86_64"
-    HIMALAYA_ARCH="x86_64-linux"
-fi
+log() { echo "[$(date '+%H:%M:%S')] $*"; }
+log_success() { log "✓ $*"; }
+log_error() { log "✗ $*"; }
+log_skip() { log "○ $* (skipped - already done)"; }
 
-# 1. System update and core tools
-apt-get update && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y
-apt-get install -y zsh git git-crypt curl wget unzip jq htop tmux ripgrep fd-find bat ncdu \
-    software-properties-common build-essential ca-certificates gnupg lsb-release fzf direnv \
-    cryptsetup eza
+# Check if a step was already completed
+step_done() {
+    grep -q "^$1$" "$CHECKPOINT_FILE" 2>/dev/null
+}
 
-# 2. Docker
-curl -fsSL https://get.docker.com | sh
-usermod -aG docker ubuntu
-apt-get install -y docker-compose-plugin
+# Mark a step as completed
+mark_done() {
+    echo "$1" >> "$CHECKPOINT_FILE"
+}
 
-# 3. Tailscale
-curl -fsSL https://tailscale.com/install.sh | sh
+# Run a step with error handling
+# Usage: run_step "step_name" "description" command args...
+run_step() {
+    local step_name="$1"
+    local description="$2"
+    shift 2
 
-# Remove old devbox devices from tailnet before registering
-echo "Cleaning up old Tailscale devices matching '${tailscale_hostname}'..."
-OLD_DEVICES=$(curl -s -u "${tailscale_api_key}:" \
-  "https://api.tailscale.com/api/v2/tailnet/-/devices" \
-  | jq -r '.devices[] | select(.hostname | startswith("${tailscale_hostname}")) | .id')
-for DEVICE_ID in $OLD_DEVICES; do
-  echo "Deleting device: $DEVICE_ID"
-  curl -s -X DELETE -u "${tailscale_api_key}:" \
-    "https://api.tailscale.com/api/v2/device/$DEVICE_ID"
-done
+    if step_done "$step_name"; then
+        log_skip "$description"
+        return 0
+    fi
 
-tailscale up --auth-key=${tailscale_auth_key} --hostname=${tailscale_hostname} --ssh
+    log "Starting: $description"
+    if "$@"; then
+        mark_done "$step_name"
+        log_success "$description"
+        return 0
+    else
+        log_error "$description (exit code: $?)"
+        FAILED_STEPS="$FAILED_STEPS $step_name"
+        return 1
+    fi
+}
 
-# 4. AWS CLI
-curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$${AWS_ARCH}.zip" -o /tmp/awscliv2.zip
-unzip -q /tmp/awscliv2.zip -d /tmp && /tmp/aws/install && rm -rf /tmp/aws /tmp/awscliv2.zip
+# =============================================================================
+# Setup Steps (each is a function that can fail independently)
+# =============================================================================
 
-# 5. GitHub CLI
-curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
-chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list
-apt-get update && apt-get install -y gh
+setup_architecture() {
+    # Architecture detection (from Terraform variable)
+    ARCH="${architecture}"
+    log "Architecture: $ARCH"
 
-# 6. Node.js LTS
-curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
-apt-get install -y nodejs
+    if [ "$ARCH" = "arm64" ]; then
+        export AWS_ARCH="aarch64"
+        export LAZYGIT_ARCH="arm64"
+        export LAZYDOCKER_ARCH="arm64"
+    else
+        export AWS_ARCH="x86_64"
+        export LAZYGIT_ARCH="x86_64"
+        export LAZYDOCKER_ARCH="x86_64"
+    fi
+    return 0
+}
 
-# 7. Python
-apt-get install -y python3-pip python3-venv python3-full
-pip3 install --break-system-packages gcalcli
+setup_system_packages() {
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get upgrade -y
+    apt-get install -y \
+        zsh git git-crypt curl wget unzip jq htop tmux ripgrep fd-find bat ncdu \
+        software-properties-common build-essential ca-certificates gnupg lsb-release \
+        fzf direnv cryptsetup eza
+}
 
-# 8. CLI tools via npm
-npm install -g tldr @anthropic-ai/claude-code @bitwarden/cli @pnp/cli-microsoft365
+setup_docker() {
+    if command -v docker &>/dev/null; then
+        log "Docker already installed"
+        return 0
+    fi
+    curl -fsSL https://get.docker.com | sh
+    usermod -aG docker ubuntu
+    apt-get install -y docker-compose-plugin
+}
 
-# 9. Modern CLI tools
-LAZYGIT_VERSION=$(curl -s "https://api.github.com/repos/jesseduffield/lazygit/releases/latest" | jq -r '.tag_name' | sed 's/v//')
-curl -fsSL "https://github.com/jesseduffield/lazygit/releases/download/v$${LAZYGIT_VERSION}/lazygit_$${LAZYGIT_VERSION}_Linux_$${LAZYGIT_ARCH}.tar.gz" | tar xz -C /usr/local/bin
-LAZYDOCKER_VERSION=$(curl -s "https://api.github.com/repos/jesseduffield/lazydocker/releases/latest" | jq -r '.tag_name' | sed 's/v//')
-curl -fsSL "https://github.com/jesseduffield/lazydocker/releases/download/v$${LAZYDOCKER_VERSION}/lazydocker_$${LAZYDOCKER_VERSION}_Linux_$${LAZYDOCKER_ARCH}.tar.gz" | tar xz -C /usr/local/bin
-curl -sSfL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | sh && mv /root/.local/bin/zoxide /usr/local/bin/
-curl https://mise.run | sh && mv /root/.local/bin/mise /usr/local/bin/
-HIMALAYA_VERSION=$(curl -s "https://api.github.com/repos/pimalaya/himalaya/releases/latest" | jq -r '.tag_name' | sed 's/v//')
-curl -fsSL "https://github.com/pimalaya/himalaya/releases/download/v$${HIMALAYA_VERSION}/himalaya.$${HIMALAYA_ARCH}.tgz" | tar xz -C /usr/local/bin
+setup_tailscale() {
+    if command -v tailscale &>/dev/null; then
+        log "Tailscale already installed"
+    else
+        curl -fsSL https://tailscale.com/install.sh | sh
+    fi
 
-# 10. Cloud CLIs
-curl -sL https://aka.ms/InstallAzureCLIDeb | bash
-curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
-echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | tee /etc/apt/sources.list.d/google-cloud-sdk.list
-apt-get update && apt-get install -y google-cloud-cli
+    # Remove old devbox devices from tailnet before registering
+    log "Cleaning up old Tailscale devices matching '${tailscale_hostname}'..."
+    OLD_DEVICES=$(curl -s -u "${tailscale_api_key}:" \
+        "https://api.tailscale.com/api/v2/tailnet/-/devices" \
+        | jq -r '.devices[] | select(.hostname | startswith("${tailscale_hostname}")) | .id' 2>/dev/null || true)
 
-# 11. System config
-hostnamectl set-hostname ${hostname}
-timedatectl set-timezone ${timezone}
-echo "fs.inotify.max_user_watches=524288" >> /etc/sysctl.conf && sysctl -p
+    for DEVICE_ID in $OLD_DEVICES; do
+        log "Deleting device: $DEVICE_ID"
+        curl -s -X DELETE -u "${tailscale_api_key}:" \
+            "https://api.tailscale.com/api/v2/device/$DEVICE_ID" || true
+    done
 
-# 12. Git delta
-cat > /etc/gitconfig <<'GITCFG'
+    tailscale up --auth-key=${tailscale_auth_key} --hostname=${tailscale_hostname} --ssh
+}
+
+setup_aws_cli() {
+    if command -v aws &>/dev/null; then
+        log "AWS CLI already installed"
+        return 0
+    fi
+    curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$${AWS_ARCH}.zip" -o /tmp/awscliv2.zip
+    unzip -q /tmp/awscliv2.zip -d /tmp
+    /tmp/aws/install
+    rm -rf /tmp/aws /tmp/awscliv2.zip
+}
+
+setup_github_cli() {
+    if command -v gh &>/dev/null; then
+        log "GitHub CLI already installed"
+        return 0
+    fi
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+    chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list
+    apt-get update
+    apt-get install -y gh
+}
+
+setup_nodejs() {
+    if command -v node &>/dev/null; then
+        log "Node.js already installed"
+        return 0
+    fi
+    curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+    apt-get install -y nodejs
+}
+
+setup_python() {
+    apt-get install -y python3-pip python3-venv python3-full
+    pip3 install --break-system-packages gcalcli || log "gcalcli install failed (non-fatal)"
+}
+
+setup_npm_packages() {
+    # Essential CLI tools - LifeMaestro's install.sh will handle bw and claude
+    npm install -g tldr @pnp/cli-microsoft365 || log "Some npm packages failed (non-fatal)"
+}
+
+setup_modern_cli_tools() {
+    # lazygit
+    if ! command -v lazygit &>/dev/null; then
+        LAZYGIT_VERSION=$(curl -s "https://api.github.com/repos/jesseduffield/lazygit/releases/latest" | jq -r '.tag_name' | sed 's/v//')
+        curl -fsSL "https://github.com/jesseduffield/lazygit/releases/download/v$${LAZYGIT_VERSION}/lazygit_$${LAZYGIT_VERSION}_Linux_$${LAZYGIT_ARCH}.tar.gz" | tar xz -C /usr/local/bin
+        log "lazygit installed"
+    fi
+
+    # lazydocker
+    if ! command -v lazydocker &>/dev/null; then
+        LAZYDOCKER_VERSION=$(curl -s "https://api.github.com/repos/jesseduffield/lazydocker/releases/latest" | jq -r '.tag_name' | sed 's/v//')
+        curl -fsSL "https://github.com/jesseduffield/lazydocker/releases/download/v$${LAZYDOCKER_VERSION}/lazydocker_$${LAZYDOCKER_VERSION}_Linux_$${LAZYDOCKER_ARCH}.tar.gz" | tar xz -C /usr/local/bin
+        log "lazydocker installed"
+    fi
+
+    # zoxide
+    if ! command -v zoxide &>/dev/null; then
+        curl -sSfL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | sh
+        mv /root/.local/bin/zoxide /usr/local/bin/ 2>/dev/null || true
+        log "zoxide installed"
+    fi
+
+    # mise
+    if ! command -v mise &>/dev/null; then
+        curl https://mise.run | sh
+        mv /root/.local/bin/mise /usr/local/bin/ 2>/dev/null || true
+        log "mise installed"
+    fi
+
+    return 0
+}
+
+setup_cloud_clis() {
+    # Azure CLI
+    if ! command -v az &>/dev/null; then
+        curl -sL https://aka.ms/InstallAzureCLIDeb | bash || log "Azure CLI install failed (non-fatal)"
+    fi
+
+    # Google Cloud CLI
+    if ! command -v gcloud &>/dev/null; then
+        curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
+        echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | tee /etc/apt/sources.list.d/google-cloud-sdk.list
+        apt-get update
+        apt-get install -y google-cloud-cli || log "GCloud CLI install failed (non-fatal)"
+    fi
+
+    return 0
+}
+
+setup_system_config() {
+    hostnamectl set-hostname ${hostname}
+    timedatectl set-timezone ${timezone}
+
+    if ! grep -q "fs.inotify.max_user_watches" /etc/sysctl.conf; then
+        echo "fs.inotify.max_user_watches=524288" >> /etc/sysctl.conf
+        sysctl -p
+    fi
+}
+
+setup_git_delta() {
+    cat > /etc/gitconfig <<'GITCFG'
 [core]
     pager = delta
 [delta]
@@ -101,9 +223,10 @@ cat > /etc/gitconfig <<'GITCFG'
     side-by-side = true
     line-numbers = true
 GITCFG
+}
 
-# 13. Spot watcher service
-cat > /usr/local/bin/spot-watcher <<'SPOTWATCHER'
+setup_spot_watcher() {
+    cat > /usr/local/bin/spot-watcher <<'SPOTWATCHER'
 #!/bin/bash
 TOKEN_URL="http://169.254.169.254/latest/api/token"
 METADATA_URL="http://169.254.169.254/latest/meta-data/spot/instance-action"
@@ -118,9 +241,9 @@ while true; do
     sleep 5
 done
 SPOTWATCHER
-chmod +x /usr/local/bin/spot-watcher
+    chmod +x /usr/local/bin/spot-watcher
 
-cat > /etc/systemd/system/spot-watcher.service <<'SPOTSERVICE'
+    cat > /etc/systemd/system/spot-watcher.service <<'SPOTSERVICE'
 [Unit]
 Description=Spot interruption watcher
 After=network.target
@@ -131,41 +254,66 @@ Restart=always
 [Install]
 WantedBy=multi-user.target
 SPOTSERVICE
-systemctl daemon-reload && systemctl enable --now spot-watcher
+    systemctl daemon-reload
+    systemctl enable --now spot-watcher
+}
 
-# 14. Download bootstrap scripts from GitHub
-SCRIPTS_BASE="https://raw.githubusercontent.com/${github_username}/aws-devbox/master/scripts"
-mkdir -p /home/ubuntu/bin
-curl -fsSL "$SCRIPTS_BASE/bw-unlock.sh" -o /home/ubuntu/bin/bw-unlock
-curl -fsSL "$SCRIPTS_BASE/devbox-init.sh" -o /home/ubuntu/bin/devbox-init
-curl -fsSL "$SCRIPTS_BASE/devbox-check.sh" -o /home/ubuntu/bin/devbox-check
-chmod +x /home/ubuntu/bin/bw-unlock /home/ubuntu/bin/devbox-init /home/ubuntu/bin/devbox-check
-chown -R ubuntu:ubuntu /home/ubuntu/bin
+setup_bootstrap_scripts() {
+    SCRIPTS_BASE="https://raw.githubusercontent.com/${github_username}/aws-devbox/master/scripts"
+    mkdir -p /home/ubuntu/bin
 
-# 15. User environment
-sudo -u ubuntu bash <<'USERSETUP'
-sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
-sudo chsh -s $(which zsh) ubuntu
-mkdir -p ~/code ~/projects ~/.local/bin ~/.claude
-cat >> ~/.zshrc <<'ZSHRC'
+    curl -fsSL "$SCRIPTS_BASE/bw-unlock.sh" -o /home/ubuntu/bin/bw-unlock || log "Failed to download bw-unlock"
+    curl -fsSL "$SCRIPTS_BASE/devbox-init.sh" -o /home/ubuntu/bin/devbox-init || log "Failed to download devbox-init"
+    curl -fsSL "$SCRIPTS_BASE/devbox-check.sh" -o /home/ubuntu/bin/devbox-check || log "Failed to download devbox-check"
+
+    chmod +x /home/ubuntu/bin/bw-unlock /home/ubuntu/bin/devbox-init /home/ubuntu/bin/devbox-check 2>/dev/null || true
+    chown -R ubuntu:ubuntu /home/ubuntu/bin
+}
+
+setup_user_environment() {
+    sudo -u ubuntu bash <<'USERSETUP'
+# Oh My Zsh
+if [[ ! -d ~/.oh-my-zsh ]]; then
+    sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+fi
+
+# Set default shell to zsh
+sudo chsh -s $(which zsh) ubuntu 2>/dev/null || true
+
+# Create directories
+mkdir -p ~/code ~/projects ~/.local/bin ~/.claude ~/.claude/rules
+
+# Add to zshrc if not already present
+if ! grep -q "DEVBOX_SETUP" ~/.zshrc 2>/dev/null; then
+    cat >> ~/.zshrc <<'ZSHRC'
+# DEVBOX_SETUP
 command -v mise &>/dev/null && eval "$(mise activate zsh)"
 command -v zoxide &>/dev/null && eval "$(zoxide init zsh)"
 command -v direnv &>/dev/null && eval "$(direnv hook zsh)"
-export PATH="$HOME/bin:$PATH"
+export PATH="$HOME/bin:$HOME/.local/bin:$PATH"
 alias ls='eza' ll='eza -la' lg='lazygit' ld='lazydocker'
 alias unlock='source ~/bin/bw-unlock' init='~/bin/devbox-init' check='~/bin/devbox-check'
 ZSHRC
-cat >> ~/.bashrc <<'BASHRC'
+fi
+
+# Add to bashrc if not already present
+if ! grep -q "DEVBOX_SETUP" ~/.bashrc 2>/dev/null; then
+    cat >> ~/.bashrc <<'BASHRC'
+# DEVBOX_SETUP
 command -v zoxide &>/dev/null && eval "$(zoxide init bash)"
 command -v direnv &>/dev/null && eval "$(direnv hook bash)"
-export PATH="$HOME/bin:$PATH"
+export PATH="$HOME/bin:$HOME/.local/bin:$PATH"
 alias ls='eza' ll='eza -la' lg='lazygit' ld='lazydocker'
 alias unlock='source ~/bin/bw-unlock' init='~/bin/devbox-init' check='~/bin/devbox-check'
 BASHRC
+fi
+
+# Claude settings
 cat > ~/.claude/settings.json <<'CLAUDE'
 {"permissions":{"allow":["Bash(git *)","Bash(gh *)","Bash(aws *)","Bash(npm *)","Bash(docker *)","Bash(terraform *)","Bash(bw *)","Read","Write","Edit","Glob","Grep","Task","WebFetch","TodoRead","TodoWrite"],"deny":[]}}
 CLAUDE
-mkdir -p ~/.claude/rules
+
+# Claude rules
 cat > ~/.claude/rules/save-progress.md <<'SAVEMD'
 # Save Progress Frequently
 
@@ -184,9 +332,10 @@ If the user says they're done or stepping away:
 3. Remind about unsaved work in other repos
 SAVEMD
 USERSETUP
+}
 
-# 16. MOTD
-cat > /etc/motd <<'MOTD'
+setup_motd() {
+    cat > /etc/motd <<'MOTD'
 ================================================================================
                             WELCOME TO DEVBOX
 ================================================================================
@@ -199,5 +348,46 @@ cat > /etc/motd <<'MOTD'
     check   - Verify all dependencies
 ================================================================================
 MOTD
+}
 
-echo "=== Devbox setup complete ==="
+# =============================================================================
+# Main Execution
+# =============================================================================
+
+log "=== Starting devbox setup ==="
+touch "$CHECKPOINT_FILE"
+
+# Architecture must run first (sets env vars)
+setup_architecture
+
+# Run all steps - failures don't stop execution
+run_step "system_packages" "System packages" setup_system_packages
+run_step "docker" "Docker" setup_docker
+run_step "tailscale" "Tailscale" setup_tailscale
+run_step "aws_cli" "AWS CLI" setup_aws_cli
+run_step "github_cli" "GitHub CLI" setup_github_cli
+run_step "nodejs" "Node.js" setup_nodejs
+run_step "python" "Python" setup_python
+run_step "npm_packages" "NPM packages" setup_npm_packages
+run_step "modern_cli_tools" "Modern CLI tools" setup_modern_cli_tools
+run_step "cloud_clis" "Cloud CLIs" setup_cloud_clis
+run_step "system_config" "System config" setup_system_config
+run_step "git_delta" "Git delta config" setup_git_delta
+run_step "spot_watcher" "Spot watcher" setup_spot_watcher
+run_step "bootstrap_scripts" "Bootstrap scripts" setup_bootstrap_scripts
+run_step "user_environment" "User environment" setup_user_environment
+run_step "motd" "MOTD" setup_motd
+
+# Summary
+log "=== Devbox setup complete ==="
+if [[ -n "$FAILED_STEPS" ]]; then
+    log_error "Failed steps:$FAILED_STEPS"
+    log "Review /var/log/user-data.log for details"
+    log "Re-run failed steps manually or reboot to retry"
+else
+    log_success "All steps completed successfully"
+fi
+
+# Show checkpoint status
+log "Checkpoint file: $CHECKPOINT_FILE"
+cat "$CHECKPOINT_FILE"
