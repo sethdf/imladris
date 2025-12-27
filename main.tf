@@ -138,12 +138,12 @@ resource "aws_instance" "devbox" {
     volume_type           = "gp3"
     iops                  = var.volume_iops
     throughput            = var.volume_throughput
-    delete_on_termination = false
+    delete_on_termination = true
     encrypted             = true
 
     tags = {
       Name   = "devbox-root"
-      Backup = "daily"
+      Backup = "false"
     }
   }
 
