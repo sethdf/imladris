@@ -1,65 +1,82 @@
-# Optional configuration overrides
-# Copy to terraform.tfvars or set via environment variables
-#
-# NOTE: Secrets are managed via sops. Run: sops secrets.yaml
-#       Required secrets:
-#         - tailscale_auth_key: Tailscale auth key
-#       Optional secrets (for claude-sessions):
-#         - git_crypt_key_b64: Base64-encoded git-crypt key for claude-sessions-config
-#         - github_ssh_key_home_b64: SSH key for sethdf account
-#         - github_ssh_key_work_b64: SSH key for sfoleybuxton account
-#         - github_token: GitHub personal access token (for gh CLI)
-#
-#       To get the git-crypt key:
-#         cd ~/.config/claude-sessions
-#         git-crypt export-key /dev/stdout | base64 -w0
-#
-#       To get the SSH keys:
-#         base64 -w0 < ~/.ssh/id_ed25519_home
-#         base64 -w0 < ~/.ssh/id_ed25519_work
-#
-#       To get a GitHub token:
-#         https://github.com/settings/tokens
-#         Scopes needed: repo, read:org
-
-# Emails for spot interruption notifications
-notification_emails = ["your-email@example.com", "your-work-email@example.com"]
-
 # =============================================================================
-# Claude Sessions Framework Configuration
+# AWS Devbox - Terraform Variables
+# =============================================================================
+#
+# Copy this file to terraform.tfvars and fill in the values.
+# Only ONE secret is needed here: tailscale_auth_key
+#
+# All other secrets (SSH keys, GitHub token, git-crypt key) are stored in
+# Bitwarden and fetched after first login via the devbox-init script.
+#
 # =============================================================================
 
-# AWS SSO for home account (Bedrock access)
-aws_sso_start_url  = "https://d-9067954177.awsapps.com/start"
-aws_sso_account_id = "000000000000"
-aws_sso_role_name  = "AdministratorAccess"
+# Required: Tailscale auth key
+# Get from: https://login.tailscale.com/admin/settings/keys
+# Recommended: Use a reusable, ephemeral key
+tailscale_auth_key = "tskey-auth-XXXX"
 
-# Git identity - switches automatically based on directory
-# ~/claude-sessions/home/ uses home identity
-# ~/claude-sessions/work/ uses work identity
-git_user_name_home  = "Seth"
-git_user_email_home = "your-email@example.com"
-git_user_name_work  = "Your Name"
-git_user_email_work = "your-work-email@example.com"
-
-# Tailscale hostname (default: devbox)
+# Optional: Custom Tailscale hostname (default: devbox)
 # tailscale_hostname = "devbox"
 
-# Spot instances (default: enabled for ~70% cost savings)
-# use_spot              = true
-# spot_max_price        = ""    # Empty = on-demand price cap
-# spot_restart_attempts = 5
+# Optional: Email notifications for spot interruptions
+notification_emails = ["your-email@example.com"]
 
-# Schedule (default: 5am-11pm Mountain Time)
-# enable_schedule   = true
-# schedule_start    = "0 5 * * ? *"   # 5am
-# schedule_stop     = "0 23 * * ? *"  # 11pm
-# schedule_timezone = "America/Denver"
+# =============================================================================
+# Instance Configuration (all optional - sensible defaults provided)
+# =============================================================================
 
-# Instance configuration
 # aws_region              = "us-east-1"
 # instance_type           = "m7a.xlarge"
 # volume_size             = 100
 # volume_throughput       = 250
 # hostname                = "aws-dev-box"
 # snapshot_retention_days = 7
+
+# =============================================================================
+# Spot Instance Configuration (optional)
+# =============================================================================
+
+# use_spot              = true     # ~70% cost savings
+# spot_max_price        = ""       # Empty = on-demand price cap
+# spot_restart_attempts = 5
+
+# =============================================================================
+# Schedule Configuration (optional)
+# =============================================================================
+
+# enable_schedule   = true
+# schedule_start    = "0 5 * * ? *"    # 5am
+# schedule_stop     = "0 23 * * ? *"   # 11pm
+# schedule_timezone = "America/Denver"
+
+# =============================================================================
+# BITWARDEN SECRETS SETUP
+# =============================================================================
+#
+# Create these items in Bitwarden before first login:
+#
+# 1. devbox/github-ssh-home
+#    - Type: Login (or Secure Note)
+#    - Custom field: "private_key" = (your home SSH private key)
+#
+# 2. devbox/github-ssh-work
+#    - Type: Login (or Secure Note)
+#    - Custom field: "private_key" = (your work SSH private key)
+#
+# 3. devbox/github-token
+#    - Type: Login
+#    - Password field: (your GitHub PAT with repo, read:org scopes)
+#
+# 4. devbox/git-crypt-key
+#    - Type: Login (or Secure Note)
+#    - Custom field: "key_b64" = (base64-encoded git-crypt key)
+#
+# To get the git-crypt key:
+#   cd ~/.config/claude-sessions
+#   git-crypt export-key /dev/stdout | base64 -w0
+#
+# To get SSH keys:
+#   cat ~/.ssh/id_ed25519_home
+#   cat ~/.ssh/id_ed25519_work
+#
+# =============================================================================
