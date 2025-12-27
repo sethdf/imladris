@@ -66,7 +66,7 @@ apt-get install -y nodejs
 
 # 7. Python
 apt-get install -y python3-pip python3-venv python3-full
-pip3 install --break-system-packages gcalcli thallo
+pip3 install --break-system-packages gcalcli
 
 # 8. CLI tools via npm
 npm install -g tldr @anthropic-ai/claude-code @bitwarden/cli @pnp/cli-microsoft365
