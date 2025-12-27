@@ -146,10 +146,11 @@ resource "aws_instance" "devbox" {
   # User data - Tailscale auth key from Bitwarden
   # All other secrets bootstrapped from Bitwarden after first login
   user_data = templatefile("${path.module}/scripts/user-data.sh", {
-    hostname           = var.hostname
-    timezone           = var.schedule_timezone
-    tailscale_auth_key = data.bitwarden_item_login.tailscale.password
-    tailscale_hostname = var.tailscale_hostname
+    hostname            = var.hostname
+    timezone            = var.schedule_timezone
+    tailscale_auth_key  = data.bitwarden_item_login.tailscale.password
+    tailscale_api_key   = data.bitwarden_item_login.tailscale_api.password
+    tailscale_hostname  = var.tailscale_hostname
   })
 
   # Don't recreate instance if user-data changes

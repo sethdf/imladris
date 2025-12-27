@@ -3,17 +3,9 @@
 # =============================================================================
 #
 # Copy this file to terraform.tfvars and fill in the values.
-# Only ONE secret is needed here: tailscale_auth_key
-#
-# All other secrets (SSH keys, GitHub token, git-crypt key) are stored in
-# Bitwarden and fetched after first login via the devbox-init script.
+# All secrets are stored in Bitwarden - see bottom of file.
 #
 # =============================================================================
-
-# Required: Tailscale auth key
-# Get from: https://login.tailscale.com/admin/settings/keys
-# Recommended: Use a reusable, ephemeral key
-tailscale_auth_key = "tskey-auth-XXXX"
 
 # Optional: Custom Tailscale hostname (default: devbox)
 # tailscale_hostname = "devbox"
@@ -53,21 +45,39 @@ notification_emails = ["your-email@example.com"]
 # BITWARDEN SECRETS SETUP
 # =============================================================================
 #
-# Create these items in Bitwarden before first login:
+# Create these items in Bitwarden:
 #
-# 1. devbox/github-ssh-home
+# REQUIRED FOR TERRAFORM APPLY:
+#
+# 1. devbox/tailscale-auth-key
+#    - Type: Login
+#    - Password field: (reusable auth key from Tailscale admin)
+#    - Get from: https://login.tailscale.com/admin/settings/keys
+#
+# 2. devbox/tailscale-api-key
+#    - Type: Login
+#    - Password field: (API key for device cleanup)
+#    - Get from: https://login.tailscale.com/admin/settings/keys (API access)
+#
+# REQUIRED FOR DEVBOX-INIT (after first SSH):
+#
+# 3. devbox/luks-key
+#    - Type: Login
+#    - Password field: (strong passphrase for LUKS encryption)
+#
+# 4. devbox/github-ssh-home
 #    - Type: Login (or Secure Note)
 #    - Custom field: "private_key" = (your home SSH private key)
 #
-# 2. devbox/github-ssh-work
+# 5. devbox/github-ssh-work
 #    - Type: Login (or Secure Note)
 #    - Custom field: "private_key" = (your work SSH private key)
 #
-# 3. devbox/github-token
+# 6. devbox/github-token
 #    - Type: Login
 #    - Password field: (your GitHub PAT with repo, read:org scopes)
 #
-# 4. devbox/git-crypt-key
+# 7. devbox/git-crypt-key
 #    - Type: Login (or Secure Note)
 #    - Custom field: "key_b64" = (base64-encoded git-crypt key)
 #

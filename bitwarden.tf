@@ -26,3 +26,8 @@ provider "bitwarden" {
 data "bitwarden_item_login" "tailscale" {
   search = "devbox/tailscale-auth-key"
 }
+
+# Tailscale API key for device cleanup
+data "bitwarden_item_login" "tailscale_api" {
+  search = "devbox/tailscale-api-key"
+}

@@ -17,8 +17,20 @@ curl -fsSL https://get.docker.com | sh
 usermod -aG docker ubuntu
 apt-get install -y docker-compose-plugin
 
-# 3. Tailscale (the ONE secret in this script)
+# 3. Tailscale
 curl -fsSL https://tailscale.com/install.sh | sh
+
+# Remove old devbox devices from tailnet before registering
+echo "Cleaning up old Tailscale devices matching '${tailscale_hostname}'..."
+OLD_DEVICES=$(curl -s -u "${tailscale_api_key}:" \
+  "https://api.tailscale.com/api/v2/tailnet/-/devices" \
+  | jq -r '.devices[] | select(.hostname | startswith("${tailscale_hostname}")) | .id')
+for DEVICE_ID in $OLD_DEVICES; do
+  echo "Deleting device: $DEVICE_ID"
+  curl -s -X DELETE -u "${tailscale_api_key}:" \
+    "https://api.tailscale.com/api/v2/device/$DEVICE_ID"
+done
+
 tailscale up --auth-key=${tailscale_auth_key} --hostname=${tailscale_hostname} --ssh
 
 # 4. AWS CLI

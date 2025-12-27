@@ -114,6 +114,7 @@ variable "tailscale_hostname" {
 #
 # Required Bitwarden items:
 #   - devbox/tailscale-auth-key (password field) - used at terraform apply
+#   - devbox/tailscale-api-key  (password field) - API key for device cleanup
 #   - devbox/luks-key           (password field) - LUKS encryption for data volume
 #   - devbox/github-ssh-home    (custom field: private_key)
 #   - devbox/github-ssh-work    (custom field: private_key)
