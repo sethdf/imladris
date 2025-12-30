@@ -48,7 +48,7 @@ class TestLambdaHandler:
         """Should ignore events for other instances."""
         # Import after env is set
         import importlib
-        spot_restart = importlib.import_module('spot-restart')
+        spot_restart = importlib.import_module('spot_restart')
 
         event = {
             'detail': {
@@ -65,7 +65,7 @@ class TestLambdaHandler:
     def test_ignores_non_stopped_state(self, mock_env, mock_boto3):
         """Should ignore events for states other than 'stopped'."""
         import importlib
-        spot_restart = importlib.import_module('spot-restart')
+        spot_restart = importlib.import_module('spot_restart')
 
         event = {
             'detail': {
@@ -82,7 +82,7 @@ class TestLambdaHandler:
     def test_ignores_non_spot_instance(self, mock_env, mock_boto3):
         """Should not restart on-demand instances."""
         import importlib
-        spot_restart = importlib.import_module('spot-restart')
+        spot_restart = importlib.import_module('spot_restart')
 
         # Mock describe_instances to return on-demand instance
         mock_boto3['ec2'].describe_instances.return_value = {
@@ -109,7 +109,7 @@ class TestLambdaHandler:
     def test_successful_restart(self, mock_env, mock_boto3):
         """Should successfully restart a stopped spot instance."""
         import importlib
-        spot_restart = importlib.import_module('spot-restart')
+        spot_restart = importlib.import_module('spot_restart')
 
         # Mock describe_instances - first call shows spot, second shows running
         mock_boto3['ec2'].describe_instances.side_effect = [
@@ -150,7 +150,7 @@ class TestRetryLogic:
         """Should retry when spot capacity is unavailable."""
         import importlib
         from botocore.exceptions import ClientError
-        spot_restart = importlib.import_module('spot-restart')
+        spot_restart = importlib.import_module('spot_restart')
 
         # Mock describe_instances to return spot instance
         mock_boto3['ec2'].describe_instances.return_value = {
@@ -205,7 +205,7 @@ class TestNotifications:
         monkeypatch.setenv('SNS_TOPIC_ARN', 'arn:aws:sns:us-east-1:123456789:test')
 
         import importlib
-        spot_restart = importlib.import_module('spot-restart')
+        spot_restart = importlib.import_module('spot_restart')
         importlib.reload(spot_restart)  # Reload to pick up new env
 
         mock_boto3['ec2'].describe_instances.side_effect = [
@@ -228,7 +228,7 @@ class TestNotifications:
     def test_no_notification_without_topic(self, mock_env, mock_boto3):
         """Should not attempt notification when no topic configured."""
         import importlib
-        spot_restart = importlib.import_module('spot-restart')
+        spot_restart = importlib.import_module('spot_restart')
 
         mock_boto3['ec2'].describe_instances.side_effect = [
             {'Reservations': [{'Instances': [{'InstanceLifecycle': 'spot', 'StateReason': {'Code': ''}}]}]},
