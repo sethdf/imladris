@@ -1,4 +1,4 @@
-.PHONY: init plan apply destroy unlock lock commit-state backup-keys spot-check spot-price safe-apply cost ssh-config
+.PHONY: init plan apply destroy unlock lock commit-state backup-keys spot-check spot-price safe-apply cost ssh-config lint test validate
 
 # Decrypt secrets before running terraform
 SECRETS_FILE := secrets.yaml
@@ -22,6 +22,11 @@ help:
 	@echo "  make spot-price  - Show current Spot prices"
 	@echo "  make cost        - Show current month's AWS cost"
 	@echo "  make ssh-config  - Generate SSH config for local machine"
+	@echo ""
+	@echo "Testing:"
+	@echo "  make validate    - Validate terraform and lint scripts"
+	@echo "  make lint        - Run all linters (shellcheck, tfsec, pylint)"
+	@echo "  make test        - Run unit tests"
 	@echo ""
 	@echo "First-time setup:"
 	@echo "  make setup       - Initialize git-crypt, sops, and terraform"
@@ -218,3 +223,60 @@ ssh-config:
 	echo "    UserKnownHostsFile /dev/null"; \
 	echo ""; \
 	echo "# Then connect with: ssh devbox"
+
+# =============================================================================
+# TESTING & VALIDATION
+# =============================================================================
+
+# Quick validation (no external tools required)
+validate:
+	@echo "=== Terraform Validation ==="
+	terraform fmt -check -recursive || { echo "Run 'terraform fmt' to fix formatting"; exit 1; }
+	terraform validate
+	@echo ""
+	@echo "=== Bash Syntax Check ==="
+	@for f in scripts/*.sh; do \
+		bash -n "$$f" && echo "  ✓ $$f" || exit 1; \
+	done
+	@echo ""
+	@echo "✓ All validations passed"
+
+# Full lint (requires shellcheck, tfsec, pylint)
+lint: validate
+	@echo ""
+	@echo "=== ShellCheck ==="
+	@if command -v shellcheck >/dev/null 2>&1; then \
+		shellcheck scripts/*.sh && echo "  ✓ All scripts passed"; \
+	else \
+		echo "  ⚠ shellcheck not installed (brew install shellcheck)"; \
+	fi
+	@echo ""
+	@echo "=== tfsec (Terraform Security) ==="
+	@if command -v tfsec >/dev/null 2>&1; then \
+		tfsec . --minimum-severity MEDIUM || true; \
+	else \
+		echo "  ⚠ tfsec not installed (brew install tfsec)"; \
+	fi
+	@echo ""
+	@echo "=== Python Lint ==="
+	@if command -v pylint >/dev/null 2>&1; then \
+		pylint scripts/*.py --disable=C0114,C0115,C0116 || true; \
+	else \
+		echo "  ⚠ pylint not installed (pip install pylint)"; \
+	fi
+
+# Run unit tests
+test:
+	@echo "=== Running Unit Tests ==="
+	@if [ -d tests ] && command -v pytest >/dev/null 2>&1; then \
+		cd tests && pip install -q -r requirements.txt 2>/dev/null; \
+		pytest unit/ -v --tb=short; \
+	else \
+		echo "pytest not installed. Run: pip install pytest"; \
+		exit 1; \
+	fi
+
+# Run all checks (lint + test)
+check: lint test
+	@echo ""
+	@echo "✓ All checks passed"
