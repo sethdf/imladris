@@ -41,10 +41,12 @@ show_status() {
     fi
 
     # Tmux status
-    if tmux has-session -t main 2>/dev/null; then
+    local session_count
+    session_count=$(tmux list-sessions 2>/dev/null | wc -l)
+    if [[ $session_count -gt 0 ]]; then
         local window_count
-        window_count=$(tmux list-windows -t main 2>/dev/null | wc -l)
-        tmux_status="✓ active (${window_count} windows)"
+        window_count=$(tmux list-windows -a 2>/dev/null | wc -l)
+        tmux_status="✓ ${session_count} sessions (${window_count} windows)"
     elif [[ -f ~/.tmux/resurrect/last ]]; then
         tmux_status="○ saved session available"
     else
@@ -88,14 +90,23 @@ restore_tmux_session() {
     # Only in interactive SSH sessions, not already in tmux
     [[ -z "${TMUX:-}" && -n "${SSH_CONNECTION:-}" ]] || return 0
 
-    if tmux has-session -t main 2>/dev/null; then
-        echo "  Attaching to existing tmux session..."
-        exec tmux attach -t main
+    # Check if any sessions exist
+    if tmux list-sessions &>/dev/null; then
+        # Get most recently used session (by last attached time)
+        local recent_session
+        recent_session=$(tmux list-sessions -F '#{session_last_attached} #{session_name}' | sort -rn | head -1 | cut -d' ' -f2)
+
+        local session_count
+        session_count=$(tmux list-sessions | wc -l)
+
+        echo "  Attaching to session: $recent_session"
+        [[ $session_count -gt 1 ]] && echo "  Tip: prefix + s to switch sessions ($session_count available)"
+        exec tmux attach -t "$recent_session"
     else
-        # Check if there's a saved resurrect session
+        # No sessions exist - create new or let resurrect restore
         if [[ -f ~/.tmux/resurrect/last ]]; then
-            echo "  Creating tmux session (will auto-restore layout)..."
-            echo "  Tip: prefix + Ctrl-r to manually restore if needed"
+            echo "  Starting tmux (will auto-restore all sessions)..."
+            echo "  Tip: prefix + s to switch between restored sessions"
         else
             echo "  Creating new tmux session..."
         fi
