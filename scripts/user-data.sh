@@ -284,6 +284,102 @@ sudo chsh -s $(which zsh) ubuntu 2>/dev/null || true
 # Create directories
 mkdir -p ~/code ~/projects ~/.local/bin ~/.claude ~/.claude/rules
 
+# Setup tmux with TPM (Tmux Plugin Manager)
+if [[ ! -d ~/.tmux/plugins/tpm ]]; then
+    git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm
+fi
+
+# Create tmux.conf with session persistence
+cat > ~/.tmux.conf <<'TMUXCONF'
+# ============================================================================
+# Tmux Configuration with Session Persistence
+# ============================================================================
+
+# Modern terminal settings
+set -g default-terminal "tmux-256color"
+set -ag terminal-overrides ",xterm-256color:RGB"
+
+# Use zsh as default shell
+set -g default-shell /usr/bin/zsh
+
+# Start windows and panes at 1, not 0
+set -g base-index 1
+setw -g pane-base-index 1
+
+# Renumber windows when one is closed
+set -g renumber-windows on
+
+# Increase scrollback buffer
+set -g history-limit 50000
+
+# Enable mouse support
+set -g mouse on
+
+# Reduce escape time for vim
+set -sg escape-time 10
+
+# Focus events for vim autoread
+set -g focus-events on
+
+# ============================================================================
+# Key Bindings
+# ============================================================================
+
+# Reload config with prefix + r
+bind r source-file ~/.tmux.conf \; display "Config reloaded!"
+
+# Split panes with | and -
+bind | split-window -h -c "#{pane_current_path}"
+bind - split-window -v -c "#{pane_current_path}"
+
+# New window in current path
+bind c new-window -c "#{pane_current_path}"
+
+# Vim-style pane navigation
+bind h select-pane -L
+bind j select-pane -D
+bind k select-pane -U
+bind l select-pane -R
+
+# ============================================================================
+# Status Bar
+# ============================================================================
+
+set -g status-position bottom
+set -g status-style 'bg=#1e1e2e fg=#cdd6f4'
+set -g status-left '#[fg=#89b4fa,bold][#S] '
+set -g status-right '#[fg=#a6adc8]%Y-%m-%d %H:%M '
+set -g status-left-length 30
+
+# ============================================================================
+# Plugins (managed by TPM)
+# ============================================================================
+
+set -g @plugin 'tmux-plugins/tpm'
+set -g @plugin 'tmux-plugins/tmux-sensible'
+set -g @plugin 'tmux-plugins/tmux-resurrect'
+set -g @plugin 'tmux-plugins/tmux-continuum'
+
+# Resurrect settings
+set -g @resurrect-capture-pane-contents 'on'
+set -g @resurrect-strategy-vim 'session'
+set -g @resurrect-strategy-nvim 'session'
+set -g @resurrect-processes 'vim nvim man less tail top htop psql mysql sqlite3 ssh'
+
+# Continuum settings - auto-save and restore
+set -g @continuum-save-interval '10'
+set -g @continuum-restore 'on'
+set -g @continuum-boot 'off'
+
+# ============================================================================
+# Initialize TPM (keep this line at the very bottom)
+# ============================================================================
+run '~/.tmux/plugins/tpm/tpm'
+TMUXCONF
+
+# Install tmux plugins (TPM install)
+~/.tmux/plugins/tpm/bin/install_plugins 2>/dev/null || true
+
 # Add to zshrc if not already present
 if ! grep -q "DEVBOX_SETUP" ~/.zshrc 2>/dev/null; then
     cat >> ~/.zshrc <<'ZSHRC'
@@ -333,14 +429,20 @@ This devbox does NOT hibernate - stopping loses all running state.
 However, auto-restore recovers: tmux sessions, last directory, and Docker projects.
 
 ## What Auto-Restores
-- tmux session (auto-attaches on SSH login)
+- tmux session layout (windows, panes, working directories)
+- Programs: vim, nvim, psql, mysql, ssh, htop, etc.
 - Last working directory
 - Docker projects (listed in ~/.config/devbox/docker-projects.txt)
 
 ## What Does NOT Restore
-- Running processes (except Docker containers)
+- Running builds/dev servers (must restart manually)
 - Uncommitted git changes (these persist on disk)
-- Open editor buffers (use VS Code Remote or save frequently)
+- Unsaved editor buffers (vim sessions restore if saved)
+
+## Tmux Session Persistence
+Sessions auto-save every 10 minutes via tmux-continuum.
+- `prefix + Ctrl-s` - Manual save
+- `prefix + Ctrl-r` - Manual restore
 
 ## Rules
 - Commit work frequently (at least every significant milestone)

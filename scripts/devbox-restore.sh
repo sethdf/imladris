@@ -19,7 +19,7 @@ log() {
 # Status Display
 # ============================================================================
 show_status() {
-    local bw_status docker_status luks_status
+    local bw_status docker_status luks_status tmux_status
 
     # Bitwarden status
     if [[ -n "${BW_SESSION:-}" ]] && bw status 2>/dev/null | grep -q '"status":"unlocked"'; then
@@ -40,12 +40,24 @@ show_status() {
         luks_status="✗ not mounted"
     fi
 
+    # Tmux status
+    if tmux has-session -t main 2>/dev/null; then
+        local window_count
+        window_count=$(tmux list-windows -t main 2>/dev/null | wc -l)
+        tmux_status="✓ active (${window_count} windows)"
+    elif [[ -f ~/.tmux/resurrect/last ]]; then
+        tmux_status="○ saved session available"
+    else
+        tmux_status="✗ no session"
+    fi
+
     echo "┌─────────────────────────────────────┐"
     echo "│          DevBox Status              │"
     echo "├─────────────────────────────────────┤"
     printf "│  Bitwarden: %-23s│\n" "$bw_status"
     printf "│  Docker:    %-23s│\n" "$docker_status"
     printf "│  /home:     %-23s│\n" "$luks_status"
+    printf "│  Tmux:      %-23s│\n" "$tmux_status"
     echo "└─────────────────────────────────────┘"
 }
 
@@ -80,7 +92,14 @@ restore_tmux_session() {
         echo "  Attaching to existing tmux session..."
         exec tmux attach -t main
     else
-        echo "  Creating new tmux session..."
+        # Check if there's a saved resurrect session
+        if [[ -f ~/.tmux/resurrect/last ]]; then
+            echo "  Creating tmux session (will auto-restore layout)..."
+            echo "  Tip: prefix + Ctrl-r to manually restore if needed"
+        else
+            echo "  Creating new tmux session..."
+        fi
+        # Start tmux - continuum will auto-restore if configured
         # Restore last directory if available
         local start_dir="$HOME"
         [[ -f "$LAST_DIR_FILE" ]] && start_dir=$(cat "$LAST_DIR_FILE")
