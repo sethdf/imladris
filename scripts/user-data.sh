@@ -226,36 +226,62 @@ GITCFG
 }
 
 setup_spot_watcher() {
-    cat > /usr/local/bin/spot-watcher <<'SPOTWATCHER'
+    # Download the comprehensive spot interruption handler
+    local SCRIPTS_BASE="https://raw.githubusercontent.com/${github_username}/aws-devbox/master/scripts"
+    curl -fsSL "$SCRIPTS_BASE/spot-interruption-handler.sh" -o /usr/local/bin/spot-interruption-handler || {
+        log "Failed to download spot-interruption-handler, creating basic version"
+        cat > /usr/local/bin/spot-interruption-handler <<'BASICHANDLER'
 #!/bin/bash
+# Basic fallback handler
 TOKEN_URL="http://169.254.169.254/latest/api/token"
 METADATA_URL="http://169.254.169.254/latest/meta-data/spot/instance-action"
-NOTIFIED=false
 while true; do
     TOKEN=$(curl -s -X PUT "$TOKEN_URL" -H "X-aws-ec2-metadata-token-ttl-seconds: 60" 2>/dev/null)
-    RESP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" -w "%%{http_code}" -o /tmp/spot-action "$METADATA_URL" 2>/dev/null)
-    if [ "$RESP" = "200" ] && [ "$NOTIFIED" = "false" ]; then
-        wall "SPOT INTERRUPTION - Hibernating in ~2 min"
-        NOTIFIED=true
+    RESP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" "$METADATA_URL" 2>/dev/null)
+    if [[ -n "$RESP" && "$RESP" != *"404"* ]]; then
+        wall "SPOT INTERRUPTION - Saving state..."
+        # Try to save tmux sessions
+        sudo -u ubuntu /home/ubuntu/.tmux/plugins/tmux-resurrect/scripts/save.sh 2>/dev/null
+        sync
+        wall "SPOT INTERRUPTION - State saved, terminating soon"
+        sleep 120
     fi
     sleep 5
 done
-SPOTWATCHER
-    chmod +x /usr/local/bin/spot-watcher
+BASICHANDLER
+    }
+    chmod +x /usr/local/bin/spot-interruption-handler
 
-    cat > /etc/systemd/system/spot-watcher.service <<'SPOTSERVICE'
+    cat > /etc/systemd/system/spot-interruption-handler.service <<'SPOTSERVICE'
 [Unit]
-Description=Spot interruption watcher
-After=network.target
+Description=Spot instance interruption handler
+After=network.target docker.service
+Wants=docker.service
+
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/spot-watcher
+ExecStart=/usr/local/bin/spot-interruption-handler
 Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Environment for SNS notifications (set via Terraform)
+EnvironmentFile=-/etc/default/spot-handler
+
 [Install]
 WantedBy=multi-user.target
 SPOTSERVICE
+
+    # Create environment file for SNS topic (populated by Terraform if available)
+    cat > /etc/default/spot-handler <<'SPOTENV'
+# Spot interruption handler configuration
+# SNS topic ARN for notifications (set by Terraform)
+SPOT_NOTIFICATION_SNS_ARN="${sns_topic_arn}"
+SPOTENV
+
     systemctl daemon-reload
-    systemctl enable --now spot-watcher
+    systemctl enable --now spot-interruption-handler
 }
 
 setup_bootstrap_scripts() {
