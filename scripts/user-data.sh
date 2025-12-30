@@ -78,7 +78,28 @@ setup_system_packages() {
     apt-get install -y \
         zsh git git-crypt curl wget unzip jq htop tmux ripgrep fd-find bat ncdu \
         software-properties-common build-essential ca-certificates gnupg lsb-release \
-        fzf direnv cryptsetup eza
+        fzf direnv cryptsetup eza \
+        unattended-upgrades apt-listchanges
+}
+
+setup_auto_updates() {
+    # Configure unattended-upgrades for security updates only
+    cat > /etc/apt/apt.conf.d/50unattended-upgrades <<'UNATTENDED'
+Unattended-Upgrade::Allowed-Origins {
+    "${distro_id}:${distro_codename}-security";
+};
+Unattended-Upgrade::AutoFixInterruptedDpkg "true";
+Unattended-Upgrade::Remove-Unused-Dependencies "true";
+Unattended-Upgrade::Automatic-Reboot "false";
+UNATTENDED
+
+    cat > /etc/apt/apt.conf.d/20auto-upgrades <<'AUTOUPGRADES'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::AutocleanInterval "7";
+AUTOUPGRADES
+
+    log "Automatic security updates configured"
 }
 
 setup_docker() {
@@ -222,6 +243,12 @@ setup_git_delta() {
     navigate = true
     side-by-side = true
     line-numbers = true
+[credential]
+    helper = cache --timeout=86400
+[init]
+    defaultBranch = main
+[pull]
+    rebase = false
 GITCFG
 }
 
@@ -530,6 +557,7 @@ setup_architecture
 
 # Run all steps - failures don't stop execution
 run_step "system_packages" "System packages" setup_system_packages
+run_step "auto_updates" "Auto security updates" setup_auto_updates
 run_step "docker" "Docker" setup_docker
 run_step "tailscale" "Tailscale" setup_tailscale
 run_step "aws_cli" "AWS CLI" setup_aws_cli

@@ -1,4 +1,4 @@
-.PHONY: init plan apply destroy unlock lock commit-state backup-keys spot-check spot-price safe-apply
+.PHONY: init plan apply destroy unlock lock commit-state backup-keys spot-check spot-price safe-apply cost ssh-config
 
 # Decrypt secrets before running terraform
 SECRETS_FILE := secrets.yaml
@@ -20,6 +20,8 @@ help:
 	@echo "  make backup-keys - Export encryption keys for backup"
 	@echo "  make spot-check  - Check Spot capacity before deploy"
 	@echo "  make spot-price  - Show current Spot prices"
+	@echo "  make cost        - Show current month's AWS cost"
+	@echo "  make ssh-config  - Generate SSH config for local machine"
 	@echo ""
 	@echo "First-time setup:"
 	@echo "  make setup       - Initialize git-crypt, sops, and terraform"
@@ -186,3 +188,33 @@ safe-apply: spot-check decrypt-secrets
 	@read -p "Proceed with deployment? [y/N] " confirm && [ "$$confirm" = "y" ] || exit 1
 	terraform apply
 	@$(MAKE) commit-state
+
+# Show current month's AWS cost for this devbox
+cost:
+	@echo "=== DevBox Cost (Current Month) ==="
+	@START_DATE=$$(date -u +%Y-%m-01); \
+	END_DATE=$$(date -u +%Y-%m-%d); \
+	aws ce get-cost-and-usage \
+		--time-period Start=$$START_DATE,End=$$END_DATE \
+		--granularity MONTHLY \
+		--metrics "UnblendedCost" \
+		--filter '{"Dimensions":{"Key":"SERVICE","Values":["Amazon Elastic Compute Cloud - Compute","EC2 - Other"]}}' \
+		--query 'ResultsByTime[0].Total.UnblendedCost.{Amount:Amount,Unit:Unit}' \
+		--output table 2>/dev/null || echo "Note: Requires ce:GetCostAndUsage permission"
+	@echo ""
+	@echo "For detailed breakdown: AWS Console > Cost Explorer"
+
+# Generate SSH config entry for local machine
+ssh-config:
+	@echo "=== Add this to your local ~/.ssh/config ==="
+	@echo ""
+	@INSTANCE_IP=$$(terraform output -raw instance_id 2>/dev/null || echo ""); \
+	TAILSCALE_NAME=$$(grep 'tailscale_hostname' terraform.tfvars 2>/dev/null | cut -d'"' -f2 || echo "devbox"); \
+	echo "Host devbox"; \
+	echo "    HostName $$TAILSCALE_NAME"; \
+	echo "    User ubuntu"; \
+	echo "    ForwardAgent yes"; \
+	echo "    StrictHostKeyChecking no"; \
+	echo "    UserKnownHostsFile /dev/null"; \
+	echo ""; \
+	echo "# Then connect with: ssh devbox"
