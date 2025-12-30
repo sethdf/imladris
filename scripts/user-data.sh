@@ -410,6 +410,18 @@ TMUXCONF
 if ! grep -q "DEVBOX_SETUP" ~/.zshrc 2>/dev/null; then
     cat >> ~/.zshrc <<'ZSHRC'
 # DEVBOX_SETUP
+
+# History optimization - persist across reboots, share between sessions
+HISTFILE=~/.zsh_history
+HISTSIZE=50000
+SAVEHIST=50000
+setopt SHARE_HISTORY          # Share history between sessions
+setopt HIST_IGNORE_ALL_DUPS   # Don't save duplicates
+setopt HIST_SAVE_NO_DUPS      # Don't write duplicates
+setopt HIST_REDUCE_BLANKS     # Remove extra blanks
+setopt INC_APPEND_HISTORY     # Add commands immediately
+
+# Tool initialization
 command -v mise &>/dev/null && eval "$(mise activate zsh)"
 command -v zoxide &>/dev/null && eval "$(zoxide init zsh)"
 command -v direnv &>/dev/null && eval "$(direnv hook zsh)"
