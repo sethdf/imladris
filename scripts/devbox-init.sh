@@ -185,12 +185,11 @@ setup_git_identity() {
     local IDENTITY
     IDENTITY=$(bw get item "devbox/identity" 2>/dev/null) || { log_error "devbox/identity not found in Bitwarden"; return 1; }
 
-    local GIT_NAME_HOME GIT_EMAIL_HOME GIT_NAME_WORK GIT_EMAIL_WORK GITHUB_USERNAME
+    local GIT_NAME_HOME GIT_EMAIL_HOME GIT_NAME_WORK GIT_EMAIL_WORK
     GIT_NAME_HOME=$(echo "$IDENTITY" | jq -r '.fields[]? | select(.name=="git_name_home") | .value // empty')
     GIT_EMAIL_HOME=$(echo "$IDENTITY" | jq -r '.fields[]? | select(.name=="git_email_home") | .value // empty')
     GIT_NAME_WORK=$(echo "$IDENTITY" | jq -r '.fields[]? | select(.name=="git_name_work") | .value // empty')
     GIT_EMAIL_WORK=$(echo "$IDENTITY" | jq -r '.fields[]? | select(.name=="git_email_work") | .value // empty')
-    GITHUB_USERNAME=$(echo "$IDENTITY" | jq -r '.fields[]? | select(.name=="github_username") | .value // empty')
 
     if [[ -z "$GIT_NAME_HOME" || -z "$GIT_EMAIL_HOME" ]]; then
         log_error "devbox/identity missing required fields (git_name_home, git_email_home)"
@@ -340,7 +339,7 @@ setup_lifemaestro() {
 
     # Run install.sh
     if [[ -f ~/code/lifemaestro/install.sh ]]; then
-        cd ~/code/lifemaestro && ./install.sh && cd - >/dev/null
+        (cd ~/code/lifemaestro && ./install.sh)
         log "LifeMaestro install.sh completed"
     fi
 
@@ -348,7 +347,7 @@ setup_lifemaestro() {
     if [[ -d ~/code/lifemaestro/.claude ]]; then
         [[ -d ~/.claude && ! -L ~/.claude ]] && rm -rf ~/.claude
         ln -sfn ~/code/lifemaestro/.claude ~/.claude
-        log "~/.claude symlinked to lifemaestro"
+        log "\$HOME/.claude symlinked to lifemaestro"
     fi
 }
 

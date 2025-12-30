@@ -137,10 +137,10 @@ echo ""
 echo "LifeMaestro:"
 if [[ -d ~/code/lifemaestro ]]; then
     ok "Installed at ~/code/lifemaestro"
-    if [[ -L ~/.claude ]] && [[ -d ~/.claude ]]; then
-        ok "~/.claude symlinked"
+    if [[ -L "$HOME/.claude" ]] && [[ -d "$HOME/.claude" ]]; then
+        ok "\$HOME/.claude symlinked"
     else
-        warn "~/.claude not symlinked - run devbox-init"
+        warn "\$HOME/.claude not symlinked - run devbox-init"
     fi
 else
     warn "Not installed - will install on devbox-init"

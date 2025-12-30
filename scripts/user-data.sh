@@ -1,6 +1,12 @@
 #!/bin/bash
 # Devbox user-data script with robust error handling
 # Does NOT use set -e - handles errors explicitly per step
+#
+# NOTE: This is a Terraform template file. Variables like ${hostname},
+# ${tailscale_auth_key}, etc. are substituted by Terraform before deployment.
+# ShellCheck can't see these substitutions, so we disable the relevant warnings.
+# shellcheck disable=SC2154  # Variables referenced but not assigned (Terraform vars)
+# shellcheck disable=SC2034  # Variables appear unused (used in Terraform $${} escaping)
 
 # Log output for debugging
 exec > >(tee /var/log/user-data.log | logger -t user-data -s 2>/dev/console) 2>&1

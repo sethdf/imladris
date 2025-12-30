@@ -64,9 +64,11 @@ save_git() {
     for dir in /home/ubuntu/code/*/ /home/ubuntu/projects/*/; do
         [[ -d "$dir/.git" ]] || continue
 
-        local repo_name=$(basename "$dir")
+        local repo_name
+        repo_name=$(basename "$dir")
         if [[ -n $(sudo -u ubuntu git -C "$dir" status --porcelain 2>/dev/null) ]]; then
-            local stash_msg="spot-interruption-$(date +%Y%m%d-%H%M%S)"
+            local stash_msg
+            stash_msg="spot-interruption-$(date +%Y%m%d-%H%M%S)"
             if sudo -u ubuntu git -C "$dir" stash push -m "$stash_msg" 2>/dev/null; then
                 log "  ✓ Stashed changes in $repo_name"
                 ((stashed++))
@@ -88,7 +90,7 @@ save_docker() {
 
     if [[ $containers -gt 0 ]]; then
         # Give containers 30 seconds to stop gracefully
-        docker stop $(docker ps -q) --time 30 2>/dev/null && \
+        docker ps -q | xargs -r docker stop --time 30 2>/dev/null && \
             log "  ✓ Stopped $containers container(s)" || \
             log "  ✗ Failed to stop some containers"
     else
