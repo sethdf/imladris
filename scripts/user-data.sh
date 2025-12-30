@@ -1,6 +1,12 @@
 #!/bin/bash
 # Devbox user-data script with robust error handling
 # Does NOT use set -e - handles errors explicitly per step
+#
+# NOTE: This is a Terraform template file. Variables like ${hostname},
+# ${tailscale_auth_key}, etc. are substituted by Terraform before deployment.
+# ShellCheck can't see these substitutions, so we disable the relevant warnings.
+# shellcheck disable=SC2154  # Variables referenced but not assigned (Terraform vars)
+# shellcheck disable=SC2034  # Variables appear unused (used in Terraform $${} escaping)
 
 # Log output for debugging
 exec > >(tee /var/log/user-data.log | logger -t user-data -s 2>/dev/console) 2>&1
@@ -78,7 +84,28 @@ setup_system_packages() {
     apt-get install -y \
         zsh git git-crypt curl wget unzip jq htop tmux ripgrep fd-find bat ncdu \
         software-properties-common build-essential ca-certificates gnupg lsb-release \
-        fzf direnv cryptsetup eza
+        fzf direnv cryptsetup eza \
+        unattended-upgrades apt-listchanges
+}
+
+setup_auto_updates() {
+    # Configure unattended-upgrades for security updates only
+    cat > /etc/apt/apt.conf.d/50unattended-upgrades <<'UNATTENDED'
+Unattended-Upgrade::Allowed-Origins {
+    "${distro_id}:${distro_codename}-security";
+};
+Unattended-Upgrade::AutoFixInterruptedDpkg "true";
+Unattended-Upgrade::Remove-Unused-Dependencies "true";
+Unattended-Upgrade::Automatic-Reboot "false";
+UNATTENDED
+
+    cat > /etc/apt/apt.conf.d/20auto-upgrades <<'AUTOUPGRADES'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::AutocleanInterval "7";
+AUTOUPGRADES
+
+    log "Automatic security updates configured"
 }
 
 setup_docker() {
@@ -222,40 +249,72 @@ setup_git_delta() {
     navigate = true
     side-by-side = true
     line-numbers = true
+[credential]
+    helper = cache --timeout=86400
+[init]
+    defaultBranch = main
+[pull]
+    rebase = false
 GITCFG
 }
 
 setup_spot_watcher() {
-    cat > /usr/local/bin/spot-watcher <<'SPOTWATCHER'
+    # Download the comprehensive spot interruption handler
+    local SCRIPTS_BASE="https://raw.githubusercontent.com/${github_username}/aws-devbox/master/scripts"
+    curl -fsSL "$SCRIPTS_BASE/spot-interruption-handler.sh" -o /usr/local/bin/spot-interruption-handler || {
+        log "Failed to download spot-interruption-handler, creating basic version"
+        cat > /usr/local/bin/spot-interruption-handler <<'BASICHANDLER'
 #!/bin/bash
+# Basic fallback handler
 TOKEN_URL="http://169.254.169.254/latest/api/token"
 METADATA_URL="http://169.254.169.254/latest/meta-data/spot/instance-action"
-NOTIFIED=false
 while true; do
     TOKEN=$(curl -s -X PUT "$TOKEN_URL" -H "X-aws-ec2-metadata-token-ttl-seconds: 60" 2>/dev/null)
-    RESP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" -w "%%{http_code}" -o /tmp/spot-action "$METADATA_URL" 2>/dev/null)
-    if [ "$RESP" = "200" ] && [ "$NOTIFIED" = "false" ]; then
-        wall "SPOT INTERRUPTION - Hibernating in ~2 min"
-        NOTIFIED=true
+    RESP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" "$METADATA_URL" 2>/dev/null)
+    if [[ -n "$RESP" && "$RESP" != *"404"* ]]; then
+        wall "SPOT INTERRUPTION - Saving state..."
+        # Try to save tmux sessions
+        sudo -u ubuntu /home/ubuntu/.tmux/plugins/tmux-resurrect/scripts/save.sh 2>/dev/null
+        sync
+        wall "SPOT INTERRUPTION - State saved, terminating soon"
+        sleep 120
     fi
     sleep 5
 done
-SPOTWATCHER
-    chmod +x /usr/local/bin/spot-watcher
+BASICHANDLER
+    }
+    chmod +x /usr/local/bin/spot-interruption-handler
 
-    cat > /etc/systemd/system/spot-watcher.service <<'SPOTSERVICE'
+    cat > /etc/systemd/system/spot-interruption-handler.service <<'SPOTSERVICE'
 [Unit]
-Description=Spot interruption watcher
-After=network.target
+Description=Spot instance interruption handler
+After=network.target docker.service
+Wants=docker.service
+
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/spot-watcher
+ExecStart=/usr/local/bin/spot-interruption-handler
 Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Environment for SNS notifications (set via Terraform)
+EnvironmentFile=-/etc/default/spot-handler
+
 [Install]
 WantedBy=multi-user.target
 SPOTSERVICE
+
+    # Create environment file for SNS topic (populated by Terraform if available)
+    cat > /etc/default/spot-handler <<'SPOTENV'
+# Spot interruption handler configuration
+# SNS topic ARN for notifications (set by Terraform)
+SPOT_NOTIFICATION_SNS_ARN="${sns_topic_arn}"
+SPOTENV
+
     systemctl daemon-reload
-    systemctl enable --now spot-watcher
+    systemctl enable --now spot-interruption-handler
 }
 
 setup_bootstrap_scripts() {
@@ -265,8 +324,9 @@ setup_bootstrap_scripts() {
     curl -fsSL "$SCRIPTS_BASE/bw-unlock.sh" -o /home/ubuntu/bin/bw-unlock || log "Failed to download bw-unlock"
     curl -fsSL "$SCRIPTS_BASE/devbox-init.sh" -o /home/ubuntu/bin/devbox-init || log "Failed to download devbox-init"
     curl -fsSL "$SCRIPTS_BASE/devbox-check.sh" -o /home/ubuntu/bin/devbox-check || log "Failed to download devbox-check"
+    curl -fsSL "$SCRIPTS_BASE/devbox-restore.sh" -o /home/ubuntu/bin/devbox-restore || log "Failed to download devbox-restore"
 
-    chmod +x /home/ubuntu/bin/bw-unlock /home/ubuntu/bin/devbox-init /home/ubuntu/bin/devbox-check 2>/dev/null || true
+    chmod +x /home/ubuntu/bin/bw-unlock /home/ubuntu/bin/devbox-init /home/ubuntu/bin/devbox-check /home/ubuntu/bin/devbox-restore 2>/dev/null || true
     chown -R ubuntu:ubuntu /home/ubuntu/bin
 }
 
@@ -283,16 +343,135 @@ sudo chsh -s $(which zsh) ubuntu 2>/dev/null || true
 # Create directories
 mkdir -p ~/code ~/projects ~/.local/bin ~/.claude ~/.claude/rules
 
+# Setup tmux with TPM (Tmux Plugin Manager)
+if [[ ! -d ~/.tmux/plugins/tpm ]]; then
+    git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm
+fi
+
+# Create tmux.conf with session persistence
+cat > ~/.tmux.conf <<'TMUXCONF'
+# ============================================================================
+# Tmux Configuration with Session Persistence
+# ============================================================================
+
+# Modern terminal settings
+set -g default-terminal "tmux-256color"
+set -ag terminal-overrides ",xterm-256color:RGB"
+
+# Use zsh as default shell
+set -g default-shell /usr/bin/zsh
+
+# Start windows and panes at 1, not 0
+set -g base-index 1
+setw -g pane-base-index 1
+
+# Renumber windows when one is closed
+set -g renumber-windows on
+
+# Increase scrollback buffer
+set -g history-limit 50000
+
+# Enable mouse support
+set -g mouse on
+
+# Reduce escape time for vim
+set -sg escape-time 10
+
+# Focus events for vim autoread
+set -g focus-events on
+
+# ============================================================================
+# Key Bindings
+# ============================================================================
+
+# Reload config with prefix + r
+bind r source-file ~/.tmux.conf \; display "Config reloaded!"
+
+# Split panes with | and -
+bind | split-window -h -c "#{pane_current_path}"
+bind - split-window -v -c "#{pane_current_path}"
+
+# New window in current path
+bind c new-window -c "#{pane_current_path}"
+
+# Vim-style pane navigation
+bind h select-pane -L
+bind j select-pane -D
+bind k select-pane -U
+bind l select-pane -R
+
+# ============================================================================
+# Status Bar
+# ============================================================================
+
+set -g status-position bottom
+set -g status-style 'bg=#1e1e2e fg=#cdd6f4'
+set -g status-left '#[fg=#89b4fa,bold][#S] '
+set -g status-right '#[fg=#a6adc8]%Y-%m-%d %H:%M '
+set -g status-left-length 30
+
+# ============================================================================
+# Plugins (managed by TPM)
+# ============================================================================
+
+set -g @plugin 'tmux-plugins/tpm'
+set -g @plugin 'tmux-plugins/tmux-sensible'
+set -g @plugin 'tmux-plugins/tmux-resurrect'
+set -g @plugin 'tmux-plugins/tmux-continuum'
+
+# Resurrect settings
+set -g @resurrect-capture-pane-contents 'on'
+set -g @resurrect-strategy-vim 'session'
+set -g @resurrect-strategy-nvim 'session'
+set -g @resurrect-processes 'vim nvim man less tail top htop psql mysql sqlite3 ssh'
+
+# Continuum settings - auto-save and restore
+set -g @continuum-save-interval '10'
+set -g @continuum-restore 'on'
+set -g @continuum-boot 'off'
+
+# ============================================================================
+# Initialize TPM (keep this line at the very bottom)
+# ============================================================================
+run '~/.tmux/plugins/tpm/tpm'
+TMUXCONF
+
+# Install tmux plugins (TPM install)
+~/.tmux/plugins/tpm/bin/install_plugins 2>/dev/null || true
+
 # Add to zshrc if not already present
 if ! grep -q "DEVBOX_SETUP" ~/.zshrc 2>/dev/null; then
     cat >> ~/.zshrc <<'ZSHRC'
 # DEVBOX_SETUP
+
+# History optimization - persist across reboots, share between sessions
+HISTFILE=~/.zsh_history
+HISTSIZE=50000
+SAVEHIST=50000
+setopt SHARE_HISTORY          # Share history between sessions
+setopt HIST_IGNORE_ALL_DUPS   # Don't save duplicates
+setopt HIST_SAVE_NO_DUPS      # Don't write duplicates
+setopt HIST_REDUCE_BLANKS     # Remove extra blanks
+setopt INC_APPEND_HISTORY     # Add commands immediately
+
+# Tool initialization
 command -v mise &>/dev/null && eval "$(mise activate zsh)"
 command -v zoxide &>/dev/null && eval "$(zoxide init zsh)"
 command -v direnv &>/dev/null && eval "$(direnv hook zsh)"
 export PATH="$HOME/bin:$HOME/.local/bin:$PATH"
 alias ls='eza' ll='eza -la' lg='lazygit' ld='lazydocker'
 alias unlock='source ~/bin/bw-unlock' init='~/bin/devbox-init' check='~/bin/devbox-check'
+alias restore='~/bin/devbox-restore' status='~/bin/devbox-restore status'
+
+# Track last working directory for restore
+DEVBOX_LAST_DIR="$HOME/.cache/devbox/last-working-dir"
+mkdir -p "$(dirname "$DEVBOX_LAST_DIR")"
+chpwd() { echo "$PWD" > "$DEVBOX_LAST_DIR" }
+
+# Auto-restore on SSH login (tmux attach/create)
+if [[ -z "${TMUX:-}" && -n "${SSH_CONNECTION:-}" && -z "${DEVBOX_NO_RESTORE:-}" ]]; then
+    ~/bin/devbox-restore
+fi
 ZSHRC
 fi
 
@@ -318,12 +497,34 @@ cat > ~/.claude/rules/save-progress.md <<'SAVEMD'
 # Save Progress Frequently
 
 This devbox does NOT hibernate - stopping loses all running state.
+However, auto-restore recovers: tmux sessions, last directory, and Docker projects.
+
+## What Auto-Restores
+- tmux session layout (windows, panes, working directories)
+- Programs: vim, nvim, psql, mysql, ssh, htop, etc.
+- Last working directory
+- Docker projects (listed in ~/.config/devbox/docker-projects.txt)
+
+## What Does NOT Restore
+- Running builds/dev servers (must restart manually)
+- Uncommitted git changes (these persist on disk)
+- Unsaved editor buffers (vim sessions restore if saved)
+
+## Tmux Session Persistence
+Sessions auto-save every 10 minutes via tmux-continuum.
+- `prefix + Ctrl-s` - Manual save
+- `prefix + Ctrl-r` - Manual restore
 
 ## Rules
 - Commit work frequently (at least every significant milestone)
 - Push to remote before ending sessions
 - Use descriptive commit messages
 - Never leave uncommitted work when stepping away
+
+## Commands
+- `status` - Show devbox status (Bitwarden, Docker, /home)
+- `restore` - Manually trigger restore
+- `DEVBOX_NO_RESTORE=1 zsh` - Skip auto-restore
 
 ## Before Stopping
 If the user says they're done or stepping away:
@@ -362,6 +563,7 @@ setup_architecture
 
 # Run all steps - failures don't stop execution
 run_step "system_packages" "System packages" setup_system_packages
+run_step "auto_updates" "Auto security updates" setup_auto_updates
 run_step "docker" "Docker" setup_docker
 run_step "tailscale" "Tailscale" setup_tailscale
 run_step "aws_cli" "AWS CLI" setup_aws_cli

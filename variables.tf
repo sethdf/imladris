@@ -16,9 +16,35 @@ variable "architecture" {
 }
 
 variable "instance_type" {
-  description = "EC2 instance type - m7g.xlarge (Graviton) recommended for best price/performance"
+  description = <<-EOT
+    EC2 instance type for the devbox.
+
+    Recommended Graviton (arm64) types in order of preference:
+      1. m7g.xlarge  - Latest gen, best performance (default)
+      2. m6g.xlarge  - Previous gen, often better spot availability
+      3. c7g.xlarge  - Compute optimized, good for builds
+      4. r7g.large   - Memory optimized, 2 vCPU but 16GB RAM
+
+    If spot capacity is unavailable, try the next type in the list.
+    Run 'make spot-check' to verify availability before deploying.
+  EOT
   type        = string
   default     = "m7g.xlarge"
+
+  validation {
+    condition = can(regex("^[a-z][0-9][a-z]?g?\\.(nano|micro|small|medium|large|xlarge|[0-9]+xlarge)$", var.instance_type))
+    error_message = "Instance type must be a valid EC2 instance type format."
+  }
+}
+
+variable "instance_type_fallbacks" {
+  description = <<-EOT
+    Fallback instance types if primary has no spot capacity.
+    Used by 'make spot-check' to show availability across types.
+    For manual fallback: set instance_type to one of these.
+  EOT
+  type    = list(string)
+  default = ["m6g.xlarge", "c7g.xlarge", "r7g.large"]
 }
 
 variable "volume_size" {

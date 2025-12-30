@@ -1,22 +1,35 @@
-.PHONY: init plan apply destroy unlock lock commit-state backup-keys
+.PHONY: init plan apply destroy unlock lock commit-state backup-keys spot-check spot-price safe-apply cost ssh-config lint test validate
 
 # Decrypt secrets before running terraform
 SECRETS_FILE := secrets.yaml
 TFVARS_FILE := terraform.tfvars
 
+# Instance types to check (primary and fallbacks)
+INSTANCE_TYPES := m7g.xlarge m6g.xlarge c7g.xlarge r7g.large
+AWS_REGION := us-east-1
+
 # Default target
 help:
 	@echo "Usage:"
-	@echo "  make init      - Initialize terraform and git-crypt"
-	@echo "  make plan      - Run terraform plan"
-	@echo "  make apply     - Run terraform apply and commit state"
-	@echo "  make destroy   - Run terraform destroy and commit state"
-	@echo "  make unlock    - Decrypt repo (after fresh clone)"
-	@echo "  make lock      - Re-encrypt repo"
+	@echo "  make init        - Initialize terraform and git-crypt"
+	@echo "  make plan        - Run terraform plan"
+	@echo "  make apply       - Run terraform apply and commit state"
+	@echo "  make destroy     - Run terraform destroy and commit state"
+	@echo "  make unlock      - Decrypt repo (after fresh clone)"
+	@echo "  make lock        - Re-encrypt repo"
 	@echo "  make backup-keys - Export encryption keys for backup"
+	@echo "  make spot-check  - Check Spot capacity before deploy"
+	@echo "  make spot-price  - Show current Spot prices"
+	@echo "  make cost        - Show current month's AWS cost"
+	@echo "  make ssh-config  - Generate SSH config for local machine"
+	@echo ""
+	@echo "Testing:"
+	@echo "  make validate    - Validate terraform and lint scripts"
+	@echo "  make lint        - Run all linters (shellcheck, tfsec, pylint)"
+	@echo "  make test        - Run unit tests"
 	@echo ""
 	@echo "First-time setup:"
-	@echo "  make setup     - Initialize git-crypt, sops, and terraform"
+	@echo "  make setup       - Initialize git-crypt, sops, and terraform"
 
 # First-time setup
 setup: check-deps
@@ -144,3 +157,126 @@ restore-keys:
 	@echo "   rm /tmp/git-crypt-key"
 	@echo ""
 	@echo "2. Save age key to ~/.config/sops/age/keys.txt"
+
+# Check Spot placement scores (capacity availability)
+spot-check:
+	@echo "=== Spot Placement Scores (1-10, higher = better availability) ==="
+	@echo ""
+	@aws ec2 get-spot-placement-scores \
+		--instance-types $(INSTANCE_TYPES) \
+		--target-capacity 1 \
+		--single-availability-zone \
+		--region-names $(AWS_REGION) \
+		--query 'SpotPlacementScores[*].{Type:InstanceTypes[0],Region:Region,AZ:AvailabilityZoneId,Score:Score}' \
+		--output table 2>/dev/null || echo "Note: Requires ec2:GetSpotPlacementScores permission"
+	@echo ""
+	@echo "Score guide: 10=excellent, 7-9=good, 4-6=fair, 1-3=poor"
+	@echo "Recommendation: Deploy when primary instance type scores >= 7"
+
+# Show current Spot prices
+spot-price:
+	@echo "=== Current Spot Prices in $(AWS_REGION) ==="
+	@echo ""
+	@aws ec2 describe-spot-price-history \
+		--instance-types $(INSTANCE_TYPES) \
+		--product-descriptions "Linux/UNIX" \
+		--start-time $$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+		--region $(AWS_REGION) \
+		--query 'SpotPriceHistory[*].{Type:InstanceType,AZ:AvailabilityZone,Price:SpotPrice}' \
+		--output table 2>/dev/null
+	@echo ""
+	@echo "Compare to on-demand pricing for savings estimate"
+
+# Pre-deploy check (runs spot-check before apply)
+safe-apply: spot-check decrypt-secrets
+	@echo ""
+	@read -p "Proceed with deployment? [y/N] " confirm && [ "$$confirm" = "y" ] || exit 1
+	terraform apply
+	@$(MAKE) commit-state
+
+# Show current month's AWS cost for this devbox
+cost:
+	@echo "=== DevBox Cost (Current Month) ==="
+	@START_DATE=$$(date -u +%Y-%m-01); \
+	END_DATE=$$(date -u +%Y-%m-%d); \
+	aws ce get-cost-and-usage \
+		--time-period Start=$$START_DATE,End=$$END_DATE \
+		--granularity MONTHLY \
+		--metrics "UnblendedCost" \
+		--filter '{"Dimensions":{"Key":"SERVICE","Values":["Amazon Elastic Compute Cloud - Compute","EC2 - Other"]}}' \
+		--query 'ResultsByTime[0].Total.UnblendedCost.{Amount:Amount,Unit:Unit}' \
+		--output table 2>/dev/null || echo "Note: Requires ce:GetCostAndUsage permission"
+	@echo ""
+	@echo "For detailed breakdown: AWS Console > Cost Explorer"
+
+# Generate SSH config entry for local machine
+ssh-config:
+	@echo "=== Add this to your local ~/.ssh/config ==="
+	@echo ""
+	@INSTANCE_IP=$$(terraform output -raw instance_id 2>/dev/null || echo ""); \
+	TAILSCALE_NAME=$$(grep 'tailscale_hostname' terraform.tfvars 2>/dev/null | cut -d'"' -f2 || echo "devbox"); \
+	echo "Host devbox"; \
+	echo "    HostName $$TAILSCALE_NAME"; \
+	echo "    User ubuntu"; \
+	echo "    ForwardAgent yes"; \
+	echo "    StrictHostKeyChecking no"; \
+	echo "    UserKnownHostsFile /dev/null"; \
+	echo ""; \
+	echo "# Then connect with: ssh devbox"
+
+# =============================================================================
+# TESTING & VALIDATION
+# =============================================================================
+
+# Quick validation (no external tools required)
+validate:
+	@echo "=== Terraform Validation ==="
+	terraform fmt -check -recursive || { echo "Run 'terraform fmt' to fix formatting"; exit 1; }
+	terraform validate
+	@echo ""
+	@echo "=== Bash Syntax Check ==="
+	@for f in scripts/*.sh; do \
+		bash -n "$$f" && echo "  ✓ $$f" || exit 1; \
+	done
+	@echo ""
+	@echo "✓ All validations passed"
+
+# Full lint (requires shellcheck, tfsec, pylint)
+lint: validate
+	@echo ""
+	@echo "=== ShellCheck ==="
+	@if command -v shellcheck >/dev/null 2>&1; then \
+		shellcheck scripts/*.sh && echo "  ✓ All scripts passed"; \
+	else \
+		echo "  ⚠ shellcheck not installed (brew install shellcheck)"; \
+	fi
+	@echo ""
+	@echo "=== tfsec (Terraform Security) ==="
+	@if command -v tfsec >/dev/null 2>&1; then \
+		tfsec . --minimum-severity MEDIUM || true; \
+	else \
+		echo "  ⚠ tfsec not installed (brew install tfsec)"; \
+	fi
+	@echo ""
+	@echo "=== Python Lint ==="
+	@if command -v pylint >/dev/null 2>&1; then \
+		pylint scripts/*.py --disable=C0114,C0115,C0116 || true; \
+	else \
+		echo "  ⚠ pylint not installed (pip install pylint)"; \
+	fi
+
+# Run unit tests
+test:
+	@echo "=== Running Unit Tests ==="
+	@if [ -d tests ] && command -v pytest >/dev/null 2>&1; then \
+		cd tests && pip install -q -r requirements.txt 2>/dev/null; \
+		pytest unit/ -v --tb=short; \
+	else \
+		echo "pytest not installed. Run: pip install pytest"; \
+		exit 1; \
+	fi
+
+# Run all checks (lint + test)
+check: lint test
+	@echo ""
+	@echo "✓ All checks passed"

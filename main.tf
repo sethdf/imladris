@@ -348,8 +348,8 @@ resource "aws_iam_role_policy" "spot_restart" {
 data "archive_file" "spot_restart" {
   count       = var.use_spot ? 1 : 0
   type        = "zip"
-  source_file = "${path.module}/scripts/spot-restart.py"
-  output_path = "${path.module}/.terraform/spot-restart.zip"
+  source_file = "${path.module}/scripts/spot_restart.py"
+  output_path = "${path.module}/.terraform/spot_restart.zip"
 }
 
 resource "aws_lambda_function" "spot_restart" {
@@ -357,7 +357,7 @@ resource "aws_lambda_function" "spot_restart" {
   filename         = data.archive_file.spot_restart[0].output_path
   function_name    = "devbox-spot-restart"
   role             = aws_iam_role.spot_restart[0].arn
-  handler          = "spot-restart.lambda_handler"
+  handler          = "spot_restart.lambda_handler"
   source_code_hash = data.archive_file.spot_restart[0].output_base64sha256
   runtime          = "python3.12"
   timeout          = 300 # 5 minutes for retries
