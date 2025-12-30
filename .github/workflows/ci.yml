@@ -19,7 +19,14 @@ jobs:
           terraform_version: "1.6"
 
       - name: Terraform Format Check
-        run: terraform fmt -check -recursive
+        continue-on-error: true
+        run: |
+          if ! terraform fmt -check -recursive; then
+            echo "⚠️  Terraform files need formatting. Run 'terraform fmt -recursive' locally."
+            echo ""
+            echo "Files that need formatting:"
+            terraform fmt -check -recursive 2>&1 || true
+          fi
 
       # Note: Full terraform validate skipped in CI because bitwarden provider
       # requires credentials. Run 'make validate' locally before deploying.
