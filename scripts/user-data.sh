@@ -265,8 +265,9 @@ setup_bootstrap_scripts() {
     curl -fsSL "$SCRIPTS_BASE/bw-unlock.sh" -o /home/ubuntu/bin/bw-unlock || log "Failed to download bw-unlock"
     curl -fsSL "$SCRIPTS_BASE/devbox-init.sh" -o /home/ubuntu/bin/devbox-init || log "Failed to download devbox-init"
     curl -fsSL "$SCRIPTS_BASE/devbox-check.sh" -o /home/ubuntu/bin/devbox-check || log "Failed to download devbox-check"
+    curl -fsSL "$SCRIPTS_BASE/devbox-restore.sh" -o /home/ubuntu/bin/devbox-restore || log "Failed to download devbox-restore"
 
-    chmod +x /home/ubuntu/bin/bw-unlock /home/ubuntu/bin/devbox-init /home/ubuntu/bin/devbox-check 2>/dev/null || true
+    chmod +x /home/ubuntu/bin/bw-unlock /home/ubuntu/bin/devbox-init /home/ubuntu/bin/devbox-check /home/ubuntu/bin/devbox-restore 2>/dev/null || true
     chown -R ubuntu:ubuntu /home/ubuntu/bin
 }
 
@@ -293,6 +294,17 @@ command -v direnv &>/dev/null && eval "$(direnv hook zsh)"
 export PATH="$HOME/bin:$HOME/.local/bin:$PATH"
 alias ls='eza' ll='eza -la' lg='lazygit' ld='lazydocker'
 alias unlock='source ~/bin/bw-unlock' init='~/bin/devbox-init' check='~/bin/devbox-check'
+alias restore='~/bin/devbox-restore' status='~/bin/devbox-restore status'
+
+# Track last working directory for restore
+DEVBOX_LAST_DIR="$HOME/.cache/devbox/last-working-dir"
+mkdir -p "$(dirname "$DEVBOX_LAST_DIR")"
+chpwd() { echo "$PWD" > "$DEVBOX_LAST_DIR" }
+
+# Auto-restore on SSH login (tmux attach/create)
+if [[ -z "${TMUX:-}" && -n "${SSH_CONNECTION:-}" && -z "${DEVBOX_NO_RESTORE:-}" ]]; then
+    ~/bin/devbox-restore
+fi
 ZSHRC
 fi
 
@@ -318,12 +330,28 @@ cat > ~/.claude/rules/save-progress.md <<'SAVEMD'
 # Save Progress Frequently
 
 This devbox does NOT hibernate - stopping loses all running state.
+However, auto-restore recovers: tmux sessions, last directory, and Docker projects.
+
+## What Auto-Restores
+- tmux session (auto-attaches on SSH login)
+- Last working directory
+- Docker projects (listed in ~/.config/devbox/docker-projects.txt)
+
+## What Does NOT Restore
+- Running processes (except Docker containers)
+- Uncommitted git changes (these persist on disk)
+- Open editor buffers (use VS Code Remote or save frequently)
 
 ## Rules
 - Commit work frequently (at least every significant milestone)
 - Push to remote before ending sessions
 - Use descriptive commit messages
 - Never leave uncommitted work when stepping away
+
+## Commands
+- `status` - Show devbox status (Bitwarden, Docker, /home)
+- `restore` - Manually trigger restore
+- `DEVBOX_NO_RESTORE=1 zsh` - Skip auto-restore
 
 ## Before Stopping
 If the user says they're done or stepping away:
