@@ -351,6 +351,84 @@ setup_lifemaestro() {
     fi
 }
 
+setup_baton() {
+    log "=== Setting up Baton ==="
+
+    if [[ -d ~/code/baton ]]; then
+        log "Baton already installed"
+        # Ensure service is running
+        if ! systemctl --user is-active --quiet baton 2>/dev/null; then
+            systemctl --user start baton 2>/dev/null || true
+        fi
+        return 0
+    fi
+
+    local IDENTITY
+    IDENTITY=$(bw get item "devbox/identity" 2>/dev/null) || return 0
+
+    local BATON_REPO
+    BATON_REPO=$(echo "$IDENTITY" | jq -r '.fields[]? | select(.name=="baton_repo") | .value // empty')
+
+    if [[ -z "$BATON_REPO" ]]; then
+        log "baton_repo not configured in devbox/identity (optional)"
+        return 0
+    fi
+
+    if [[ ! -f ~/.ssh/id_ed25519_home ]]; then
+        log "SSH key not available for cloning"
+        return 0
+    fi
+
+    mkdir -p ~/code
+    git clone "git@github.com-home:${BATON_REPO}.git" ~/code/baton || { log "Failed to clone baton"; return 0; }
+
+    # Install baton
+    if [[ -f ~/code/baton/pyproject.toml ]]; then
+        (cd ~/code/baton && pip install --user -e .)
+        log "Baton installed"
+    fi
+
+    # Copy config
+    mkdir -p ~/.config/lifemaestro
+    if [[ ! -f ~/.config/lifemaestro/baton.toml ]] && [[ -f ~/code/baton/baton.example.toml ]]; then
+        cp ~/code/baton/baton.example.toml ~/.config/lifemaestro/baton.toml
+        log "Baton config copied"
+    fi
+
+    # Create systemd user service
+    mkdir -p ~/.config/systemd/user
+    cat > ~/.config/systemd/user/baton.service <<'BATONSERVICE'
+[Unit]
+Description=Baton AI Proxy Gateway
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/code/baton
+ExecStart=%h/.local/bin/uvicorn baton.server:app --host 127.0.0.1 --port 4000
+Restart=on-failure
+RestartSec=5
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=default.target
+BATONSERVICE
+
+    # Enable and start service
+    systemctl --user daemon-reload
+    systemctl --user enable baton
+    systemctl --user start baton
+    log "Baton service started"
+
+    # Wait for startup
+    sleep 2
+    if curl -sf http://127.0.0.1:4000/healthz &>/dev/null; then
+        log_success "Baton responding at http://127.0.0.1:4000"
+    else
+        log "Baton may still be starting..."
+    fi
+}
+
 setup_himalaya() {
     log "=== Setting up Himalaya (email) ==="
     mkdir -p ~/.config/himalaya
@@ -531,6 +609,7 @@ run_step "git_identity" "Git identity" setup_git_identity
 run_step "aws_config" "AWS config" setup_aws_config
 run_step "claude_sessions" "Claude sessions" setup_claude_sessions
 run_step "lifemaestro" "LifeMaestro" setup_lifemaestro
+run_step "baton" "Baton proxy" setup_baton
 run_step "himalaya" "Himalaya email" setup_himalaya
 run_step "gcalcli" "gcalcli calendar" setup_gcalcli
 run_step "ms365" "MS365 email/calendar" setup_ms365
