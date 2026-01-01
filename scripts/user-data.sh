@@ -590,6 +590,9 @@ else
     log_success "All steps completed successfully"
 fi
 
+# Fix ownership of any root-owned files in /home/ubuntu
+chown -R ubuntu:ubuntu /home/ubuntu
+
 # Show checkpoint status
 log "Checkpoint file: $CHECKPOINT_FILE"
 cat "$CHECKPOINT_FILE"
