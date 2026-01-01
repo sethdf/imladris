@@ -469,7 +469,7 @@ mkdir -p "$(dirname "$DEVBOX_LAST_DIR")"
 chpwd() { echo "$PWD" > "$DEVBOX_LAST_DIR" }
 
 # Auto-restore on SSH login (tmux attach/create)
-if [[ -z "${TMUX:-}" && -n "${SSH_CONNECTION:-}" && -z "${DEVBOX_NO_RESTORE:-}" ]]; then
+if [[ -z "$${TMUX:-}" && -n "$${SSH_CONNECTION:-}" && -z "$${DEVBOX_NO_RESTORE:-}" ]]; then
     ~/bin/devbox-restore
 fi
 ZSHRC

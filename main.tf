@@ -155,7 +155,8 @@ resource "aws_instance" "devbox" {
 
   # User data - Tailscale auth key from Bitwarden
   # All other secrets bootstrapped from Bitwarden after first login
-  user_data = templatefile("${path.module}/scripts/user-data.sh", {
+  # Compressed with gzip (AWS auto-decompresses) to stay under 16KB limit
+  user_data_base64 = base64gzip(templatefile("${path.module}/scripts/user-data.sh", {
     hostname            = var.hostname
     timezone            = var.schedule_timezone
     tailscale_auth_key  = data.bitwarden_item_login.tailscale.password
@@ -163,11 +164,14 @@ resource "aws_instance" "devbox" {
     tailscale_hostname  = var.tailscale_hostname
     architecture        = var.architecture
     github_username     = var.github_username
-  })
+    distro_id           = "ubuntu"
+    distro_codename     = "noble"
+    sns_topic_arn       = length(var.notification_emails) > 0 ? aws_sns_topic.devbox[0].arn : ""
+  }))
 
   # Don't recreate instance if user-data changes
   lifecycle {
-    ignore_changes = [user_data]
+    ignore_changes = [user_data_base64]
   }
 
   tags = {
