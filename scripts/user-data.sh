@@ -178,8 +178,8 @@ setup_python() {
 }
 
 setup_npm_packages() {
-    # Essential CLI tools - LifeMaestro's install.sh will handle bw and claude
-    npm install -g tldr @pnp/cli-microsoft365 || log "Some npm packages failed (non-fatal)"
+    # Essential CLI tools (bw needed for devbox-init, claude installed by maestro)
+    npm install -g tldr @pnp/cli-microsoft365 @bitwarden/cli || log "Some npm packages failed (non-fatal)"
 }
 
 setup_modern_cli_tools() {
