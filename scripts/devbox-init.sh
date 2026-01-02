@@ -74,7 +74,7 @@ setup_luks() {
 
     log "=== Setting up encrypted data volume ==="
     local LUKS_KEY
-    LUKS_KEY=$(bw get password "devbox/luks-key" 2>/dev/null) || { log_error "devbox/luks-key not found in Bitwarden"; return 1; }
+    LUKS_KEY=$(bw get password "luks-key" 2>/dev/null) || { log_error "luks-key not found in Bitwarden"; return 1; }
 
     if ! sudo cryptsetup isLuks "$DATA_DEV" 2>/dev/null; then
         log "Formatting $DATA_DEV with LUKS (first time setup)..."
@@ -114,27 +114,27 @@ setup_ssh_keys() {
     log "=== Setting up SSH keys ==="
     mkdir -p ~/.ssh && chmod 700 ~/.ssh
 
-    # Home key
+    # Home key (password field contains the SSH private key)
     if [[ ! -f ~/.ssh/id_ed25519_home ]]; then
-        if bw get item "devbox/github-ssh-home" &>/dev/null; then
-            bw get item "devbox/github-ssh-home" | jq -r '.fields[]? | select(.name=="private_key") | .value' > ~/.ssh/id_ed25519_home
+        if bw get item "github-ssh-home" &>/dev/null; then
+            bw get password "github-ssh-home" > ~/.ssh/id_ed25519_home
             chmod 600 ~/.ssh/id_ed25519_home
             log "Home SSH key installed"
         else
-            log "devbox/github-ssh-home not found (optional)"
+            log "github-ssh-home not found (optional)"
         fi
     else
         log "Home SSH key already exists"
     fi
 
-    # Work key
+    # Work key (password field contains the SSH private key)
     if [[ ! -f ~/.ssh/id_ed25519_work ]]; then
-        if bw get item "devbox/github-ssh-work" &>/dev/null; then
-            bw get item "devbox/github-ssh-work" | jq -r '.fields[]? | select(.name=="private_key") | .value' > ~/.ssh/id_ed25519_work
+        if bw get item "github-ssh-work" &>/dev/null; then
+            bw get password "github-ssh-work" > ~/.ssh/id_ed25519_work
             chmod 600 ~/.ssh/id_ed25519_work
             log "Work SSH key installed"
         else
-            log "devbox/github-ssh-work not found (optional)"
+            log "github-ssh-work not found (optional)"
         fi
     else
         log "Work SSH key already exists"
@@ -169,12 +169,12 @@ setup_github_cli() {
         return 0
     fi
 
-    if bw get item "devbox/github-token" &>/dev/null; then
-        bw get password "devbox/github-token" | gh auth login --with-token
+    if bw get item "github-token" &>/dev/null; then
+        bw get password "github-token" | gh auth login --with-token
         gh config set git_protocol ssh
         log "GitHub CLI authenticated"
     else
-        log "devbox/github-token not found (optional)"
+        log "github-token not found (optional)"
     fi
 }
 
@@ -182,18 +182,22 @@ setup_git_identity() {
     log "=== Setting up git identity ==="
     mkdir -p ~/.config/git
 
-    local IDENTITY
-    IDENTITY=$(bw get item "devbox/identity" 2>/dev/null) || { log_error "devbox/identity not found in Bitwarden"; return 1; }
-
-    local GIT_NAME_HOME GIT_EMAIL_HOME GIT_NAME_WORK GIT_EMAIL_WORK
-    GIT_NAME_HOME=$(echo "$IDENTITY" | jq -r '.fields[]? | select(.name=="git_name_home") | .value // empty')
-    GIT_EMAIL_HOME=$(echo "$IDENTITY" | jq -r '.fields[]? | select(.name=="git_email_home") | .value // empty')
-    GIT_NAME_WORK=$(echo "$IDENTITY" | jq -r '.fields[]? | select(.name=="git_name_work") | .value // empty')
-    GIT_EMAIL_WORK=$(echo "$IDENTITY" | jq -r '.fields[]? | select(.name=="git_email_work") | .value // empty')
+    # Get home identity from github-home item
+    local GH_HOME GIT_NAME_HOME GIT_EMAIL_HOME
+    GH_HOME=$(bw get item "github-home" 2>/dev/null) || { log_error "github-home not found in Bitwarden"; return 1; }
+    GIT_NAME_HOME=$(echo "$GH_HOME" | jq -r '.fields[]? | select(.name=="git_name") | .value // empty')
+    GIT_EMAIL_HOME=$(echo "$GH_HOME" | jq -r '.fields[]? | select(.name=="git_email") | .value // empty')
 
     if [[ -z "$GIT_NAME_HOME" || -z "$GIT_EMAIL_HOME" ]]; then
-        log_error "devbox/identity missing required fields (git_name_home, git_email_home)"
+        log_error "github-home missing required fields (git_name, git_email)"
         return 1
+    fi
+
+    # Get work identity from github-work item (optional)
+    local GH_WORK GIT_NAME_WORK GIT_EMAIL_WORK
+    if GH_WORK=$(bw get item "github-work" 2>/dev/null); then
+        GIT_NAME_WORK=$(echo "$GH_WORK" | jq -r '.fields[]? | select(.name=="git_name") | .value // empty')
+        GIT_EMAIL_WORK=$(echo "$GH_WORK" | jq -r '.fields[]? | select(.name=="git_email") | .value // empty')
     fi
 
     # Home config
@@ -243,17 +247,16 @@ setup_aws_config() {
         return 0
     fi
 
-    local IDENTITY
-    IDENTITY=$(bw get item "devbox/identity" 2>/dev/null) || return 0
+    local AWS_HOME AWS_ACCOUNT_ID AWS_SSO_START_URL AWS_SSO_REGION AWS_ROLE_NAME
+    AWS_HOME=$(bw get item "aws-home" 2>/dev/null) || { log "aws-home not found (optional)"; return 0; }
 
-    local AWS_ACCOUNT_ID AWS_SSO_START_URL AWS_SSO_REGION AWS_ROLE_NAME
-    AWS_ACCOUNT_ID=$(echo "$IDENTITY" | jq -r '.fields[]? | select(.name=="aws_account_id") | .value // empty')
-    AWS_SSO_START_URL=$(echo "$IDENTITY" | jq -r '.fields[]? | select(.name=="aws_sso_start_url") | .value // empty')
-    AWS_SSO_REGION=$(echo "$IDENTITY" | jq -r '.fields[]? | select(.name=="aws_sso_region") | .value // empty')
-    AWS_ROLE_NAME=$(echo "$IDENTITY" | jq -r '.fields[]? | select(.name=="aws_role_name") | .value // empty')
+    AWS_ACCOUNT_ID=$(echo "$AWS_HOME" | jq -r '.fields[]? | select(.name=="account_id") | .value // empty')
+    AWS_SSO_START_URL=$(echo "$AWS_HOME" | jq -r '.fields[]? | select(.name=="sso_start_url") | .value // empty')
+    AWS_SSO_REGION=$(echo "$AWS_HOME" | jq -r '.fields[]? | select(.name=="sso_region") | .value // empty')
+    AWS_ROLE_NAME=$(echo "$AWS_HOME" | jq -r '.fields[]? | select(.name=="role_name") | .value // empty')
 
     if [[ -z "$AWS_ACCOUNT_ID" || -z "$AWS_SSO_START_URL" ]]; then
-        log "AWS SSO config not in devbox/identity (optional)"
+        log "aws-home missing required fields (optional)"
         return 0
     fi
 
@@ -282,14 +285,13 @@ setup_claude_sessions() {
         return 0
     fi
 
-    local IDENTITY
-    IDENTITY=$(bw get item "devbox/identity" 2>/dev/null) || return 0
-
-    local CLAUDE_SESSIONS_REPO
-    CLAUDE_SESSIONS_REPO=$(echo "$IDENTITY" | jq -r '.fields[]? | select(.name=="claude_sessions_repo") | .value // empty')
+    # Get repo from github-home item
+    local GH_HOME CLAUDE_SESSIONS_REPO
+    GH_HOME=$(bw get item "github-home" 2>/dev/null) || return 0
+    CLAUDE_SESSIONS_REPO=$(echo "$GH_HOME" | jq -r '.fields[]? | select(.name=="claude_sessions_repo") | .value // empty')
 
     if [[ -z "$CLAUDE_SESSIONS_REPO" ]]; then
-        log "claude_sessions_repo not configured in devbox/identity (optional)"
+        log "claude_sessions_repo not configured in github-home (optional)"
         return 0
     fi
 
@@ -300,10 +302,10 @@ setup_claude_sessions() {
 
     git clone "git@github.com-home:${CLAUDE_SESSIONS_REPO}.git" ~/.config/claude-sessions 2>/dev/null || { log "Failed to clone claude-sessions"; return 0; }
 
-    # Unlock with git-crypt if key available
-    if bw get item "devbox/git-crypt-key" &>/dev/null; then
+    # Unlock with git-crypt if key available (password field contains base64 key)
+    if bw get item "git-crypt-key" &>/dev/null; then
         cd ~/.config/claude-sessions || return 0
-        bw get item "devbox/git-crypt-key" | jq -r '.fields[]? | select(.name=="key_b64") | .value' | base64 -d > /tmp/gc-key
+        bw get password "git-crypt-key" | base64 -d > /tmp/gc-key
         git-crypt unlock /tmp/gc-key 2>/dev/null && log "claude-sessions unlocked" || log "git-crypt unlock failed"
         rm -f /tmp/gc-key
         cd - >/dev/null || true
@@ -318,14 +320,13 @@ setup_lifemaestro() {
         return 0
     fi
 
-    local IDENTITY
-    IDENTITY=$(bw get item "devbox/identity" 2>/dev/null) || return 0
-
-    local LIFEMAESTRO_REPO
-    LIFEMAESTRO_REPO=$(echo "$IDENTITY" | jq -r '.fields[]? | select(.name=="lifemaestro_repo") | .value // empty')
+    # Get repo from github-home item
+    local GH_HOME LIFEMAESTRO_REPO
+    GH_HOME=$(bw get item "github-home" 2>/dev/null) || return 0
+    LIFEMAESTRO_REPO=$(echo "$GH_HOME" | jq -r '.fields[]? | select(.name=="lifemaestro_repo") | .value // empty')
 
     if [[ -z "$LIFEMAESTRO_REPO" ]]; then
-        log "lifemaestro_repo not configured in devbox/identity (optional)"
+        log "lifemaestro_repo not configured in github-home (optional)"
         return 0
     fi
 
@@ -363,14 +364,13 @@ setup_baton() {
         return 0
     fi
 
-    local IDENTITY
-    IDENTITY=$(bw get item "devbox/identity" 2>/dev/null) || return 0
-
-    local BATON_REPO
-    BATON_REPO=$(echo "$IDENTITY" | jq -r '.fields[]? | select(.name=="baton_repo") | .value // empty')
+    # Get repo from github-home item
+    local GH_HOME BATON_REPO
+    GH_HOME=$(bw get item "github-home" 2>/dev/null) || return 0
+    BATON_REPO=$(echo "$GH_HOME" | jq -r '.fields[]? | select(.name=="baton_repo") | .value // empty')
 
     if [[ -z "$BATON_REPO" ]]; then
-        log "baton_repo not configured in devbox/identity (optional)"
+        log "baton_repo not configured in github-home (optional)"
         return 0
     fi
 
@@ -438,15 +438,15 @@ setup_himalaya() {
         return 0
     fi
 
-    if ! bw get item "devbox/gmail-oauth" &>/dev/null; then
-        log "devbox/gmail-oauth not in Bitwarden (optional)"
+    if ! bw get item "gmail-oauth" &>/dev/null; then
+        log "gmail-oauth not in Bitwarden (optional)"
         return 0
     fi
 
     local GMAIL_EMAIL GMAIL_CLIENT_ID GMAIL_CLIENT_SECRET
-    GMAIL_EMAIL=$(bw get item "devbox/gmail-oauth" | jq -r '.login.username // empty')
-    GMAIL_CLIENT_ID=$(bw get item "devbox/gmail-oauth" | jq -r '.fields[]? | select(.name=="client_id") | .value // empty')
-    GMAIL_CLIENT_SECRET=$(bw get item "devbox/gmail-oauth" | jq -r '.fields[]? | select(.name=="client_secret") | .value // empty')
+    GMAIL_EMAIL=$(bw get item "gmail-oauth" | jq -r '.login.username // empty')
+    GMAIL_CLIENT_ID=$(bw get item "gmail-oauth" | jq -r '.fields[]? | select(.name=="client_id") | .value // empty')
+    GMAIL_CLIENT_SECRET=$(bw get item "gmail-oauth" | jq -r '.fields[]? | select(.name=="client_secret") | .value // empty')
 
     if [[ -z "$GMAIL_EMAIL" || -z "$GMAIL_CLIENT_ID" || -z "$GMAIL_CLIENT_SECRET" ]]; then
         log "Gmail OAuth credentials incomplete"
@@ -495,14 +495,14 @@ setup_gcalcli() {
         return 0
     fi
 
-    if ! bw get item "devbox/gmail-oauth" &>/dev/null; then
-        log "devbox/gmail-oauth not in Bitwarden (optional)"
+    if ! bw get item "gmail-oauth" &>/dev/null; then
+        log "gmail-oauth not in Bitwarden (optional)"
         return 0
     fi
 
     local GMAIL_CLIENT_ID GMAIL_CLIENT_SECRET
-    GMAIL_CLIENT_ID=$(bw get item "devbox/gmail-oauth" | jq -r '.fields[]? | select(.name=="client_id") | .value // empty')
-    GMAIL_CLIENT_SECRET=$(bw get item "devbox/gmail-oauth" | jq -r '.fields[]? | select(.name=="client_secret") | .value // empty')
+    GMAIL_CLIENT_ID=$(bw get item "gmail-oauth" | jq -r '.fields[]? | select(.name=="client_id") | .value // empty')
+    GMAIL_CLIENT_SECRET=$(bw get item "gmail-oauth" | jq -r '.fields[]? | select(.name=="client_secret") | .value // empty')
 
     if [[ -z "$GMAIL_CLIENT_ID" || -z "$GMAIL_CLIENT_SECRET" ]]; then
         return 0
@@ -521,16 +521,16 @@ GCALCLI
 setup_ms365() {
     log "=== Setting up MS365 (email + calendar) ==="
 
-    if ! bw get item "devbox/ms365-oauth" &>/dev/null; then
-        log "devbox/ms365-oauth not in Bitwarden (optional)"
+    if ! bw get item "ms365-oauth" &>/dev/null; then
+        log "ms365-oauth not in Bitwarden (optional)"
         return 0
     fi
 
     local MS365_EMAIL MS365_CLIENT_ID MS365_CLIENT_SECRET MS365_TENANT_ID
-    MS365_EMAIL=$(bw get item "devbox/ms365-oauth" | jq -r '.login.username // empty')
-    MS365_CLIENT_ID=$(bw get item "devbox/ms365-oauth" | jq -r '.fields[]? | select(.name=="client_id") | .value // empty')
-    MS365_CLIENT_SECRET=$(bw get item "devbox/ms365-oauth" | jq -r '.fields[]? | select(.name=="client_secret") | .value // empty')
-    MS365_TENANT_ID=$(bw get item "devbox/ms365-oauth" | jq -r '.fields[]? | select(.name=="tenant_id") | .value // empty')
+    MS365_EMAIL=$(bw get item "ms365-oauth" | jq -r '.login.username // empty')
+    MS365_CLIENT_ID=$(bw get item "ms365-oauth" | jq -r '.fields[]? | select(.name=="client_id") | .value // empty')
+    MS365_CLIENT_SECRET=$(bw get item "ms365-oauth" | jq -r '.fields[]? | select(.name=="client_secret") | .value // empty')
+    MS365_TENANT_ID=$(bw get item "ms365-oauth" | jq -r '.fields[]? | select(.name=="tenant_id") | .value // empty')
 
     if [[ -z "$MS365_EMAIL" || -z "$MS365_CLIENT_ID" || -z "$MS365_TENANT_ID" ]]; then
         log "MS365 OAuth credentials incomplete"

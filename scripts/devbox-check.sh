@@ -36,11 +36,12 @@ echo ""
 # 2. Check required Bitwarden items
 echo "Bitwarden Items:"
 REQUIRED_ITEMS=(
-    "devbox/luks-key:LUKS encryption key"
-    "devbox/github-ssh-home:GitHub SSH key (home)"
-    "devbox/github-ssh-work:GitHub SSH key (work)"
-    "devbox/github-token:GitHub personal access token"
-    "devbox/identity:Git and AWS identity config"
+    "luks-key:LUKS encryption key"
+    "github-ssh-home:GitHub SSH key (home)"
+    "github-ssh-work:GitHub SSH key (work)"
+    "github-token:GitHub personal access token"
+    "github-home:GitHub home identity"
+    "aws-home:AWS SSO config"
 )
 
 if [[ "$BW_STATUS" == "unlocked" ]]; then
@@ -56,9 +57,10 @@ if [[ "$BW_STATUS" == "unlocked" ]]; then
     done
 
     OPTIONAL_ITEMS=(
-        "devbox/git-crypt-key:Git-crypt key (for encrypted repos)"
-        "devbox/gmail-oauth:Gmail OAuth credentials"
-        "devbox/ms365-oauth:MS365 OAuth credentials"
+        "github-work:GitHub work identity"
+        "git-crypt-key:Git-crypt key (for encrypted repos)"
+        "gmail-oauth:Gmail OAuth credentials"
+        "ms365-oauth:MS365 OAuth credentials"
     )
     for ITEM_DESC in "${OPTIONAL_ITEMS[@]}"; do
         ITEM_NAME="${ITEM_DESC%%:*}"

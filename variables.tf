@@ -169,14 +169,17 @@ variable "tailscale_hostname" {
 # BW credentials stored in lifemaestro/secrets/ (gitignored):
 #   - bw-master, bw-client-id, bw-client-secret
 #
-# Required Bitwarden items:
-#   - devbox/tailscale-auth-key (password field) - used at terraform apply
-#   - devbox/tailscale-api-key  (password field) - API key for device cleanup
-#   - devbox/luks-key           (password field) - LUKS encryption for data volume
-#   - devbox/github-ssh-home    (custom field: private_key)
-#   - devbox/github-ssh-work    (custom field: private_key)
-#   - devbox/github-token       (password field)
-#   - devbox/git-crypt-key      (custom field: key_b64)
+# Required Bitwarden items (in dacapo folder):
+#   - tailscale-auth-key (password field) - used at terraform apply
+#   - tailscale-api-key  (password field) - API key for device cleanup
+#   - luks-key           (password field) - LUKS encryption for data volume
+#   - github-ssh-home    (password field) - SSH private key
+#   - github-ssh-work    (password field) - SSH private key
+#   - github-token       (password field) - PAT for gh CLI
+#   - git-crypt-key      (password field) - base64-encoded key
+#   - github-home        (secure note) - git_name, git_email, github_username
+#   - github-work        (secure note) - git_name, git_email
+#   - aws-home           (secure note) - account_id, sso_start_url, sso_region, role_name
 #
 # After first SSH login, run:
 #   source ~/bin/bw-unlock    # Unlock Bitwarden vault

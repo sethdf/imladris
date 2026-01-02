@@ -22,12 +22,12 @@ provider "bitwarden" {
   client_secret   = trimspace(file("${local.bw_secrets_path}/bw-client-secret"))
 }
 
-# Tailscale auth key for devbox to join tailnet
+# Tailscale auth key for devbox to join tailnet (dacapo folder)
 data "bitwarden_item_login" "tailscale" {
-  search = "devbox/tailscale-auth-key"
+  search = "tailscale-auth-key"
 }
 
-# Tailscale API key for device cleanup
+# Tailscale API key for device cleanup (dacapo folder)
 data "bitwarden_item_login" "tailscale_api" {
-  search = "devbox/tailscale-api-key"
+  search = "tailscale-api-key"
 }
