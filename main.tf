@@ -165,6 +165,8 @@ resource "aws_instance" "devbox" {
     architecture        = var.architecture
     github_username     = var.github_username
     skills_repo         = var.skills_repo
+    devbox_user         = var.devbox_user
+    devbox_user_keys    = var.devbox_user_keys
     distro_id           = "ubuntu"
     distro_codename     = "noble"
     sns_topic_arn       = length(var.notification_emails) > 0 ? aws_sns_topic.devbox[0].arn : ""

@@ -148,6 +148,22 @@ variable "skills_repo" {
 }
 
 # =============================================================================
+# USER
+# =============================================================================
+
+variable "devbox_user" {
+  description = "Primary user for the devbox (created in addition to ubuntu)"
+  type        = string
+  default     = ""
+}
+
+variable "devbox_user_keys" {
+  description = "SSH public keys for devbox_user (one per line)"
+  type        = string
+  default     = ""
+}
+
+# =============================================================================
 # TAILSCALE
 # =============================================================================
 

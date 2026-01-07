@@ -438,6 +438,75 @@ setup_custom_skills() {
     log "Custom skills cloned to $SKILLS_DIR. Install via devbox-init."
 }
 
+setup_devbox_user() {
+    # Create custom user if specified (in addition to ubuntu)
+    local DEVBOX_USER="${devbox_user}"
+    local DEVBOX_USER_KEYS="${devbox_user_keys}"
+
+    if [[ -z "$DEVBOX_USER" ]]; then
+        log "No custom user configured - skipping"
+        return 0
+    fi
+
+    if id "$DEVBOX_USER" &>/dev/null; then
+        log "User $DEVBOX_USER already exists"
+    else
+        log "Creating user: $DEVBOX_USER"
+        useradd -m -s /usr/bin/zsh -G sudo,docker "$DEVBOX_USER"
+
+        # Passwordless sudo
+        echo "$DEVBOX_USER ALL=(ALL) NOPASSWD:ALL" > "/etc/sudoers.d/90-$DEVBOX_USER"
+        chmod 440 "/etc/sudoers.d/90-$DEVBOX_USER"
+    fi
+
+    local USER_HOME="/home/$DEVBOX_USER"
+
+    # Set up SSH keys if provided
+    if [[ -n "$DEVBOX_USER_KEYS" ]]; then
+        mkdir -p "$USER_HOME/.ssh"
+        echo "$DEVBOX_USER_KEYS" > "$USER_HOME/.ssh/authorized_keys"
+        chmod 700 "$USER_HOME/.ssh"
+        chmod 600 "$USER_HOME/.ssh/authorized_keys"
+        chown -R "$DEVBOX_USER:$DEVBOX_USER" "$USER_HOME/.ssh"
+        log "SSH keys configured for $DEVBOX_USER"
+    fi
+
+    # Copy ubuntu's setup to custom user (will be customized on first login)
+    if [[ -d /home/ubuntu/.oh-my-zsh ]]; then
+        cp -a /home/ubuntu/.oh-my-zsh "$USER_HOME/" 2>/dev/null || true
+    fi
+    if [[ -f /home/ubuntu/.zshrc ]]; then
+        cp /home/ubuntu/.zshrc "$USER_HOME/" 2>/dev/null || true
+    fi
+    if [[ -f /home/ubuntu/.bashrc ]]; then
+        cp /home/ubuntu/.bashrc "$USER_HOME/" 2>/dev/null || true
+    fi
+    if [[ -f /home/ubuntu/.tmux.conf ]]; then
+        cp /home/ubuntu/.tmux.conf "$USER_HOME/" 2>/dev/null || true
+    fi
+    if [[ -d /home/ubuntu/.tmux ]]; then
+        cp -a /home/ubuntu/.tmux "$USER_HOME/" 2>/dev/null || true
+    fi
+    if [[ -d /home/ubuntu/bin ]]; then
+        cp -a /home/ubuntu/bin "$USER_HOME/" 2>/dev/null || true
+    fi
+
+    # Create standard directories
+    mkdir -p "$USER_HOME"/{code,projects,work,.local/bin,.config,.claude,.claude/rules}
+
+    # Symlink to ubuntu's repos (shared, not duplicated)
+    ln -sfn /home/ubuntu/pai "$USER_HOME/pai" 2>/dev/null || true
+    ln -sfn /home/ubuntu/work/skills "$USER_HOME/work/skills" 2>/dev/null || true
+
+    # Add PAI_DIR to profile
+    if ! grep -q "PAI_DIR" "$USER_HOME/.zshrc" 2>/dev/null; then
+        echo 'export PAI_DIR="$HOME/.claude"' >> "$USER_HOME/.zshrc"
+    fi
+
+    chown -R "$DEVBOX_USER:$DEVBOX_USER" "$USER_HOME"
+    log_success "Custom user $DEVBOX_USER configured"
+}
+
 setup_user_environment() {
     sudo -u ubuntu bash <<'USERSETUP'
 # Oh My Zsh
@@ -513,10 +582,22 @@ bind l select-pane -R
 # ============================================================================
 
 set -g status-position bottom
+set -g status-interval 5
 set -g status-style 'bg=#1e1e2e fg=#cdd6f4'
-set -g status-left '#[fg=#89b4fa,bold][#S] '
-set -g status-right '#[fg=#a6adc8]%Y-%m-%d %H:%M '
-set -g status-left-length 30
+set -g status-left '#[fg=#89b4fa,bold][#S] #[fg=#a6e3a1]#(whoami)@#H '
+set -g status-right '#[fg=#f9e2af]#{?client_prefix,PREFIX ,}#[fg=#a6adc8]%Y-%m-%d %H:%M '
+set -g status-left-length 40
+set -g status-right-length 40
+
+# Window status
+setw -g window-status-current-style 'fg=#cdd6f4 bg=#45475a bold'
+setw -g window-status-current-format ' #I:#W#F '
+setw -g window-status-style 'fg=#6c7086'
+setw -g window-status-format ' #I:#W '
+
+# Pane borders
+set -g pane-border-style 'fg=#45475a'
+set -g pane-active-border-style 'fg=#89b4fa'
 
 # ============================================================================
 # Plugins (managed by TPM)
@@ -531,10 +612,10 @@ set -g @plugin 'tmux-plugins/tmux-continuum'
 set -g @resurrect-capture-pane-contents 'on'
 set -g @resurrect-strategy-vim 'session'
 set -g @resurrect-strategy-nvim 'session'
-set -g @resurrect-processes 'vim nvim man less tail top htop psql mysql sqlite3 ssh'
+set -g @resurrect-processes 'vim nvim man less tail top htop psql mysql sqlite3 ssh claude'
 
-# Continuum settings - auto-save and restore
-set -g @continuum-save-interval '10'
+# Continuum settings - auto-save every 5 min, auto-restore on tmux start
+set -g @continuum-save-interval '5'
 set -g @continuum-restore 'on'
 set -g @continuum-boot 'off'
 
@@ -576,10 +657,29 @@ DEVBOX_LAST_DIR="$HOME/.cache/devbox/last-working-dir"
 mkdir -p "$(dirname "$DEVBOX_LAST_DIR")"
 chpwd() { echo "$PWD" > "$DEVBOX_LAST_DIR" }
 
-# Auto-restore on SSH login (tmux attach/create)
-if [[ -z "$${TMUX:-}" && -n "$${SSH_CONNECTION:-}" && -z "$${DEVBOX_NO_RESTORE:-}" ]]; then
-    ~/bin/devbox-restore
+# Auto-attach to tmux on SSH login (never lose your session)
+if [[ -z "$${TMUX:-}" && -n "$${SSH_CONNECTION:-}" && -z "$${DEVBOX_NO_TMUX:-}" ]]; then
+    # Run devbox-restore first (unlocks LUKS if needed)
+    if [[ -z "$${DEVBOX_NO_RESTORE:-}" ]]; then
+        ~/bin/devbox-restore 2>/dev/null || true
+    fi
+
+    # Attach to existing session or create new one
+    # Session name based on connection (allows multiple users)
+    SESSION_NAME="main"
+
+    if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+        echo "Attaching to existing tmux session '$SESSION_NAME'..."
+        exec tmux attach-session -t "$SESSION_NAME"
+    else
+        echo "Creating new tmux session '$SESSION_NAME'..."
+        exec tmux new-session -s "$SESSION_NAME"
+    fi
 fi
+
+# Alias for quick tmux access
+alias ta='tmux attach -t main || tmux new -s main'
+alias tl='tmux list-sessions'
 ZSHRC
 fi
 
@@ -691,6 +791,7 @@ run_step "bun" "Bun runtime" setup_bun
 run_step "pai" "Personal AI Infrastructure" setup_pai
 run_step "custom_skills" "Custom PAI skills" setup_custom_skills
 run_step "user_environment" "User environment" setup_user_environment
+run_step "devbox_user" "Custom devbox user" setup_devbox_user
 run_step "motd" "MOTD" setup_motd
 
 # Summary
