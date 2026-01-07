@@ -77,12 +77,6 @@ variable "hostname" {
   default     = "aws-dev-box"
 }
 
-variable "snapshot_retention_days" {
-  description = "Number of days to retain daily EBS snapshots"
-  type        = number
-  default     = 7
-}
-
 variable "use_spot" {
   description = "Use spot instances for ~70% cost savings"
   type        = bool

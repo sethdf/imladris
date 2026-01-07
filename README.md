@@ -105,7 +105,6 @@ make apply
 | `volume_throughput` | 250 | gp3 throughput (MiB/s) |
 | `tailscale_auth_key` | (required) | Tailscale auth key |
 | `tailscale_hostname` | devbox | Hostname in Tailscale |
-| `snapshot_retention_days` | 7 | Days to keep snapshots |
 | `use_spot` | true | Use spot instances (~70% savings) |
 | `spot_max_price` | "" | Max spot price (empty = on-demand cap) |
 | `notification_emails` | [] | Emails for spot interruption alerts |

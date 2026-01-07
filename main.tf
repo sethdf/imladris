@@ -231,7 +231,7 @@ resource "aws_iam_role_policy_attachment" "dlm" {
 }
 
 resource "aws_dlm_lifecycle_policy" "devbox" {
-  description        = "Daily snapshots for devbox volume"
+  description        = "Hourly snapshots for devbox volume"
   execution_role_arn = aws_iam_role.dlm.arn
   state              = "ENABLED"
 
@@ -239,16 +239,15 @@ resource "aws_dlm_lifecycle_policy" "devbox" {
     resource_types = ["VOLUME"]
 
     schedule {
-      name = "Daily snapshots"
+      name = "Hourly snapshots"
 
       create_rule {
-        interval      = 24
+        interval      = 1
         interval_unit = "HOURS"
-        times         = ["03:00"] # 3 AM UTC
       }
 
       retain_rule {
-        count = var.snapshot_retention_days
+        count = 10
       }
 
       tags_to_add = {

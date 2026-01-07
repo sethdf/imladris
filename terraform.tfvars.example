@@ -37,7 +37,6 @@ github_username = "your-github-username"
 # volume_size             = 100
 # volume_throughput       = 250
 # hostname                = "aws-dev-box"
-# snapshot_retention_days = 7
 
 # =============================================================================
 # Spot Instance Configuration (optional)

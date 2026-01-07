@@ -1,11 +1,9 @@
-.PHONY: init plan apply destroy unlock lock commit-state backup-keys backup-gitcrypt-to-bws spot-check spot-price safe-apply cost ssh-config lint test validate
+.PHONY: init plan apply destroy unlock lock commit-state backup-keys backup-gitcrypt-to-bws cost ssh-config lint test validate
 
 # Decrypt secrets before running terraform
 SECRETS_FILE := secrets.yaml
 TFVARS_FILE := terraform.tfvars
 
-# Instance types to check (primary and fallbacks)
-INSTANCE_TYPES := m7g.xlarge m6g.xlarge c7g.xlarge r7g.large
 AWS_REGION := us-east-1
 
 # Default target
@@ -19,8 +17,6 @@ help:
 	@echo "  make lock        - Re-encrypt repo"
 	@echo "  make backup-keys - Export encryption keys for backup"
 	@echo "  make backup-gitcrypt-to-bws - Backup git-crypt key to Bitwarden Secrets Manager"
-	@echo "  make spot-check  - Check Spot capacity before deploy"
-	@echo "  make spot-price  - Show current Spot prices"
 	@echo "  make cost        - Show current month's AWS cost"
 	@echo "  make ssh-config  - Generate SSH config for local machine"
 	@echo ""
@@ -183,42 +179,6 @@ restore-keys:
 	@echo "   rm /tmp/git-crypt-key"
 	@echo ""
 	@echo "2. Save age key to ~/.config/sops/age/keys.txt"
-
-# Check Spot placement scores (capacity availability)
-spot-check:
-	@echo "=== Spot Placement Scores (1-10, higher = better availability) ==="
-	@echo ""
-	@aws ec2 get-spot-placement-scores \
-		--instance-types $(INSTANCE_TYPES) \
-		--target-capacity 1 \
-		--single-availability-zone \
-		--region-names $(AWS_REGION) \
-		--query 'SpotPlacementScores[*].{Type:InstanceTypes[0],Region:Region,AZ:AvailabilityZoneId,Score:Score}' \
-		--output table 2>/dev/null || echo "Note: Requires ec2:GetSpotPlacementScores permission"
-	@echo ""
-	@echo "Score guide: 10=excellent, 7-9=good, 4-6=fair, 1-3=poor"
-	@echo "Recommendation: Deploy when primary instance type scores >= 7"
-
-# Show current Spot prices
-spot-price:
-	@echo "=== Current Spot Prices in $(AWS_REGION) ==="
-	@echo ""
-	@aws ec2 describe-spot-price-history \
-		--instance-types $(INSTANCE_TYPES) \
-		--product-descriptions "Linux/UNIX" \
-		--start-time $$(date -u +%Y-%m-%dT%H:%M:%SZ) \
-		--region $(AWS_REGION) \
-		--query 'SpotPriceHistory[*].{Type:InstanceType,AZ:AvailabilityZone,Price:SpotPrice}' \
-		--output table 2>/dev/null
-	@echo ""
-	@echo "Compare to on-demand pricing for savings estimate"
-
-# Pre-deploy check (runs spot-check before apply)
-safe-apply: spot-check decrypt-secrets
-	@echo ""
-	@read -p "Proceed with deployment? [y/N] " confirm && [ "$$confirm" = "y" ] || exit 1
-	terraform apply
-	@$(MAKE) commit-state
 
 # Show current month's AWS cost for this devbox
 cost:
