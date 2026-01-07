@@ -392,29 +392,24 @@ setup_bun() {
 }
 
 setup_pai() {
-    # Clone and bootstrap PAI (Personal AI Infrastructure)
-    # Phase 1 only - Phase 2 (pack installation) requires Claude interaction
-    local PAI_DIR="/home/ubuntu/pai"
+    # Clone PAI (Personal AI Infrastructure) repo only
+    # Bootstrap runs in devbox-init.sh after LUKS is mounted (so sessions are encrypted)
+    local PAI_REPO="/home/ubuntu/pai"
 
-    if [[ -d "$PAI_DIR" ]]; then
+    if [[ -d "$PAI_REPO" ]]; then
         log "PAI already cloned"
     else
-        sudo -u ubuntu git clone https://github.com/danielmiessler/Personal_AI_Infrastructure.git "$PAI_DIR"
+        sudo -u ubuntu git clone https://github.com/danielmiessler/Personal_AI_Infrastructure.git "$PAI_REPO"
     fi
 
-    # Run PAI bootstrap as ubuntu user
-    if [[ ! -d /home/ubuntu/.claude/history ]]; then
-        log "Running PAI bootstrap..."
-        sudo -u ubuntu bash -c "cd $PAI_DIR/Bundles/Kai && ~/.bun/bin/bun run install.ts --non-interactive" || {
-            log "PAI bootstrap failed or requires interaction - run manually after login"
-            log "  cd ~/pai/Bundles/Kai && bun run install.ts"
-        }
-    else
-        log "PAI already bootstrapped"
+    # Add PAI_DIR to shell profile (points to LUKS-encrypted location)
+    if ! grep -q "PAI_DIR" /home/ubuntu/.zshrc 2>/dev/null; then
+        echo 'export PAI_DIR="$HOME/encrypted-home/.claude"' >> /home/ubuntu/.zshrc
+        echo 'export PAI_DIR="$HOME/encrypted-home/.claude"' >> /home/ubuntu/.bashrc
     fi
 
-    chown -R ubuntu:ubuntu "$PAI_DIR" /home/ubuntu/.claude
-    log "PAI installed. After login, install packs with Claude: claude 'Install packs from ~/pai/Packs/'"
+    chown -R ubuntu:ubuntu "$PAI_REPO"
+    log "PAI repo cloned. Bootstrap runs after LUKS unlock via devbox-init."
 }
 
 setup_user_environment() {

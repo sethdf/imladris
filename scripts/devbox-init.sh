@@ -98,6 +98,55 @@ setup_luks() {
         sudo mount --bind "$DATA_MOUNT/home" /home/ubuntu
         log_success "Home directory mounted from encrypted volume"
     fi
+
+    # Create encrypted-home symlink for convenience
+    ln -sfn "$DATA_MOUNT/home" "$HOME/encrypted-home" 2>/dev/null || true
+}
+
+# =============================================================================
+# PAI Bootstrap (runs on encrypted volume)
+# =============================================================================
+
+setup_pai() {
+    local PAI_REPO="$HOME/pai"
+    local PAI_DIR="$HOME/encrypted-home/.claude"
+
+    if [[ ! -d "$PAI_REPO" ]]; then
+        log "PAI repo not found at $PAI_REPO - skipping"
+        return 0
+    fi
+
+    if [[ -d "$PAI_DIR/history" ]]; then
+        log "PAI already bootstrapped"
+        return 0
+    fi
+
+    log "Bootstrapping PAI to encrypted storage..."
+
+    # Create PAI directory on encrypted volume
+    mkdir -p "$PAI_DIR"
+
+    # Create symlink from ~/.claude to encrypted location
+    if [[ -d "$HOME/.claude" && ! -L "$HOME/.claude" ]]; then
+        # Move any existing .claude contents to encrypted location
+        cp -a "$HOME/.claude/." "$PAI_DIR/" 2>/dev/null || true
+        rm -rf "$HOME/.claude"
+    fi
+    ln -sfn "$PAI_DIR" "$HOME/.claude"
+
+    # Run PAI bootstrap
+    export PAI_DIR
+    if command -v bun &>/dev/null; then
+        cd "$PAI_REPO/Bundles/Kai" && bun run install.ts --non-interactive || {
+            log "PAI bootstrap requires interaction - run manually:"
+            log "  cd ~/pai/Bundles/Kai && bun run install.ts"
+            return 0
+        }
+        log_success "PAI bootstrapped to encrypted storage"
+    else
+        log "Bun not installed - run PAI bootstrap manually:"
+        log "  cd ~/pai/Bundles/Kai && bun run install.ts"
+    fi
 }
 
 # =============================================================================
@@ -112,7 +161,7 @@ if ! check_bws; then
 fi
 
 if setup_luks; then
-    log_success "DevBox initialization complete"
+    log_success "LUKS setup complete"
     log ""
     log "Encrypted storage ready at /data"
     log "Home directory is on encrypted volume"
@@ -120,3 +169,10 @@ else
     log_error "LUKS setup failed"
     exit 1
 fi
+
+# Bootstrap PAI on encrypted volume
+setup_pai
+
+log ""
+log_success "DevBox initialization complete"
+log "Next: Install PAI packs with Claude: claude 'Install packs from ~/pai/Packs/'"
