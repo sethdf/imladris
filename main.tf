@@ -169,9 +169,10 @@ resource "aws_instance" "devbox" {
     sns_topic_arn       = length(var.notification_emails) > 0 ? aws_sns_topic.devbox[0].arn : ""
   }))
 
-  # Don't recreate instance if user-data changes
+  # Protect instance from accidental deletion; don't recreate if user-data changes
   lifecycle {
-    ignore_changes = [user_data_base64]
+    prevent_destroy = true
+    ignore_changes  = [user_data_base64]
   }
 
   tags = {
