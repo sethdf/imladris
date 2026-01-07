@@ -1,192 +1,116 @@
-#!/bin/bash
-# devbox-restore - Restore development environment on login
-# Source this from .zshrc or run manually
-
+#!/usr/bin/env bash
+# devbox-restore - Show status and optionally auto-unlock LUKS
 set -euo pipefail
 
-CACHE_DIR="$HOME/.cache/devbox"
-LAST_DIR_FILE="$CACHE_DIR/last-working-dir"
-DOCKER_PROJECTS_FILE="$HOME/.config/devbox/docker-projects.txt"
-RESTORE_LOG="$CACHE_DIR/restore.log"
+DATA_DEV="/dev/nvme1n1"
+DATA_MAPPER="data"
+DATA_MOUNT="/data"
 
-mkdir -p "$CACHE_DIR" "$HOME/.config/devbox"
-
-log() {
-    echo "[$(date '+%H:%M:%S')] $*" >> "$RESTORE_LOG"
-}
-
-# ============================================================================
+# =============================================================================
 # Status Display
-# ============================================================================
-show_status() {
-    local bws_status docker_status luks_status tmux_status
+# =============================================================================
 
-    # Bitwarden Secrets Manager status
-    if [[ -n "${BWS_ACCESS_TOKEN:-}" ]] && bws secret list &>/dev/null; then
+show_status() {
+    local bws_status luks_status tailscale_status docker_status
+
+    # BWS status
+    if [[ -n "${BWS_ACCESS_TOKEN:-}" ]] && command -v bws &>/dev/null && bws secret list &>/dev/null; then
         bws_status="✓ connected"
     else
-        bws_status="✗ not configured"
+        bws_status="○ not configured"
+    fi
+
+    # LUKS status
+    if [[ -e "/dev/mapper/$DATA_MAPPER" ]] && mountpoint -q "$DATA_MOUNT" 2>/dev/null; then
+        local space
+        space=$(df -h "$DATA_MOUNT" 2>/dev/null | awk 'NR==2 {print $4}')
+        luks_status="✓ mounted ($space free)"
+    elif [[ -b "$DATA_DEV" ]]; then
+        luks_status="○ locked"
+    else
+        luks_status="- no volume"
+    fi
+
+    # Tailscale status
+    if command -v tailscale &>/dev/null && tailscale status &>/dev/null; then
+        local ip
+        ip=$(tailscale ip -4 2>/dev/null || echo "?")
+        tailscale_status="✓ $ip"
+    else
+        tailscale_status="○ disconnected"
     fi
 
     # Docker status
-    local container_count
-    container_count=$(docker ps -q 2>/dev/null | wc -l)
-    docker_status="$container_count running"
+    local containers
+    containers=$(docker ps -q 2>/dev/null | wc -l || echo "0")
+    docker_status="$containers running"
 
-    # LUKS/Home status
-    if mountpoint -q /home 2>/dev/null; then
-        luks_status="✓ mounted"
-    else
-        luks_status="✗ not mounted"
+    echo "┌────────────────────────────────────┐"
+    echo "│         DevBox Status              │"
+    echo "├────────────────────────────────────┤"
+    printf "│  LUKS:      %-22s│\n" "$luks_status"
+    printf "│  Tailscale: %-22s│\n" "$tailscale_status"
+    printf "│  Docker:    %-22s│\n" "$docker_status"
+    printf "│  BWS:       %-22s│\n" "$bws_status"
+    echo "└────────────────────────────────────┘"
+}
+
+# =============================================================================
+# Auto-unlock LUKS
+# =============================================================================
+
+auto_unlock() {
+    # Skip if already unlocked
+    [[ -e "/dev/mapper/$DATA_MAPPER" ]] && return 0
+
+    # Skip if no data device
+    [[ ! -b "$DATA_DEV" ]] && return 0
+
+    # Skip if not LUKS formatted yet
+    sudo cryptsetup isLuks "$DATA_DEV" 2>/dev/null || return 0
+
+    # Try to get BWS token
+    if [[ -z "${BWS_ACCESS_TOKEN:-}" ]]; then
+        local token_file="$HOME/.config/bws/access-token"
+        [[ -f "$token_file" ]] && BWS_ACCESS_TOKEN=$(cat "$token_file") && export BWS_ACCESS_TOKEN
     fi
 
-    # Tmux status
-    local session_count
-    session_count=$(tmux list-sessions 2>/dev/null | wc -l)
-    if [[ $session_count -gt 0 ]]; then
-        local window_count
-        window_count=$(tmux list-windows -a 2>/dev/null | wc -l)
-        tmux_status="✓ ${session_count} sessions (${window_count} windows)"
-    elif [[ -f ~/.tmux/resurrect/last ]]; then
-        tmux_status="○ saved session available"
-    else
-        tmux_status="✗ no session"
+    [[ -z "${BWS_ACCESS_TOKEN:-}" ]] && return 0
+
+    # Get LUKS key
+    local luks_key secret_id
+    secret_id=$(bws secret list 2>/dev/null | jq -r '.[] | select(.key == "luks-key") | .id' 2>/dev/null)
+    [[ -z "$secret_id" ]] && return 0
+
+    luks_key=$(bws secret get "$secret_id" 2>/dev/null | jq -r '.value')
+    [[ -z "$luks_key" ]] && return 0
+
+    # Unlock and mount
+    echo -n "$luks_key" | sudo cryptsetup open "$DATA_DEV" "$DATA_MAPPER" - 2>/dev/null || return 0
+    sudo mkdir -p "$DATA_MOUNT"
+    sudo mount "/dev/mapper/$DATA_MAPPER" "$DATA_MOUNT" 2>/dev/null || return 0
+
+    # Bind mount home
+    if [[ -d "$DATA_MOUNT/home" ]] && ! mountpoint -q /home/ubuntu 2>/dev/null; then
+        sudo mount --bind "$DATA_MOUNT/home" /home/ubuntu 2>/dev/null || true
     fi
 
-    echo "┌─────────────────────────────────────┐"
-    echo "│          DevBox Status              │"
-    echo "├─────────────────────────────────────┤"
-    printf "│  BWS:       %-23s│\n" "$bws_status"
-    printf "│  Docker:    %-23s│\n" "$docker_status"
-    printf "│  /home:     %-23s│\n" "$luks_status"
-    printf "│  Tmux:      %-23s│\n" "$tmux_status"
-    echo "└─────────────────────────────────────┘"
+    echo "LUKS volume auto-unlocked"
 }
 
-# ============================================================================
-# Docker Restore
-# ============================================================================
-restore_docker_projects() {
-    [[ -f "$DOCKER_PROJECTS_FILE" ]] || return 0
+# =============================================================================
+# Main
+# =============================================================================
 
-    local restored=0
-    while IFS= read -r compose_file || [[ -n "$compose_file" ]]; do
-        # Skip comments and empty lines
-        [[ "$compose_file" =~ ^#.*$ || -z "$compose_file" ]] && continue
-
-        if [[ -f "$compose_file" ]]; then
-            log "Starting docker-compose: $compose_file"
-            docker compose -f "$compose_file" up -d 2>/dev/null && ((restored++))
-        fi
-    done < "$DOCKER_PROJECTS_FILE"
-
-    [[ $restored -gt 0 ]] && echo "  Restored $restored Docker project(s)"
-}
-
-# ============================================================================
-# Tmux Session Restore
-# ============================================================================
-restore_tmux_session() {
-    # Only in interactive SSH sessions, not already in tmux
-    [[ -z "${TMUX:-}" && -n "${SSH_CONNECTION:-}" ]] || return 0
-
-    # Check if any sessions exist
-    if tmux list-sessions &>/dev/null; then
-        # Get most recently used session (by last attached time)
-        local recent_session
-        recent_session=$(tmux list-sessions -F '#{session_last_attached} #{session_name}' | sort -rn | head -1 | cut -d' ' -f2)
-
-        local session_count
-        session_count=$(tmux list-sessions | wc -l)
-
-        echo "  Attaching to session: $recent_session"
-        [[ $session_count -gt 1 ]] && echo "  Tip: prefix + s to switch sessions ($session_count available)"
-        exec tmux attach -t "$recent_session"
-    else
-        # No sessions exist - create new or let resurrect restore
-        if [[ -f ~/.tmux/resurrect/last ]]; then
-            echo "  Starting tmux (will auto-restore all sessions)..."
-            echo "  Tip: prefix + s to switch between restored sessions"
-        else
-            echo "  Creating new tmux session..."
-        fi
-        # Start tmux - continuum will auto-restore if configured
-        # Restore last directory if available
-        local start_dir="$HOME"
-        [[ -f "$LAST_DIR_FILE" ]] && start_dir=$(cat "$LAST_DIR_FILE")
-        exec tmux new -s main -c "$start_dir"
-    fi
-}
-
-# ============================================================================
-# Directory Tracking (call from chpwd hook)
-# ============================================================================
-save_last_dir() {
-    echo "$PWD" > "$LAST_DIR_FILE"
-}
-
-# ============================================================================
-# Git Status Summary
-# ============================================================================
-check_git_repos() {
-    local repos_with_changes=()
-
-    for dir in ~/code/*/ ~/projects/*/; do
-        [[ -d "$dir/.git" ]] || continue
-        if [[ -n $(git -C "$dir" status --porcelain 2>/dev/null) ]]; then
-            repos_with_changes+=("$(basename "$dir")")
-        fi
-    done
-
-    if [[ ${#repos_with_changes[@]} -gt 0 ]]; then
-        echo "  ⚠ Uncommitted changes in: ${repos_with_changes[*]}"
-    fi
-}
-
-# ============================================================================
-# Main Restore Flow
-# ============================================================================
-main() {
-    log "=== DevBox restore started ==="
-
-    echo ""
-    show_status
-    echo ""
-
-    # Restore Docker projects (background)
-    restore_docker_projects &
-
-    # Check for uncommitted work
-    check_git_repos
-
-    # Wait for background tasks
-    wait
-
-    echo ""
-
-    # Finally, attach to tmux (this execs, so must be last)
-    restore_tmux_session
-}
-
-# ============================================================================
-# Zsh Integration Hooks
-# ============================================================================
-
-# Export functions for zsh hooks
-typeset -f save_last_dir > /dev/null 2>&1 && export -f save_last_dir
-
-# If sourced with "status" argument, just show status
-case "${1:-}" in
+case "${1:-status}" in
     status)
         show_status
         ;;
-    docker)
-        restore_docker_projects
-        ;;
-    git)
-        check_git_repos
+    unlock)
+        auto_unlock
+        show_status
         ;;
     *)
-        main
+        echo "Usage: devbox-restore [status|unlock]"
         ;;
 esac

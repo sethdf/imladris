@@ -158,38 +158,15 @@ variable "tailscale_hostname" {
 }
 
 # =============================================================================
-# ALL SECRETS FROM BITWARDEN SECRETS MANAGER
+# SECRETS FROM BITWARDEN SECRETS MANAGER
 # =============================================================================
 #
-# Terraform pulls secrets via Bitwarden Secrets Manager provider (see bitwarden.tf)
-# Access token stored in lifemaestro/secrets/bw-sm-access-token (gitignored)
+# Access token stored in lifemaestro/secrets/bw-sm-access-token
 #
-# Required secrets in Secrets Manager (create in "devbox" project):
+# Required secrets:
+#   - tailscale-auth-key : Auth key for joining tailnet (Terraform)
+#   - tailscale-api-key  : API key for device cleanup (Terraform)
+#   - luks-key           : LUKS encryption passphrase (devbox-init)
 #
-#   Used by Terraform at apply time:
-#   - tailscale-auth-key    : Auth key for joining tailnet
-#   - tailscale-api-key     : API key for device cleanup
-#
-#   Used by devbox-init.sh at runtime:
-#   - luks-key              : LUKS encryption passphrase for data volume
-#   - github-ssh-home       : SSH private key (base64 encoded)
-#   - github-ssh-work       : SSH private key (base64 encoded)
-#   - github-token          : GitHub PAT for gh CLI
-#   - git-crypt-key         : git-crypt key (base64 encoded)
-#   - github-home-name      : Git author name for home
-#   - github-home-email     : Git author email for home
-#   - github-home-username  : GitHub username
-#   - github-work-name      : Git author name for work
-#   - github-work-email     : Git author email for work
-#   - aws-access-key-id     : AWS access key (optional)
-#   - aws-secret-access-key : AWS secret key (optional)
-#   - gmail-client-id       : Gmail OAuth client ID (optional)
-#   - gmail-client-secret   : Gmail OAuth client secret (optional)
-#   - ms365-client-id       : MS365 OAuth client ID (optional)
-#   - ms365-client-secret   : MS365 OAuth client secret (optional)
-#   - ms365-tenant-id       : MS365 tenant ID (optional)
-#
-# After first SSH login, run:
-#   ~/bin/devbox-init         # Bootstrap remaining secrets from Secrets Manager
-#
+# Create secrets: ./scripts/bws-create-secrets.sh
 # =============================================================================
