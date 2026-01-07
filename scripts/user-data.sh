@@ -375,6 +375,48 @@ setup_session_sync() {
     log "Session sync installed. Run 'session-sync-setup <name> <dir> <git-remote>' to configure."
 }
 
+setup_bun() {
+    # Install bun runtime (needed for PAI)
+    if command -v bun &>/dev/null; then
+        log "Bun already installed"
+        return 0
+    fi
+
+    # Install for root (system-wide)
+    curl -fsSL https://bun.sh/install | bash
+    ln -sf /root/.bun/bin/bun /usr/local/bin/bun
+
+    # Install for ubuntu user
+    sudo -u ubuntu bash -c 'curl -fsSL https://bun.sh/install | bash'
+    log "Bun installed: $(bun --version)"
+}
+
+setup_pai() {
+    # Clone and bootstrap PAI (Personal AI Infrastructure)
+    # Phase 1 only - Phase 2 (pack installation) requires Claude interaction
+    local PAI_DIR="/home/ubuntu/pai"
+
+    if [[ -d "$PAI_DIR" ]]; then
+        log "PAI already cloned"
+    else
+        sudo -u ubuntu git clone https://github.com/danielmiessler/Personal_AI_Infrastructure.git "$PAI_DIR"
+    fi
+
+    # Run PAI bootstrap as ubuntu user
+    if [[ ! -d /home/ubuntu/.claude/history ]]; then
+        log "Running PAI bootstrap..."
+        sudo -u ubuntu bash -c "cd $PAI_DIR/Bundles/Kai && ~/.bun/bin/bun run install.ts --non-interactive" || {
+            log "PAI bootstrap failed or requires interaction - run manually after login"
+            log "  cd ~/pai/Bundles/Kai && bun run install.ts"
+        }
+    else
+        log "PAI already bootstrapped"
+    fi
+
+    chown -R ubuntu:ubuntu "$PAI_DIR" /home/ubuntu/.claude
+    log "PAI installed. After login, install packs with Claude: claude 'Install packs from ~/pai/Packs/'"
+}
+
 setup_user_environment() {
     sudo -u ubuntu bash <<'USERSETUP'
 # Oh My Zsh
@@ -624,6 +666,8 @@ run_step "git_delta" "Git delta config" setup_git_delta
 run_step "spot_watcher" "Spot watcher" setup_spot_watcher
 run_step "bootstrap_scripts" "Bootstrap scripts" setup_bootstrap_scripts
 run_step "session_sync" "Session sync tools" setup_session_sync
+run_step "bun" "Bun runtime" setup_bun
+run_step "pai" "Personal AI Infrastructure" setup_pai
 run_step "user_environment" "User environment" setup_user_environment
 run_step "motd" "MOTD" setup_motd
 
