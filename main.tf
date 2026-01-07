@@ -164,7 +164,6 @@ resource "aws_instance" "devbox" {
     tailscale_hostname  = var.tailscale_hostname
     architecture        = var.architecture
     github_username     = var.github_username
-    skills_repo         = var.skills_repo
     devbox_user         = var.devbox_user
     devbox_user_keys    = var.devbox_user_keys
     distro_id           = "ubuntu"

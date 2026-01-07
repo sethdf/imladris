@@ -154,11 +154,11 @@ setup_pai() {
 # =============================================================================
 
 install_custom_skills() {
-    local SKILLS_SRC="$HOME/work/skills"
+    local SKILLS_SRC="$HOME/skills"
     local SKILLS_DST="$HOME/.claude/skills"
 
     if [[ ! -d "$SKILLS_SRC" ]]; then
-        log "No custom skills repo at $SKILLS_SRC - skipping"
+        log "No skills at $SKILLS_SRC - skipping"
         return 0
     fi
 
@@ -169,8 +169,6 @@ install_custom_skills() {
     for skill_dir in "$SKILLS_SRC"/*/; do
         [[ -d "$skill_dir" ]] || continue
         local name=$(basename "$skill_dir")
-
-        # Skip hidden directories and common non-skill dirs
         [[ "$name" == .* ]] && continue
 
         if [[ -f "$skill_dir/README.md" ]]; then
@@ -202,6 +200,83 @@ install_custom_skills() {
 }
 
 # =============================================================================
+# Configure SDP API from BWS
+# =============================================================================
+
+setup_sdp_credentials() {
+    log "Configuring ServiceDesk Plus credentials..."
+
+    local SDP_BASE_URL SDP_API_KEY SDP_TECH_ID
+    SDP_BASE_URL=$(bws_get "sdp-base-url" 2>/dev/null) || true
+    SDP_API_KEY=$(bws_get "sdp-api-key" 2>/dev/null) || true
+    SDP_TECH_ID=$(bws_get "sdp-technician-id" 2>/dev/null) || true
+
+    if [[ -z "$SDP_BASE_URL" || -z "$SDP_API_KEY" ]]; then
+        log "SDP credentials not in BWS - skipping (add sdp-base-url, sdp-api-key)"
+        return 0
+    fi
+
+    # Add to shell profile
+    local SDP_CONFIG="
+# ServiceDesk Plus API
+export SDP_BASE_URL=\"$SDP_BASE_URL\"
+export SDP_API_KEY=\"$SDP_API_KEY\"
+export SDP_TECHNICIAN_ID=\"$SDP_TECH_ID\"
+"
+    if ! grep -q "SDP_BASE_URL" "$HOME/.zshrc" 2>/dev/null; then
+        echo "$SDP_CONFIG" >> "$HOME/.zshrc"
+        echo "$SDP_CONFIG" >> "$HOME/.bashrc"
+    fi
+
+    # Create work/tickets directory
+    mkdir -p "$HOME/work/tickets"
+
+    log_success "SDP credentials configured"
+}
+
+# =============================================================================
+# Auto-configure Session Sync
+# =============================================================================
+
+setup_session_sync() {
+    local SESSIONS_REPO
+    SESSIONS_REPO=$(bws_get "sessions-git-repo" 2>/dev/null) || true
+
+    if [[ -z "$SESSIONS_REPO" ]]; then
+        log "No sessions-git-repo in BWS - skipping session-sync setup"
+        return 0
+    fi
+
+    log "Setting up session-sync for PAI history..."
+
+    local HISTORY_DIR="$HOME/.claude/history"
+    mkdir -p "$HISTORY_DIR"
+
+    # Initialize git repo if not exists
+    if [[ ! -d "$HISTORY_DIR/.git" ]]; then
+        cd "$HISTORY_DIR"
+        git init -q
+        git remote add origin "$SESSIONS_REPO" 2>/dev/null || git remote set-url origin "$SESSIONS_REPO"
+        echo "# PAI Session History" > README.md
+        git add README.md
+        git commit -q -m "Initial commit" 2>/dev/null || true
+        git push -u origin main 2>/dev/null || log "  Push failed - repo may need to be created on GitHub first"
+    fi
+
+    # Configure session-sync service
+    mkdir -p "$HOME/.config/session-sync"
+    cat > "$HOME/.config/session-sync/pai.conf" << EOF
+SYNC_DIR=$HISTORY_DIR
+BRANCH=main
+EOF
+
+    # Enable service (will start on next login)
+    systemctl --user enable session-sync@pai 2>/dev/null || true
+
+    log_success "Session sync configured for PAI history"
+}
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -225,9 +300,16 @@ fi
 # Bootstrap PAI on encrypted volume
 setup_pai
 
-# Install custom skills from ~/work/skills/
+# Install custom skills
 install_custom_skills
+
+# Configure SDP credentials from BWS
+setup_sdp_credentials
+
+# Auto-configure session sync
+setup_session_sync
 
 log ""
 log_success "DevBox initialization complete"
-log "Next: Install PAI packs with Claude: claude 'Install packs from ~/pai/Packs/'"
+log ""
+log "Ready to use! Start Claude with: claude"

@@ -77,19 +77,29 @@ create_secret() {
     fi
 }
 
-echo "--- Infrastructure secrets ---"
+echo "--- Infrastructure secrets (required) ---"
 create_secret "tailscale-auth-key" "Tailscale auth key for joining tailnet (used by Terraform)"
 create_secret "tailscale-api-key" "Tailscale API key for device cleanup (used by Terraform)"
 create_secret "luks-key" "LUKS encryption passphrase for data volume (used by devbox-init)"
+
+echo ""
+echo "--- ServiceDesk Plus (optional) ---"
+create_secret "sdp-base-url" "ServiceDesk Plus URL, e.g., https://sdp.example.com"
+create_secret "sdp-api-key" "ServiceDesk Plus API technician key"
+create_secret "sdp-technician-id" "Your technician ID in SDP"
+
+echo ""
+echo "--- Session Sync (optional) ---"
+create_secret "sessions-git-repo" "Git repo for PAI session backup, e.g., git@github.com:user/pai-sessions.git"
 
 echo ""
 echo "=== Done ==="
 echo ""
 echo "Next steps:"
 echo "  1. Go to Bitwarden Secrets Manager web UI"
-echo "  2. Update each secret with the actual value"
-echo "  3. Save your BWS access token to: ~/.config/bws/access-token"
-echo "     (and lifemaestro/secrets/bw-sm-access-token for Terraform)"
-echo "  4. Run: make plan"
+echo "  2. Update required secrets (tailscale-*, luks-key)"
+echo "  3. Optionally configure SDP and session-sync secrets"
+echo "  4. Save your BWS access token to: ~/.config/bws/access-token"
+echo "  5. Run: make plan"
 echo ""
 echo "To list all secrets: bws secret list | jq -r '.[] | \"\(.key): \(.id)\"'"

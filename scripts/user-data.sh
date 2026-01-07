@@ -413,29 +413,20 @@ setup_pai() {
 }
 
 setup_custom_skills() {
-    # Clone custom skills repo if configured
-    local SKILLS_REPO="${skills_repo}"
-    local SKILLS_DIR="/home/ubuntu/work/skills"
+    # Download skills from devbox repo (same repo as bootstrap scripts)
+    local REPO_BASE="https://raw.githubusercontent.com/${github_username}/aws-devbox/master"
+    local SKILLS_DIR="/home/ubuntu/skills"
 
-    if [[ -z "$SKILLS_REPO" ]]; then
-        log "No custom skills repo configured - skipping"
-        return 0
-    fi
+    mkdir -p "$SKILLS_DIR/servicedesk-plus/src"
 
-    mkdir -p /home/ubuntu/work
+    # Download ServiceDesk Plus skill
+    curl -fsSL "$REPO_BASE/skills/servicedesk-plus/README.md" -o "$SKILLS_DIR/servicedesk-plus/README.md" || log "Failed to download SDP skill"
+    curl -fsSL "$REPO_BASE/skills/servicedesk-plus/src/sdp-api.sh" -o "$SKILLS_DIR/servicedesk-plus/src/sdp-api.sh" || log "Failed to download sdp-api.sh"
+    curl -fsSL "$REPO_BASE/skills/servicedesk-plus/src/ticket-context-hook.ts" -o "$SKILLS_DIR/servicedesk-plus/src/ticket-context-hook.ts" || log "Failed to download hook"
 
-    if [[ -d "$SKILLS_DIR" ]]; then
-        log "Skills repo already cloned"
-    else
-        log "Cloning custom skills repo: $SKILLS_REPO"
-        sudo -u ubuntu git clone "https://github.com/$SKILLS_REPO.git" "$SKILLS_DIR" || {
-            log "Failed to clone skills repo - may need auth, clone manually after login"
-            return 0
-        }
-    fi
-
-    chown -R ubuntu:ubuntu /home/ubuntu/work
-    log "Custom skills cloned to $SKILLS_DIR. Install via devbox-init."
+    chmod +x "$SKILLS_DIR/servicedesk-plus/src/sdp-api.sh"
+    chown -R ubuntu:ubuntu "$SKILLS_DIR"
+    log "Skills downloaded to $SKILLS_DIR. Install via devbox-init."
 }
 
 setup_devbox_user() {

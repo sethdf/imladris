@@ -136,15 +136,9 @@ variable "enable_schedule" {
 # =============================================================================
 
 variable "github_username" {
-  description = "GitHub username for cloning bootstrap scripts"
+  description = "GitHub username for cloning bootstrap scripts and skills"
   type        = string
   # No default - must be provided in terraform.tfvars
-}
-
-variable "skills_repo" {
-  description = "GitHub repo for custom PAI skills (e.g., 'username/pai-skills')"
-  type        = string
-  default     = ""
 }
 
 # =============================================================================
