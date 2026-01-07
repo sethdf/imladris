@@ -1,4 +1,4 @@
-.PHONY: init plan apply destroy unlock lock commit-state backup-keys spot-check spot-price safe-apply cost ssh-config lint test validate
+.PHONY: init plan apply destroy unlock lock commit-state backup-keys backup-gitcrypt-to-bws spot-check spot-price safe-apply cost ssh-config lint test validate
 
 # Decrypt secrets before running terraform
 SECRETS_FILE := secrets.yaml
@@ -18,6 +18,7 @@ help:
 	@echo "  make unlock      - Decrypt repo (after fresh clone)"
 	@echo "  make lock        - Re-encrypt repo"
 	@echo "  make backup-keys - Export encryption keys for backup"
+	@echo "  make backup-gitcrypt-to-bws - Backup git-crypt key to Bitwarden Secrets Manager"
 	@echo "  make spot-check  - Check Spot capacity before deploy"
 	@echo "  make spot-price  - Show current Spot prices"
 	@echo "  make cost        - Show current month's AWS cost"
@@ -147,6 +148,31 @@ backup-keys:
 	@echo "Store both keys securely. You need them to"
 	@echo "recover this repo on a new machine."
 	@echo "=============================================="
+
+# Backup git-crypt key to Bitwarden Secrets Manager
+backup-gitcrypt-to-bws:
+	@command -v bws >/dev/null 2>&1 || { echo "Error: bws not installed. Download from: https://github.com/bitwarden/sdk-sm/releases"; exit 1; }
+	@if [ -z "$$BWS_ACCESS_TOKEN" ]; then \
+		echo "Error: BWS_ACCESS_TOKEN not set"; \
+		echo "Set it with: export BWS_ACCESS_TOKEN='your-token'"; \
+		exit 1; \
+	fi
+	@echo "=== Backing up git-crypt key to Bitwarden Secrets Manager ==="
+	@GC_KEY_B64=$$(git-crypt export-key /dev/stdout | base64 -w0); \
+	EXISTING=$$(bws secret list 2>/dev/null | jq -r '.[] | select(.key == "git-crypt-key") | .id'); \
+	if [ -n "$$EXISTING" ]; then \
+		echo "Updating existing git-crypt-key secret..."; \
+		bws secret edit "$$EXISTING" --value "$$GC_KEY_B64" >/dev/null && echo "✓ git-crypt-key updated"; \
+	else \
+		echo "Creating new git-crypt-key secret..."; \
+		echo "Note: You need to specify a project ID. Run: bws project list"; \
+		read -p "Enter project ID: " PROJECT_ID; \
+		bws secret create git-crypt-key "$$GC_KEY_B64" "$$PROJECT_ID" >/dev/null && echo "✓ git-crypt-key created"; \
+	fi
+	@echo ""
+	@echo "Key backed up successfully. To restore on another machine:"
+	@echo "  bws secret get <secret-id> | jq -r '.value' | base64 -d > /tmp/gc-key"
+	@echo "  git-crypt unlock /tmp/gc-key && rm /tmp/gc-key"
 
 # Restore from backup (on new machine)
 restore-keys:

@@ -178,8 +178,31 @@ setup_python() {
 }
 
 setup_npm_packages() {
-    # Essential CLI tools (bw needed for devbox-init, claude installed by maestro)
-    npm install -g tldr @pnp/cli-microsoft365 @bitwarden/cli || log "Some npm packages failed (non-fatal)"
+    # Essential CLI tools (claude installed by maestro)
+    npm install -g tldr @pnp/cli-microsoft365 || log "Some npm packages failed (non-fatal)"
+}
+
+setup_bws_cli() {
+    # Bitwarden Secrets Manager CLI
+    if command -v bws &>/dev/null; then
+        log "bws CLI already installed"
+        return
+    fi
+
+    log "Installing Bitwarden Secrets Manager CLI..."
+    local BWS_VERSION BWS_ARCH
+    BWS_VERSION=$(curl -s "https://api.github.com/repos/bitwarden/sdk-sm/releases/latest" | jq -r '.tag_name' | sed 's/bws-v//')
+
+    case "${architecture}" in
+        arm64) BWS_ARCH="aarch64-unknown-linux-gnu" ;;
+        *)     BWS_ARCH="x86_64-unknown-linux-gnu" ;;
+    esac
+
+    curl -fsSL "https://github.com/bitwarden/sdk-sm/releases/download/bws-v$${BWS_VERSION}/bws-$${BWS_ARCH}-$${BWS_VERSION}.zip" -o /tmp/bws.zip
+    unzip -o /tmp/bws.zip -d /usr/local/bin/
+    chmod +x /usr/local/bin/bws
+    rm -f /tmp/bws.zip
+    log "bws CLI installed: $(bws --version)"
 }
 
 setup_modern_cli_tools() {
@@ -321,12 +344,12 @@ setup_bootstrap_scripts() {
     SCRIPTS_BASE="https://raw.githubusercontent.com/${github_username}/aws-devbox/master/scripts"
     mkdir -p /home/ubuntu/bin
 
-    curl -fsSL "$SCRIPTS_BASE/bw-unlock.sh" -o /home/ubuntu/bin/bw-unlock || log "Failed to download bw-unlock"
+    curl -fsSL "$SCRIPTS_BASE/bws-init.sh" -o /home/ubuntu/bin/bws-init || log "Failed to download bws-init"
     curl -fsSL "$SCRIPTS_BASE/devbox-init.sh" -o /home/ubuntu/bin/devbox-init || log "Failed to download devbox-init"
     curl -fsSL "$SCRIPTS_BASE/devbox-check.sh" -o /home/ubuntu/bin/devbox-check || log "Failed to download devbox-check"
     curl -fsSL "$SCRIPTS_BASE/devbox-restore.sh" -o /home/ubuntu/bin/devbox-restore || log "Failed to download devbox-restore"
 
-    chmod +x /home/ubuntu/bin/bw-unlock /home/ubuntu/bin/devbox-init /home/ubuntu/bin/devbox-check /home/ubuntu/bin/devbox-restore 2>/dev/null || true
+    chmod +x /home/ubuntu/bin/bws-init /home/ubuntu/bin/devbox-init /home/ubuntu/bin/devbox-check /home/ubuntu/bin/devbox-restore 2>/dev/null || true
     chown -R ubuntu:ubuntu /home/ubuntu/bin
 }
 
@@ -460,7 +483,7 @@ command -v zoxide &>/dev/null && eval "$(zoxide init zsh)"
 command -v direnv &>/dev/null && eval "$(direnv hook zsh)"
 export PATH="$HOME/bin:$HOME/.local/bin:$PATH"
 alias ls='eza' ll='eza -la' lg='lazygit' ld='lazydocker'
-alias unlock='source ~/bin/bw-unlock' init='~/bin/devbox-init' check='~/bin/devbox-check'
+alias init='~/bin/devbox-init' check='~/bin/devbox-check'
 alias restore='~/bin/devbox-restore' status='~/bin/devbox-restore status'
 
 # Track last working directory for restore
@@ -483,13 +506,13 @@ command -v zoxide &>/dev/null && eval "$(zoxide init bash)"
 command -v direnv &>/dev/null && eval "$(direnv hook bash)"
 export PATH="$HOME/bin:$HOME/.local/bin:$PATH"
 alias ls='eza' ll='eza -la' lg='lazygit' ld='lazydocker'
-alias unlock='source ~/bin/bw-unlock' init='~/bin/devbox-init' check='~/bin/devbox-check'
+alias init='~/bin/devbox-init' check='~/bin/devbox-check'
 BASHRC
 fi
 
 # Claude settings
 cat > ~/.claude/settings.json <<'CLAUDE'
-{"permissions":{"allow":["Bash(git *)","Bash(gh *)","Bash(aws *)","Bash(npm *)","Bash(docker *)","Bash(terraform *)","Bash(bw *)","Read","Write","Edit","Glob","Grep","Task","WebFetch","TodoRead","TodoWrite"],"deny":[]}}
+{"permissions":{"allow":["Bash(git *)","Bash(gh *)","Bash(aws *)","Bash(npm *)","Bash(docker *)","Bash(terraform *)","Bash(bws *)","Read","Write","Edit","Glob","Grep","Task","WebFetch","TodoRead","TodoWrite"],"deny":[]}}
 CLAUDE
 
 # Claude rules
@@ -571,6 +594,7 @@ run_step "github_cli" "GitHub CLI" setup_github_cli
 run_step "nodejs" "Node.js" setup_nodejs
 run_step "python" "Python" setup_python
 run_step "npm_packages" "NPM packages" setup_npm_packages
+run_step "bws_cli" "Bitwarden Secrets Manager CLI" setup_bws_cli
 run_step "modern_cli_tools" "Modern CLI tools" setup_modern_cli_tools
 run_step "cloud_clis" "Cloud CLIs" setup_cloud_clis
 run_step "system_config" "System config" setup_system_config

@@ -159,8 +159,8 @@ resource "aws_instance" "devbox" {
   user_data_base64 = base64gzip(templatefile("${path.module}/scripts/user-data.sh", {
     hostname            = var.hostname
     timezone            = var.schedule_timezone
-    tailscale_auth_key  = data.bitwarden_item_login.tailscale.password
-    tailscale_api_key   = data.bitwarden_item_login.tailscale_api.password
+    tailscale_auth_key  = data.bitwarden-secrets_secret.tailscale.value
+    tailscale_api_key   = data.bitwarden-secrets_secret.tailscale_api.value
     tailscale_hostname  = var.tailscale_hostname
     architecture        = var.architecture
     github_username     = var.github_username

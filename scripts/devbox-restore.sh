@@ -19,13 +19,13 @@ log() {
 # Status Display
 # ============================================================================
 show_status() {
-    local bw_status docker_status luks_status tmux_status
+    local bws_status docker_status luks_status tmux_status
 
-    # Bitwarden status
-    if [[ -n "${BW_SESSION:-}" ]] && bw status 2>/dev/null | grep -q '"status":"unlocked"'; then
-        bw_status="✓ unlocked"
+    # Bitwarden Secrets Manager status
+    if [[ -n "${BWS_ACCESS_TOKEN:-}" ]] && bws secret list &>/dev/null; then
+        bws_status="✓ connected"
     else
-        bw_status="✗ locked (run: unlock)"
+        bws_status="✗ not configured"
     fi
 
     # Docker status
@@ -56,7 +56,7 @@ show_status() {
     echo "┌─────────────────────────────────────┐"
     echo "│          DevBox Status              │"
     echo "├─────────────────────────────────────┤"
-    printf "│  Bitwarden: %-23s│\n" "$bw_status"
+    printf "│  BWS:       %-23s│\n" "$bws_status"
     printf "│  Docker:    %-23s│\n" "$docker_status"
     printf "│  /home:     %-23s│\n" "$luks_status"
     printf "│  Tmux:      %-23s│\n" "$tmux_status"

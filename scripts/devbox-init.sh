@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # devbox-init - Initialize devbox after first SSH
 # Does NOT use set -e - handles errors explicitly per step
+# Uses Bitwarden Secrets Manager (bws) for all secrets
 
 DATA_DEV="/dev/nvme1n1"
 DATA_MAPPER="data"
@@ -43,22 +44,74 @@ run_step() {
 }
 
 # =============================================================================
+# Bitwarden Secrets Manager Functions
+# =============================================================================
+
+# Get a secret value by name (key)
+# Usage: bws_get "secret-name"
+bws_get() {
+    local secret_name="$1"
+
+    if [[ -z "${BWS_ACCESS_TOKEN:-}" ]]; then
+        log_error "BWS_ACCESS_TOKEN not set"
+        return 1
+    fi
+
+    # List all secrets and find by key name, then get the value
+    local secret_id
+    secret_id=$(bws secret list 2>/dev/null | jq -r --arg name "$secret_name" '.[] | select(.key == $name) | .id' 2>/dev/null)
+
+    if [[ -z "$secret_id" ]]; then
+        return 1
+    fi
+
+    bws secret get "$secret_id" 2>/dev/null | jq -r '.value'
+}
+
+# Check if a secret exists by name
+bws_exists() {
+    local secret_name="$1"
+
+    if [[ -z "${BWS_ACCESS_TOKEN:-}" ]]; then
+        return 1
+    fi
+
+    bws secret list 2>/dev/null | jq -e --arg name "$secret_name" '.[] | select(.key == $name)' &>/dev/null
+}
+
+# =============================================================================
 # Pre-flight Check
 # =============================================================================
 
-check_bitwarden() {
-    if ! command -v bw &>/dev/null; then
-        log_error "Bitwarden CLI not installed. Run: npm install -g @bitwarden/cli"
+check_bws() {
+    if ! command -v bws &>/dev/null; then
+        log_error "Bitwarden Secrets Manager CLI (bws) not installed"
+        log_error "Install: Download from https://github.com/bitwarden/sdk-sm/releases"
         return 1
     fi
 
-    if ! bw status 2>/dev/null | jq -e '.status == "unlocked"' &>/dev/null; then
-        log_error "Bitwarden not unlocked. Run: source ~/bin/bw-unlock"
+    # Check for access token
+    if [[ -z "${BWS_ACCESS_TOKEN:-}" ]]; then
+        # Try to load from file
+        local token_file="$HOME/.config/bws/access-token"
+        if [[ -f "$token_file" ]]; then
+            BWS_ACCESS_TOKEN=$(cat "$token_file")
+            export BWS_ACCESS_TOKEN
+        else
+            log_error "BWS_ACCESS_TOKEN not set"
+            log_error "Set environment variable or create: $token_file"
+            return 1
+        fi
+    fi
+
+    # Test access by listing secrets
+    if ! bws secret list &>/dev/null; then
+        log_error "Failed to access Bitwarden Secrets Manager"
+        log_error "Check your access token is valid"
         return 1
     fi
 
-    bw sync &>/dev/null
-    log_success "Bitwarden unlocked and synced"
+    log_success "Bitwarden Secrets Manager connected"
     return 0
 }
 
@@ -74,7 +127,7 @@ setup_luks() {
 
     log "=== Setting up encrypted data volume ==="
     local LUKS_KEY
-    LUKS_KEY=$(bw get password "luks-key" 2>/dev/null) || { log_error "luks-key not found in Bitwarden"; return 1; }
+    LUKS_KEY=$(bws_get "luks-key") || { log_error "luks-key not found in Secrets Manager"; return 1; }
 
     if ! sudo cryptsetup isLuks "$DATA_DEV" 2>/dev/null; then
         log "Formatting $DATA_DEV with LUKS (first time setup)..."
@@ -114,10 +167,10 @@ setup_ssh_keys() {
     log "=== Setting up SSH keys ==="
     mkdir -p ~/.ssh && chmod 700 ~/.ssh
 
-    # Home key (password field contains the SSH private key)
+    # Home key
     if [[ ! -f ~/.ssh/id_ed25519_home ]]; then
-        if bw get item "github-ssh-home" &>/dev/null; then
-            bw get password "github-ssh-home" > ~/.ssh/id_ed25519_home
+        if bws_exists "github-ssh-home"; then
+            bws_get "github-ssh-home" > ~/.ssh/id_ed25519_home
             chmod 600 ~/.ssh/id_ed25519_home
             log "Home SSH key installed"
         else
@@ -127,10 +180,10 @@ setup_ssh_keys() {
         log "Home SSH key already exists"
     fi
 
-    # Work key (password field contains the SSH private key)
+    # Work key
     if [[ ! -f ~/.ssh/id_ed25519_work ]]; then
-        if bw get item "github-ssh-work" &>/dev/null; then
-            bw get password "github-ssh-work" > ~/.ssh/id_ed25519_work
+        if bws_exists "github-ssh-work"; then
+            bws_get "github-ssh-work" > ~/.ssh/id_ed25519_work
             chmod 600 ~/.ssh/id_ed25519_work
             log "Work SSH key installed"
         else
@@ -169,8 +222,8 @@ setup_github_cli() {
         return 0
     fi
 
-    if bw get item "github-token" &>/dev/null; then
-        bw get password "github-token" | gh auth login --with-token
+    if bws_exists "github-token"; then
+        bws_get "github-token" | gh auth login --with-token
         gh config set git_protocol ssh
         log "GitHub CLI authenticated"
     else
@@ -182,23 +235,15 @@ setup_git_identity() {
     log "=== Setting up git identity ==="
     mkdir -p ~/.config/git
 
-    # Get home identity from github-home item
-    local GH_HOME GIT_NAME_HOME GIT_EMAIL_HOME
-    GH_HOME=$(bw get item "github-home" 2>/dev/null) || { log_error "github-home not found in Bitwarden"; return 1; }
-    GIT_NAME_HOME=$(echo "$GH_HOME" | jq -r '.fields[]? | select(.name=="git_name") | .value // empty')
-    GIT_EMAIL_HOME=$(echo "$GH_HOME" | jq -r '.fields[]? | select(.name=="git_email") | .value // empty')
+    # Get home identity
+    local GIT_NAME_HOME GIT_EMAIL_HOME
+    GIT_NAME_HOME=$(bws_get "github-home-name" 2>/dev/null) || { log_error "github-home-name not found"; return 1; }
+    GIT_EMAIL_HOME=$(bws_get "github-home-email" 2>/dev/null) || { log_error "github-home-email not found"; return 1; }
 
-    if [[ -z "$GIT_NAME_HOME" || -z "$GIT_EMAIL_HOME" ]]; then
-        log_error "github-home missing required fields (git_name, git_email)"
-        return 1
-    fi
-
-    # Get work identity from github-work item (optional)
-    local GH_WORK GIT_NAME_WORK GIT_EMAIL_WORK
-    if GH_WORK=$(bw get item "github-work" 2>/dev/null); then
-        GIT_NAME_WORK=$(echo "$GH_WORK" | jq -r '.fields[]? | select(.name=="git_name") | .value // empty')
-        GIT_EMAIL_WORK=$(echo "$GH_WORK" | jq -r '.fields[]? | select(.name=="git_email") | .value // empty')
-    fi
+    # Get work identity (optional)
+    local GIT_NAME_WORK GIT_EMAIL_WORK
+    GIT_NAME_WORK=$(bws_get "github-work-name" 2>/dev/null) || true
+    GIT_EMAIL_WORK=$(bws_get "github-work-email" 2>/dev/null) || true
 
     # Home config
     if [[ ! -f ~/.config/git/config-home ]]; then
@@ -247,18 +292,12 @@ setup_aws_config() {
         return 0
     fi
 
-    local AWS_HOME AWS_ACCOUNT_ID AWS_SSO_START_URL AWS_SSO_REGION AWS_ROLE_NAME
-    AWS_HOME=$(bw get item "aws-home" 2>/dev/null) || { log "aws-home not found (optional)"; return 0; }
-
-    AWS_ACCOUNT_ID=$(echo "$AWS_HOME" | jq -r '.fields[]? | select(.name=="account_id") | .value // empty')
-    AWS_SSO_START_URL=$(echo "$AWS_HOME" | jq -r '.fields[]? | select(.name=="sso_start_url") | .value // empty')
-    AWS_SSO_REGION=$(echo "$AWS_HOME" | jq -r '.fields[]? | select(.name=="sso_region") | .value // empty')
-    AWS_ROLE_NAME=$(echo "$AWS_HOME" | jq -r '.fields[]? | select(.name=="role_name") | .value // empty')
-
-    if [[ -z "$AWS_ACCOUNT_ID" || -z "$AWS_SSO_START_URL" ]]; then
-        log "aws-home missing required fields (optional)"
-        return 0
-    fi
+    # Check for SSO config secrets
+    local AWS_ACCOUNT_ID AWS_SSO_START_URL AWS_SSO_REGION AWS_ROLE_NAME
+    AWS_ACCOUNT_ID=$(bws_get "aws-account-id" 2>/dev/null) || { log "aws-account-id not found (optional)"; return 0; }
+    AWS_SSO_START_URL=$(bws_get "aws-sso-start-url" 2>/dev/null) || { log "aws-sso-start-url not found (optional)"; return 0; }
+    AWS_SSO_REGION=$(bws_get "aws-sso-region" 2>/dev/null) || AWS_SSO_REGION="us-east-1"
+    AWS_ROLE_NAME=$(bws_get "aws-role-name" 2>/dev/null) || AWS_ROLE_NAME="AdministratorAccess"
 
     cat > ~/.aws/config <<AWSCFG
 [default]
@@ -285,15 +324,9 @@ setup_claude_sessions() {
         return 0
     fi
 
-    # Get repo from github-home item
-    local GH_HOME CLAUDE_SESSIONS_REPO
-    GH_HOME=$(bw get item "github-home" 2>/dev/null) || return 0
-    CLAUDE_SESSIONS_REPO=$(echo "$GH_HOME" | jq -r '.fields[]? | select(.name=="claude_sessions_repo") | .value // empty')
-
-    if [[ -z "$CLAUDE_SESSIONS_REPO" ]]; then
-        log "claude_sessions_repo not configured in github-home (optional)"
-        return 0
-    fi
+    # Get repo name
+    local CLAUDE_SESSIONS_REPO
+    CLAUDE_SESSIONS_REPO=$(bws_get "claude-sessions-repo" 2>/dev/null) || { log "claude-sessions-repo not found (optional)"; return 0; }
 
     if [[ ! -f ~/.ssh/id_ed25519_home ]]; then
         log "SSH key not available for cloning"
@@ -302,10 +335,10 @@ setup_claude_sessions() {
 
     git clone "git@github.com-home:${CLAUDE_SESSIONS_REPO}.git" ~/.config/claude-sessions 2>/dev/null || { log "Failed to clone claude-sessions"; return 0; }
 
-    # Unlock with git-crypt if key available (password field contains base64 key)
-    if bw get item "git-crypt-key" &>/dev/null; then
+    # Unlock with git-crypt if key available
+    if bws_exists "git-crypt-key"; then
         cd ~/.config/claude-sessions || return 0
-        bw get password "git-crypt-key" | base64 -d > /tmp/gc-key
+        bws_get "git-crypt-key" | base64 -d > /tmp/gc-key
         git-crypt unlock /tmp/gc-key 2>/dev/null && log "claude-sessions unlocked" || log "git-crypt unlock failed"
         rm -f /tmp/gc-key
         cd - >/dev/null || true
@@ -320,15 +353,9 @@ setup_lifemaestro() {
         return 0
     fi
 
-    # Get repo from github-home item
-    local GH_HOME LIFEMAESTRO_REPO
-    GH_HOME=$(bw get item "github-home" 2>/dev/null) || return 0
-    LIFEMAESTRO_REPO=$(echo "$GH_HOME" | jq -r '.fields[]? | select(.name=="lifemaestro_repo") | .value // empty')
-
-    if [[ -z "$LIFEMAESTRO_REPO" ]]; then
-        log "lifemaestro_repo not configured in github-home (optional)"
-        return 0
-    fi
+    # Get repo name
+    local LIFEMAESTRO_REPO
+    LIFEMAESTRO_REPO=$(bws_get "lifemaestro-repo" 2>/dev/null) || { log "lifemaestro-repo not found (optional)"; return 0; }
 
     if [[ ! -f ~/.ssh/id_ed25519_home ]]; then
         log "SSH key not available for cloning"
@@ -364,15 +391,9 @@ setup_baton() {
         return 0
     fi
 
-    # Get repo from github-home item
-    local GH_HOME BATON_REPO
-    GH_HOME=$(bw get item "github-home" 2>/dev/null) || return 0
-    BATON_REPO=$(echo "$GH_HOME" | jq -r '.fields[]? | select(.name=="baton_repo") | .value // empty')
-
-    if [[ -z "$BATON_REPO" ]]; then
-        log "baton_repo not configured in github-home (optional)"
-        return 0
-    fi
+    # Get repo name
+    local BATON_REPO
+    BATON_REPO=$(bws_get "baton-repo" 2>/dev/null) || { log "baton-repo not found (optional)"; return 0; }
 
     if [[ ! -f ~/.ssh/id_ed25519_home ]]; then
         log "SSH key not available for cloning"
@@ -438,15 +459,15 @@ setup_himalaya() {
         return 0
     fi
 
-    if ! bw get item "gmail-oauth" &>/dev/null; then
-        log "gmail-oauth not in Bitwarden (optional)"
+    if ! bws_exists "gmail-client-id"; then
+        log "gmail-client-id not in Secrets Manager (optional)"
         return 0
     fi
 
     local GMAIL_EMAIL GMAIL_CLIENT_ID GMAIL_CLIENT_SECRET
-    GMAIL_EMAIL=$(bw get item "gmail-oauth" | jq -r '.login.username // empty')
-    GMAIL_CLIENT_ID=$(bw get item "gmail-oauth" | jq -r '.fields[]? | select(.name=="client_id") | .value // empty')
-    GMAIL_CLIENT_SECRET=$(bw get item "gmail-oauth" | jq -r '.fields[]? | select(.name=="client_secret") | .value // empty')
+    GMAIL_EMAIL=$(bws_get "gmail-email" 2>/dev/null) || { log "gmail-email not found"; return 0; }
+    GMAIL_CLIENT_ID=$(bws_get "gmail-client-id" 2>/dev/null) || return 0
+    GMAIL_CLIENT_SECRET=$(bws_get "gmail-client-secret" 2>/dev/null) || return 0
 
     if [[ -z "$GMAIL_EMAIL" || -z "$GMAIL_CLIENT_ID" || -z "$GMAIL_CLIENT_SECRET" ]]; then
         log "Gmail OAuth credentials incomplete"
@@ -495,14 +516,14 @@ setup_gcalcli() {
         return 0
     fi
 
-    if ! bw get item "gmail-oauth" &>/dev/null; then
-        log "gmail-oauth not in Bitwarden (optional)"
+    if ! bws_exists "gmail-client-id"; then
+        log "gmail-client-id not in Secrets Manager (optional)"
         return 0
     fi
 
     local GMAIL_CLIENT_ID GMAIL_CLIENT_SECRET
-    GMAIL_CLIENT_ID=$(bw get item "gmail-oauth" | jq -r '.fields[]? | select(.name=="client_id") | .value // empty')
-    GMAIL_CLIENT_SECRET=$(bw get item "gmail-oauth" | jq -r '.fields[]? | select(.name=="client_secret") | .value // empty')
+    GMAIL_CLIENT_ID=$(bws_get "gmail-client-id" 2>/dev/null) || return 0
+    GMAIL_CLIENT_SECRET=$(bws_get "gmail-client-secret" 2>/dev/null) || return 0
 
     if [[ -z "$GMAIL_CLIENT_ID" || -z "$GMAIL_CLIENT_SECRET" ]]; then
         return 0
@@ -521,16 +542,16 @@ GCALCLI
 setup_ms365() {
     log "=== Setting up MS365 (email + calendar) ==="
 
-    if ! bw get item "ms365-oauth" &>/dev/null; then
-        log "ms365-oauth not in Bitwarden (optional)"
+    if ! bws_exists "ms365-client-id"; then
+        log "ms365-client-id not in Secrets Manager (optional)"
         return 0
     fi
 
     local MS365_EMAIL MS365_CLIENT_ID MS365_CLIENT_SECRET MS365_TENANT_ID
-    MS365_EMAIL=$(bw get item "ms365-oauth" | jq -r '.login.username // empty')
-    MS365_CLIENT_ID=$(bw get item "ms365-oauth" | jq -r '.fields[]? | select(.name=="client_id") | .value // empty')
-    MS365_CLIENT_SECRET=$(bw get item "ms365-oauth" | jq -r '.fields[]? | select(.name=="client_secret") | .value // empty')
-    MS365_TENANT_ID=$(bw get item "ms365-oauth" | jq -r '.fields[]? | select(.name=="tenant_id") | .value // empty')
+    MS365_EMAIL=$(bws_get "ms365-email" 2>/dev/null) || { log "ms365-email not found"; return 0; }
+    MS365_CLIENT_ID=$(bws_get "ms365-client-id" 2>/dev/null) || return 0
+    MS365_CLIENT_SECRET=$(bws_get "ms365-client-secret" 2>/dev/null) || ""
+    MS365_TENANT_ID=$(bws_get "ms365-tenant-id" 2>/dev/null) || return 0
 
     if [[ -z "$MS365_EMAIL" || -z "$MS365_CLIENT_ID" || -z "$MS365_TENANT_ID" ]]; then
         log "MS365 OAuth credentials incomplete"
@@ -597,7 +618,7 @@ log "=== Devbox Init ==="
 touch "$CHECKPOINT_FILE"
 
 # Pre-flight check (must pass)
-if ! check_bitwarden; then
+if ! check_bws; then
     exit 1
 fi
 

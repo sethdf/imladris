@@ -132,14 +132,10 @@ variable "enable_schedule" {
 }
 
 # =============================================================================
-# BITWARDEN
+# BITWARDEN SECRETS MANAGER
 # =============================================================================
-
-variable "bitwarden_email" {
-  description = "Email address for Bitwarden account"
-  type        = string
-  # No default - must be provided in terraform.tfvars
-}
+# No variables needed - authentication via access token in:
+#   lifemaestro/secrets/bw-sm-access-token
 
 # =============================================================================
 # GITHUB
@@ -162,27 +158,38 @@ variable "tailscale_hostname" {
 }
 
 # =============================================================================
-# ALL SECRETS FROM BITWARDEN
+# ALL SECRETS FROM BITWARDEN SECRETS MANAGER
 # =============================================================================
 #
-# Terraform pulls secrets via Bitwarden provider (see bitwarden.tf)
-# BW credentials stored in lifemaestro/secrets/ (gitignored):
-#   - bw-master, bw-client-id, bw-client-secret
+# Terraform pulls secrets via Bitwarden Secrets Manager provider (see bitwarden.tf)
+# Access token stored in lifemaestro/secrets/bw-sm-access-token (gitignored)
 #
-# Required Bitwarden items (in dacapo folder):
-#   - tailscale-auth-key (password field) - used at terraform apply
-#   - tailscale-api-key  (password field) - API key for device cleanup
-#   - luks-key           (password field) - LUKS encryption for data volume
-#   - github-ssh-home    (password field) - SSH private key
-#   - github-ssh-work    (password field) - SSH private key
-#   - github-token       (password field) - PAT for gh CLI
-#   - git-crypt-key      (password field) - base64-encoded key
-#   - github-home        (secure note) - git_name, git_email, github_username
-#   - github-work        (secure note) - git_name, git_email
-#   - aws-home           (secure note) - account_id, sso_start_url, sso_region, role_name
+# Required secrets in Secrets Manager (create in "devbox" project):
+#
+#   Used by Terraform at apply time:
+#   - tailscale-auth-key    : Auth key for joining tailnet
+#   - tailscale-api-key     : API key for device cleanup
+#
+#   Used by devbox-init.sh at runtime:
+#   - luks-key              : LUKS encryption passphrase for data volume
+#   - github-ssh-home       : SSH private key (base64 encoded)
+#   - github-ssh-work       : SSH private key (base64 encoded)
+#   - github-token          : GitHub PAT for gh CLI
+#   - git-crypt-key         : git-crypt key (base64 encoded)
+#   - github-home-name      : Git author name for home
+#   - github-home-email     : Git author email for home
+#   - github-home-username  : GitHub username
+#   - github-work-name      : Git author name for work
+#   - github-work-email     : Git author email for work
+#   - aws-access-key-id     : AWS access key (optional)
+#   - aws-secret-access-key : AWS secret key (optional)
+#   - gmail-client-id       : Gmail OAuth client ID (optional)
+#   - gmail-client-secret   : Gmail OAuth client secret (optional)
+#   - ms365-client-id       : MS365 OAuth client ID (optional)
+#   - ms365-client-secret   : MS365 OAuth client secret (optional)
+#   - ms365-tenant-id       : MS365 tenant ID (optional)
 #
 # After first SSH login, run:
-#   source ~/bin/bw-unlock    # Unlock Bitwarden vault
-#   ~/bin/devbox-init         # Bootstrap remaining secrets
+#   ~/bin/devbox-init         # Bootstrap remaining secrets from Secrets Manager
 #
 # =============================================================================

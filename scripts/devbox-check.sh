@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # devbox-check - Health check script for devbox dependencies
+# Uses Bitwarden Secrets Manager (bws)
 set -uo pipefail
 
 RED='\033[0;31m'
@@ -15,64 +16,84 @@ warn() { echo -e "${YELLOW}⚠${NC} $1"; ((WARNINGS++)); }
 fail() { echo -e "${RED}✗${NC} $1"; ((ERRORS++)); }
 info() { echo -e "  $1"; }
 
+# BWS helper - check if secret exists
+bws_exists() {
+    local secret_name="$1"
+    [[ -n "${BWS_ACCESS_TOKEN:-}" ]] && bws secret list 2>/dev/null | jq -e --arg name "$secret_name" '.[] | select(.key == $name)' &>/dev/null
+}
+
 echo "=== Devbox Health Check ==="
 echo ""
 
-# 1. Check Bitwarden
-echo "Bitwarden:"
-if ! command -v bw &>/dev/null; then
-    fail "bw CLI not installed"
+# 1. Check Bitwarden Secrets Manager
+echo "Bitwarden Secrets Manager:"
+BWS_OK=false
+if ! command -v bws &>/dev/null; then
+    fail "bws CLI not installed"
+    info "Download from: https://github.com/bitwarden/sdk-sm/releases"
 else
-    BW_STATUS=$(bw status 2>/dev/null | jq -r '.status' 2>/dev/null || echo "unknown")
-    case "$BW_STATUS" in
-        unlocked) ok "Unlocked and ready" ;;
-        locked)   warn "Locked - run: source ~/bin/bw-unlock" ;;
-        unauthenticated) fail "Not logged in - run: bw login" ;;
-        *) fail "Unknown status: $BW_STATUS" ;;
-    esac
+    # Check for access token
+    if [[ -z "${BWS_ACCESS_TOKEN:-}" ]]; then
+        TOKEN_FILE="$HOME/.config/bws/access-token"
+        if [[ -f "$TOKEN_FILE" ]]; then
+            BWS_ACCESS_TOKEN=$(cat "$TOKEN_FILE")
+            export BWS_ACCESS_TOKEN
+        fi
+    fi
+
+    if [[ -z "${BWS_ACCESS_TOKEN:-}" ]]; then
+        fail "BWS_ACCESS_TOKEN not set"
+        info "Set environment variable or create: ~/.config/bws/access-token"
+    elif bws secret list &>/dev/null; then
+        ok "Connected and authenticated"
+        BWS_OK=true
+    else
+        fail "Failed to access Secrets Manager - check access token"
+    fi
 fi
 echo ""
 
-# 2. Check required Bitwarden items
-echo "Bitwarden Items:"
+# 2. Check required secrets
+echo "Secrets Manager Items:"
 REQUIRED_ITEMS=(
     "luks-key:LUKS encryption key"
     "github-ssh-home:GitHub SSH key (home)"
-    "github-ssh-work:GitHub SSH key (work)"
     "github-token:GitHub personal access token"
-    "github-home:GitHub home identity"
-    "aws-home:AWS SSO config"
+    "github-home-name:GitHub home name"
+    "github-home-email:GitHub home email"
 )
 
-if [[ "$BW_STATUS" == "unlocked" ]]; then
+if $BWS_OK; then
     for ITEM_DESC in "${REQUIRED_ITEMS[@]}"; do
         ITEM_NAME="${ITEM_DESC%%:*}"
         ITEM_LABEL="${ITEM_DESC#*:}"
-        if bw get item "$ITEM_NAME" &>/dev/null; then
+        if bws_exists "$ITEM_NAME"; then
             ok "$ITEM_LABEL"
         else
             fail "$ITEM_LABEL - missing: $ITEM_NAME"
-            info "Create with: bw create item (see terraform.tfvars.example)"
         fi
     done
 
     OPTIONAL_ITEMS=(
-        "github-work:GitHub work identity"
+        "github-ssh-work:GitHub SSH key (work)"
+        "github-work-name:GitHub work name"
+        "github-work-email:GitHub work email"
         "git-crypt-key:Git-crypt key (for encrypted repos)"
-        "gmail-oauth:Gmail OAuth credentials"
-        "ms365-oauth:MS365 OAuth credentials"
+        "gmail-client-id:Gmail OAuth client ID"
+        "ms365-client-id:MS365 OAuth client ID"
+        "aws-account-id:AWS account ID"
     )
     for ITEM_DESC in "${OPTIONAL_ITEMS[@]}"; do
         ITEM_NAME="${ITEM_DESC%%:*}"
         ITEM_LABEL="${ITEM_DESC#*:}"
-        if bw get item "$ITEM_NAME" &>/dev/null; then
+        if bws_exists "$ITEM_NAME"; then
             ok "$ITEM_LABEL"
         else
             warn "$ITEM_LABEL - not configured (optional)"
         fi
     done
 else
-    warn "Skipping item check - unlock Bitwarden first"
+    warn "Skipping item check - configure Secrets Manager first"
 fi
 echo ""
 
