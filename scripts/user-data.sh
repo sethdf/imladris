@@ -84,7 +84,7 @@ setup_system_packages() {
     apt-get install -y \
         zsh git git-crypt curl wget unzip jq htop tmux ripgrep fd-find bat ncdu \
         software-properties-common build-essential ca-certificates gnupg lsb-release \
-        fzf direnv cryptsetup eza \
+        fzf direnv cryptsetup eza inotify-tools \
         unattended-upgrades apt-listchanges
 }
 
@@ -353,6 +353,28 @@ setup_bootstrap_scripts() {
     chown -R ubuntu:ubuntu /home/ubuntu/bin
 }
 
+setup_session_sync() {
+    SCRIPTS_BASE="https://raw.githubusercontent.com/${github_username}/aws-devbox/master/scripts"
+
+    # Install session-sync script
+    curl -fsSL "$SCRIPTS_BASE/session-sync.sh" -o /usr/local/bin/session-sync.sh || log "Failed to download session-sync.sh"
+    chmod +x /usr/local/bin/session-sync.sh
+
+    # Install setup helper
+    curl -fsSL "$SCRIPTS_BASE/session-sync-setup.sh" -o /home/ubuntu/bin/session-sync-setup || log "Failed to download session-sync-setup.sh"
+    chmod +x /home/ubuntu/bin/session-sync-setup
+
+    # Install systemd service template
+    curl -fsSL "$SCRIPTS_BASE/session-sync@.service" -o /etc/systemd/system/session-sync@.service || log "Failed to download session-sync@.service"
+    systemctl daemon-reload
+
+    # Create config directory for ubuntu user
+    mkdir -p /home/ubuntu/.config/session-sync
+    chown -R ubuntu:ubuntu /home/ubuntu/.config/session-sync /home/ubuntu/bin/session-sync-setup
+
+    log "Session sync installed. Run 'session-sync-setup <name> <dir> <git-remote>' to configure."
+}
+
 setup_user_environment() {
     sudo -u ubuntu bash <<'USERSETUP'
 # Oh My Zsh
@@ -601,6 +623,7 @@ run_step "system_config" "System config" setup_system_config
 run_step "git_delta" "Git delta config" setup_git_delta
 run_step "spot_watcher" "Spot watcher" setup_spot_watcher
 run_step "bootstrap_scripts" "Bootstrap scripts" setup_bootstrap_scripts
+run_step "session_sync" "Session sync tools" setup_session_sync
 run_step "user_environment" "User environment" setup_user_environment
 run_step "motd" "MOTD" setup_motd
 

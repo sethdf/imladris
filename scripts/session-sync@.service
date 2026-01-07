@@ -1,0 +1,40 @@
+# Systemd service template for session-sync
+#
+# This is a template unit - the instance name specifies which config to use.
+#
+# Installation:
+#   sudo cp session-sync@.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#
+# Usage:
+#   Create config files in ~/.config/session-sync/<name>.conf
+#   Then: systemctl --user enable --now session-sync@<name>
+#
+# Example ~/.config/session-sync/home.conf:
+#   SYNC_DIR=/home/ubuntu/encrypted-home/sessions/home
+#   BRANCH=main
+#
+# Example ~/.config/session-sync/work.conf:
+#   SYNC_DIR=/home/ubuntu/encrypted-home/sessions/work
+#   BRANCH=main
+
+[Unit]
+Description=Session Sync for %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/session-sync/%i.conf
+ExecStart=/usr/local/bin/session-sync.sh ${SYNC_DIR} ${BRANCH}
+Restart=on-failure
+RestartSec=10
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=${SYNC_DIR}
+
+[Install]
+WantedBy=default.target
