@@ -412,6 +412,32 @@ setup_pai() {
     log "PAI repo cloned. Bootstrap runs after LUKS unlock via devbox-init."
 }
 
+setup_custom_skills() {
+    # Clone custom skills repo if configured
+    local SKILLS_REPO="${skills_repo}"
+    local SKILLS_DIR="/home/ubuntu/work/skills"
+
+    if [[ -z "$SKILLS_REPO" ]]; then
+        log "No custom skills repo configured - skipping"
+        return 0
+    fi
+
+    mkdir -p /home/ubuntu/work
+
+    if [[ -d "$SKILLS_DIR" ]]; then
+        log "Skills repo already cloned"
+    else
+        log "Cloning custom skills repo: $SKILLS_REPO"
+        sudo -u ubuntu git clone "https://github.com/$SKILLS_REPO.git" "$SKILLS_DIR" || {
+            log "Failed to clone skills repo - may need auth, clone manually after login"
+            return 0
+        }
+    fi
+
+    chown -R ubuntu:ubuntu /home/ubuntu/work
+    log "Custom skills cloned to $SKILLS_DIR. Install via devbox-init."
+}
+
 setup_user_environment() {
     sudo -u ubuntu bash <<'USERSETUP'
 # Oh My Zsh
@@ -663,6 +689,7 @@ run_step "bootstrap_scripts" "Bootstrap scripts" setup_bootstrap_scripts
 run_step "session_sync" "Session sync tools" setup_session_sync
 run_step "bun" "Bun runtime" setup_bun
 run_step "pai" "Personal AI Infrastructure" setup_pai
+run_step "custom_skills" "Custom PAI skills" setup_custom_skills
 run_step "user_environment" "User environment" setup_user_environment
 run_step "motd" "MOTD" setup_motd
 

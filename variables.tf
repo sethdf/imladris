@@ -141,6 +141,12 @@ variable "github_username" {
   # No default - must be provided in terraform.tfvars
 }
 
+variable "skills_repo" {
+  description = "GitHub repo for custom PAI skills (e.g., 'username/pai-skills')"
+  type        = string
+  default     = ""
+}
+
 # =============================================================================
 # TAILSCALE
 # =============================================================================

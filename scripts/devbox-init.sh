@@ -150,6 +150,58 @@ setup_pai() {
 }
 
 # =============================================================================
+# Custom Skills Installation
+# =============================================================================
+
+install_custom_skills() {
+    local SKILLS_SRC="$HOME/work/skills"
+    local SKILLS_DST="$HOME/.claude/skills"
+
+    if [[ ! -d "$SKILLS_SRC" ]]; then
+        log "No custom skills repo at $SKILLS_SRC - skipping"
+        return 0
+    fi
+
+    log "Installing custom skills..."
+    mkdir -p "$SKILLS_DST"
+
+    # Install skill markdown files (README.md -> skill-name.md)
+    for skill_dir in "$SKILLS_SRC"/*/; do
+        [[ -d "$skill_dir" ]] || continue
+        local name=$(basename "$skill_dir")
+
+        # Skip hidden directories and common non-skill dirs
+        [[ "$name" == .* ]] && continue
+
+        if [[ -f "$skill_dir/README.md" ]]; then
+            cp "$skill_dir/README.md" "$SKILLS_DST/${name}.md"
+            log "  Installed skill: $name"
+        fi
+    done
+
+    # Install helper scripts from src/ directories
+    mkdir -p "$HOME/bin"
+    for script in "$SKILLS_SRC"/*/src/*.sh; do
+        [[ -f "$script" ]] || continue
+        local script_name=$(basename "$script")
+        cp "$script" "$HOME/bin/${script_name%.sh}"
+        chmod +x "$HOME/bin/${script_name%.sh}"
+        log "  Installed script: ${script_name%.sh}"
+    done
+
+    # Install hooks from src/ directories
+    local HOOKS_DST="$HOME/.claude/hooks"
+    mkdir -p "$HOOKS_DST"
+    for hook in "$SKILLS_SRC"/*/src/*-hook.ts; do
+        [[ -f "$hook" ]] || continue
+        cp "$hook" "$HOOKS_DST/"
+        log "  Installed hook: $(basename "$hook")"
+    done
+
+    log_success "Custom skills installed"
+}
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -172,6 +224,9 @@ fi
 
 # Bootstrap PAI on encrypted volume
 setup_pai
+
+# Install custom skills from ~/work/skills/
+install_custom_skills
 
 log ""
 log_success "DevBox initialization complete"

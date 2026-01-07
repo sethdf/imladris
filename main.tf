@@ -164,6 +164,7 @@ resource "aws_instance" "devbox" {
     tailscale_hostname  = var.tailscale_hostname
     architecture        = var.architecture
     github_username     = var.github_username
+    skills_repo         = var.skills_repo
     distro_id           = "ubuntu"
     distro_codename     = "noble"
     sns_topic_arn       = length(var.notification_emails) > 0 ? aws_sns_topic.devbox[0].arn : ""
