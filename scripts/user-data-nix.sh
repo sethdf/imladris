@@ -69,6 +69,18 @@ Unattended-Upgrade::Automatic-Reboot "false";
 EOF
 }
 
+setup_ssm() {
+    # AWS Systems Manager agent for secure remote access
+    if systemctl is-active --quiet amazon-ssm-agent 2>/dev/null; then
+        log "SSM agent already running"
+        return 0
+    fi
+
+    # Install via snap (recommended for Ubuntu)
+    snap install amazon-ssm-agent --classic
+    snap start amazon-ssm-agent
+}
+
 setup_docker() {
     if command -v docker &>/dev/null; then
         log "Docker already installed"
@@ -253,6 +265,7 @@ main() {
     touch "$CHECKPOINT_FILE"
 
     run_step "system"        "System setup"           setup_system
+    run_step "ssm"           "SSM Agent"              setup_ssm
     run_step "docker"        "Docker"                 setup_docker
     run_step "tailscale"     "Tailscale"              setup_tailscale
     run_step "spot_handler"  "Spot interruption"      setup_spot_handler
