@@ -149,27 +149,41 @@ resource "aws_instance" "devbox" {
 
   # Require IMDSv2 for enhanced security
   metadata_options {
-    http_tokens   = "required"  # Require IMDSv2 token
+    http_tokens   = "required" # Require IMDSv2 token
     http_endpoint = "enabled"
   }
 
-  # User data - Tailscale auth key from Bitwarden
-  # All other secrets bootstrapped from Bitwarden after first login
+  # User data - bootstrap script selection based on use_nix variable
   # Compressed with gzip (AWS auto-decompresses) to stay under 16KB limit
-  user_data_base64 = base64gzip(templatefile("${path.module}/scripts/user-data.sh", {
-    hostname            = var.hostname
-    timezone            = var.schedule_timezone
-    tailscale_auth_key  = data.bitwarden-secrets_secret.tailscale.value
-    tailscale_api_key   = data.bitwarden-secrets_secret.tailscale_api.value
-    tailscale_hostname  = var.tailscale_hostname
-    architecture        = var.architecture
-    github_username     = var.github_username
-    devbox_user         = var.devbox_user
-    devbox_user_keys    = var.devbox_user_keys
-    distro_id           = "ubuntu"
-    distro_codename     = "noble"
-    sns_topic_arn       = length(var.notification_emails) > 0 ? aws_sns_topic.devbox[0].arn : ""
-  }))
+  user_data_base64 = base64gzip(
+    var.use_nix ? templatefile("${path.module}/scripts/user-data-nix.sh", {
+      # Nix bootstrap: minimal vars, packages managed by home-manager
+      hostname           = var.hostname
+      timezone           = var.schedule_timezone
+      tailscale_auth_key = data.bitwarden-secrets_secret.tailscale.value
+      tailscale_api_key  = data.bitwarden-secrets_secret.tailscale_api.value
+      tailscale_hostname = var.tailscale_hostname
+      architecture       = var.architecture
+      github_username    = var.github_username
+      sns_topic_arn      = length(var.notification_emails) > 0 ? aws_sns_topic.devbox[0].arn : ""
+      distro_id          = "ubuntu"
+      distro_codename    = "noble"
+      }) : templatefile("${path.module}/scripts/user-data-legacy.sh", {
+      # Legacy bootstrap: all packages installed via apt/curl
+      hostname           = var.hostname
+      timezone           = var.schedule_timezone
+      tailscale_auth_key = data.bitwarden-secrets_secret.tailscale.value
+      tailscale_api_key  = data.bitwarden-secrets_secret.tailscale_api.value
+      tailscale_hostname = var.tailscale_hostname
+      architecture       = var.architecture
+      github_username    = var.github_username
+      devbox_user        = var.devbox_user
+      devbox_user_keys   = var.devbox_user_keys
+      distro_id          = "ubuntu"
+      distro_codename    = "noble"
+      sns_topic_arn      = length(var.notification_emails) > 0 ? aws_sns_topic.devbox[0].arn : ""
+    })
+  )
 
   # Protect instance from accidental deletion; don't recreate if user-data changes
   lifecycle {

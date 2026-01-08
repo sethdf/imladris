@@ -32,7 +32,7 @@ variable "instance_type" {
   default     = "m7g.xlarge"
 
   validation {
-    condition = can(regex("^[a-z][0-9][a-z]?g?\\.(nano|micro|small|medium|large|xlarge|[0-9]+xlarge)$", var.instance_type))
+    condition     = can(regex("^[a-z][0-9][a-z]?g?\\.(nano|micro|small|medium|large|xlarge|[0-9]+xlarge)$", var.instance_type))
     error_message = "Instance type must be a valid EC2 instance type format."
   }
 }
@@ -43,8 +43,8 @@ variable "instance_type_fallbacks" {
     Used by 'make spot-check' to show availability across types.
     For manual fallback: set instance_type to one of these.
   EOT
-  type    = list(string)
-  default = ["m6g.xlarge", "c7g.xlarge", "r7g.large"]
+  type        = list(string)
+  default     = ["m6g.xlarge", "c7g.xlarge", "r7g.large"]
 }
 
 variable "volume_size" {
@@ -121,6 +121,16 @@ variable "schedule_timezone" {
 
 variable "enable_schedule" {
   description = "Enable automatic start/stop schedule"
+  type        = bool
+  default     = true
+}
+
+# =============================================================================
+# BUILD MODE
+# =============================================================================
+
+variable "use_nix" {
+  description = "Use Nix + home-manager for package management (recommended)"
   type        = bool
   default     = true
 }
