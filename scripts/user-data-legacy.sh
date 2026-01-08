@@ -429,75 +429,6 @@ setup_custom_skills() {
     log "Skills downloaded to $SKILLS_DIR. Install via devbox-init."
 }
 
-setup_devbox_user() {
-    # Create custom user if specified (in addition to ubuntu)
-    local DEVBOX_USER="${devbox_user}"
-    local DEVBOX_USER_KEYS="${devbox_user_keys}"
-
-    if [[ -z "$DEVBOX_USER" ]]; then
-        log "No custom user configured - skipping"
-        return 0
-    fi
-
-    if id "$DEVBOX_USER" &>/dev/null; then
-        log "User $DEVBOX_USER already exists"
-    else
-        log "Creating user: $DEVBOX_USER"
-        useradd -m -s /usr/bin/zsh -G sudo,docker "$DEVBOX_USER"
-
-        # Passwordless sudo
-        echo "$DEVBOX_USER ALL=(ALL) NOPASSWD:ALL" > "/etc/sudoers.d/90-$DEVBOX_USER"
-        chmod 440 "/etc/sudoers.d/90-$DEVBOX_USER"
-    fi
-
-    local USER_HOME="/home/$DEVBOX_USER"
-
-    # Set up SSH keys if provided
-    if [[ -n "$DEVBOX_USER_KEYS" ]]; then
-        mkdir -p "$USER_HOME/.ssh"
-        echo "$DEVBOX_USER_KEYS" > "$USER_HOME/.ssh/authorized_keys"
-        chmod 700 "$USER_HOME/.ssh"
-        chmod 600 "$USER_HOME/.ssh/authorized_keys"
-        chown -R "$DEVBOX_USER:$DEVBOX_USER" "$USER_HOME/.ssh"
-        log "SSH keys configured for $DEVBOX_USER"
-    fi
-
-    # Copy ubuntu's setup to custom user (will be customized on first login)
-    if [[ -d /home/ubuntu/.oh-my-zsh ]]; then
-        cp -a /home/ubuntu/.oh-my-zsh "$USER_HOME/" 2>/dev/null || true
-    fi
-    if [[ -f /home/ubuntu/.zshrc ]]; then
-        cp /home/ubuntu/.zshrc "$USER_HOME/" 2>/dev/null || true
-    fi
-    if [[ -f /home/ubuntu/.bashrc ]]; then
-        cp /home/ubuntu/.bashrc "$USER_HOME/" 2>/dev/null || true
-    fi
-    if [[ -f /home/ubuntu/.tmux.conf ]]; then
-        cp /home/ubuntu/.tmux.conf "$USER_HOME/" 2>/dev/null || true
-    fi
-    if [[ -d /home/ubuntu/.tmux ]]; then
-        cp -a /home/ubuntu/.tmux "$USER_HOME/" 2>/dev/null || true
-    fi
-    if [[ -d /home/ubuntu/bin ]]; then
-        cp -a /home/ubuntu/bin "$USER_HOME/" 2>/dev/null || true
-    fi
-
-    # Create standard directories
-    mkdir -p "$USER_HOME"/{code,projects,work,.local/bin,.config,.claude,.claude/rules}
-
-    # Symlink to ubuntu's repos (shared, not duplicated)
-    ln -sfn /home/ubuntu/pai "$USER_HOME/pai" 2>/dev/null || true
-    ln -sfn /home/ubuntu/work/skills "$USER_HOME/work/skills" 2>/dev/null || true
-
-    # Add PAI_DIR to profile
-    if ! grep -q "PAI_DIR" "$USER_HOME/.zshrc" 2>/dev/null; then
-        echo 'export PAI_DIR="$HOME/.claude"' >> "$USER_HOME/.zshrc"
-    fi
-
-    chown -R "$DEVBOX_USER:$DEVBOX_USER" "$USER_HOME"
-    log_success "Custom user $DEVBOX_USER configured"
-}
-
 setup_user_environment() {
     sudo -u ubuntu bash <<'USERSETUP'
 # Oh My Zsh
@@ -782,7 +713,6 @@ run_step "bun" "Bun runtime" setup_bun
 run_step "pai" "Personal AI Infrastructure" setup_pai
 run_step "custom_skills" "Custom PAI skills" setup_custom_skills
 run_step "user_environment" "User environment" setup_user_environment
-run_step "devbox_user" "Custom devbox user" setup_devbox_user
 run_step "motd" "MOTD" setup_motd
 
 # Summary
