@@ -10,9 +10,12 @@
 # Usage:
 #   sdp-api list                     # List my assigned tickets
 #   sdp-api get <id>                 # Get ticket details
-#   sdp-api note <id> "<message>"    # Add note to ticket
+#   sdp-api note <id> "<message>"    # Add private note (technician only)
+#   sdp-api reply <id> "<message>"   # Add public reply (visible to requester)
 #   sdp-api status <id> "<status>"   # Update ticket status
 #   sdp-api search "<query>"         # Search tickets
+#   sdp-api sync-notes <id> <file>   # Sync local notes file to SDP
+#   sdp-api get-notes <id>           # Get all notes from ticket
 #
 set -euo pipefail
 
@@ -114,7 +117,63 @@ cmd_note() {
     }')
 
     api_call POST "/requests/${id}/notes" "$data"
-    echo "Note added to SDP-${id}"
+    echo "Private note added to SDP-${id}"
+}
+
+cmd_reply() {
+    local id="$1"
+    local message="$2"
+    id="${id#SDP-}"
+
+    local data
+    data=$(jq -n --arg msg "$message" '{
+        "reply": {
+            "description": $msg
+        }
+    }')
+
+    api_call POST "/requests/${id}/replies" "$data"
+    echo "Public reply sent to requester on SDP-${id}"
+}
+
+cmd_get_notes() {
+    local id="$1"
+    id="${id#SDP-}"
+
+    api_call GET "/requests/${id}/notes" | jq -r '
+        .notes[]? |
+        "[\(.created_time.display_value // "N/A")] \(if .show_to_requester then "[PUBLIC]" else "[PRIVATE]" end)\n\(.description)\n---"
+    '
+}
+
+cmd_sync_notes() {
+    local id="$1"
+    local file="$2"
+    id="${id#SDP-}"
+
+    if [[ ! -f "$file" ]]; then
+        echo "Error: File not found: $file" >&2
+        exit 1
+    fi
+
+    local content
+    content=$(cat "$file")
+    local timestamp
+    timestamp=$(date '+%Y-%m-%d %H:%M')
+
+    local data
+    data=$(jq -n --arg msg "--- Notes synced: $timestamp ---
+
+$content" '{
+        "note": {
+            "description": $msg,
+            "show_to_requester": false,
+            "notify_technician": false
+        }
+    }')
+
+    api_call POST "/requests/${id}/notes" "$data"
+    echo "Notes synced to SDP-${id} at $timestamp"
 }
 
 cmd_status() {
@@ -185,6 +244,15 @@ case "$cmd" in
     note)
         cmd_note "${1:?Usage: sdp-api note <ticket-id> <message>}" "${2:?Message required}"
         ;;
+    reply)
+        cmd_reply "${1:?Usage: sdp-api reply <ticket-id> <message>}" "${2:?Message required}"
+        ;;
+    get-notes|notes)
+        cmd_get_notes "${1:?Usage: sdp-api get-notes <ticket-id>}"
+        ;;
+    sync-notes)
+        cmd_sync_notes "${1:?Usage: sdp-api sync-notes <ticket-id> <file>}" "${2:?File required}"
+        ;;
     status)
         cmd_status "${1:?Usage: sdp-api status <ticket-id> <status>}" "${2:?Status required}"
         ;;
@@ -196,12 +264,19 @@ case "$cmd" in
 sdp-api - ServiceDesk Plus API helper
 
 Usage:
-  sdp-api list                     List my assigned tickets
-  sdp-api get <id>                 Get ticket details (formatted)
-  sdp-api get <id> --json          Get ticket details (raw JSON)
-  sdp-api note <id> "<message>"    Add note to ticket
-  sdp-api status <id> "<status>"   Update ticket status
-  sdp-api search "<query>"         Search tickets
+  sdp-api list                         List my assigned tickets
+  sdp-api get <id>                     Get ticket details (formatted)
+  sdp-api get <id> --json              Get ticket details (raw JSON)
+  sdp-api note <id> "<message>"        Add PRIVATE note (technicians only)
+  sdp-api reply <id> "<message>"       Add PUBLIC reply (visible to requester)
+  sdp-api get-notes <id>               Get all notes from ticket
+  sdp-api sync-notes <id> <file>       Sync local notes file to SDP as private note
+  sdp-api status <id> "<status>"       Update ticket status
+  sdp-api search "<query>"             Search tickets
+
+Notes vs Replies:
+  note       Internal technician notes - NOT visible to requester
+  reply      Public response - visible to requester, triggers notification
 
 Environment:
   SDP_BASE_URL      Your SDP instance URL
@@ -211,7 +286,9 @@ Environment:
 Examples:
   sdp-api list
   sdp-api get SDP-12345
-  sdp-api note 12345 "Deployed fix to staging"
+  sdp-api note 12345 "Root cause: expired auth token"
+  sdp-api reply 12345 "Issue has been resolved. Please try again."
+  sdp-api sync-notes 12345 notes.md
   sdp-api status 12345 "In Progress"
   sdp-api search "login timeout"
 EOF
