@@ -60,6 +60,9 @@
 
       # Repo management
       ghq
+
+      # Notifications
+      signal-cli
     ];
 
     # Environment variables
@@ -178,6 +181,12 @@
       eval "$(mise activate zsh)"
       eval "$(zoxide init zsh)"
       eval "$(direnv hook zsh)"
+
+      # Auth-keeper: lazy token refresh
+      [[ -f "$HOME/repos/github.com/dacapo-labs/host/scripts/auth-keeper.sh" ]] && \
+        source "$HOME/repos/github.com/dacapo-labs/host/scripts/auth-keeper.sh"
+      [[ -f "$HOME/repos/github.com/dacapo-labs/host/scripts/bws-init.sh" ]] && \
+        source "$HOME/repos/github.com/dacapo-labs/host/scripts/bws-init.sh"
 
       # GHQ + FZF integration
       ghq-cd() {
