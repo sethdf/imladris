@@ -100,7 +100,7 @@ setup_tailscale() {
 }
 
 setup_spot_handler() {
-    local SCRIPTS_BASE="https://raw.githubusercontent.com/${github_username}/host/master/scripts"
+    local SCRIPTS_BASE="https://raw.githubusercontent.com/dacapo-labs/host/master/scripts"
 
     # Download spot interruption handler
     curl -fsSL "$SCRIPTS_BASE/spot-interruption-handler.sh" -o /usr/local/bin/spot-interruption-handler || {
@@ -148,6 +148,9 @@ setup_nix() {
         return 0
     fi
 
+    # Set HOME for nix installer (required when running as root)
+    export HOME=/root
+
     # Install Nix in multi-user mode
     curl -L https://nixos.org/nix/install | sh -s -- --daemon --yes
 
@@ -192,7 +195,8 @@ setup_home_manager() {
 # =============================================================================
 
 setup_devbox_scripts() {
-    local SCRIPTS_BASE="https://raw.githubusercontent.com/${github_username}/host/master/scripts"
+    # Scripts are in dacapo-labs/host repo (not user's personal repo)
+    local SCRIPTS_BASE="https://raw.githubusercontent.com/dacapo-labs/host/master/scripts"
 
     mkdir -p /home/ubuntu/bin
     cd /home/ubuntu/bin
@@ -213,10 +217,21 @@ setup_devbox_scripts() {
 }
 
 setup_shell() {
-    # Set zsh as default shell for ubuntu
-    chsh -s /home/ubuntu/.nix-profile/bin/zsh ubuntu 2>/dev/null || \
-    chsh -s "$(which zsh)" ubuntu 2>/dev/null || \
-    chsh -s /usr/bin/zsh ubuntu
+    # Set zsh as default shell for ubuntu (only if zsh exists)
+    local zsh_path="/home/ubuntu/.nix-profile/bin/zsh"
+
+    if [ -x "$zsh_path" ]; then
+        # Add to /etc/shells if not present
+        grep -qxF "$zsh_path" /etc/shells || echo "$zsh_path" >> /etc/shells
+        chsh -s "$zsh_path" ubuntu
+        log "Shell set to nix zsh: $zsh_path"
+    elif command -v zsh &>/dev/null; then
+        chsh -s "$(which zsh)" ubuntu
+        log "Shell set to system zsh: $(which zsh)"
+    else
+        # Keep bash as fallback
+        log "zsh not found, keeping bash as shell"
+    fi
 }
 
 setup_motd() {
