@@ -49,8 +49,38 @@ bws_get() {
 }
 
 # =============================================================================
-# LUKS Setup
+# LUKS Setup (MFA: BWS keyfile + personal passphrase)
 # =============================================================================
+
+get_luks_combined_key() {
+    # MFA: Combine BWS keyfile + user's personal passphrase
+    local BWS_KEYFILE USER_PASS
+
+    BWS_KEYFILE=$(bws_get "luks-keyfile") || {
+        log_error "luks-keyfile not found in Secrets Manager"
+        log_error "Create a secret named 'luks-keyfile' with random data (e.g., openssl rand -base64 32)"
+        return 1
+    }
+
+    # Prompt for personal passphrase (not stored anywhere)
+    echo ""
+    echo "╔════════════════════════════════════════════════════════════════╗"
+    echo "║  LUKS MFA: Enter your personal passphrase                      ║"
+    echo "║  (This is NOT stored - you must remember it)                   ║"
+    echo "╚════════════════════════════════════════════════════════════════╝"
+    echo ""
+    read -rs -p "Personal passphrase: " USER_PASS
+    echo ""
+
+    if [[ -z "$USER_PASS" ]]; then
+        log_error "Passphrase cannot be empty"
+        return 1
+    fi
+
+    # Combine: BWS keyfile + user passphrase = full LUKS key
+    # Both are required - losing either means losing access
+    echo -n "${BWS_KEYFILE}${USER_PASS}"
+}
 
 setup_luks() {
     if [[ ! -b "$DATA_DEV" ]]; then
@@ -58,27 +88,48 @@ setup_luks() {
         return 0
     fi
 
-    log "Setting up encrypted data volume..."
+    log "Setting up encrypted data volume (MFA enabled)..."
 
-    local LUKS_KEY
-    LUKS_KEY=$(bws_get "luks-key") || { log_error "luks-key not found in Secrets Manager"; return 1; }
+    local COMBINED_KEY
+    COMBINED_KEY=$(get_luks_combined_key) || return 1
 
     if ! sudo cryptsetup isLuks "$DATA_DEV" 2>/dev/null; then
-        # First time setup
-        log "Formatting $DATA_DEV with LUKS..."
+        # First time setup - confirm passphrase
+        echo ""
+        read -rs -p "Confirm personal passphrase: " CONFIRM_PASS
+        echo ""
+
+        local BWS_KEYFILE
+        BWS_KEYFILE=$(bws_get "luks-keyfile")
+        local CHECK_KEY="${BWS_KEYFILE}${CONFIRM_PASS}"
+
+        if [[ "$COMBINED_KEY" != "$CHECK_KEY" ]]; then
+            log_error "Passphrases do not match"
+            return 1
+        fi
+
+        log "Formatting $DATA_DEV with LUKS2 (MFA)..."
+        log "⚠️  WARNING: This will DESTROY all data on $DATA_DEV"
+        read -p "Type 'yes' to continue: " CONFIRM
+        [[ "$CONFIRM" == "yes" ]] || { log "Aborted"; return 1; }
+
         sudo wipefs -a "$DATA_DEV" 2>/dev/null || true
-        echo -n "$LUKS_KEY" | sudo cryptsetup luksFormat --type luks2 -q "$DATA_DEV" -
-        echo -n "$LUKS_KEY" | sudo cryptsetup open "$DATA_DEV" "$DATA_MAPPER" -
+        echo -n "$COMBINED_KEY" | sudo cryptsetup luksFormat --type luks2 -q "$DATA_DEV" -
+        echo -n "$COMBINED_KEY" | sudo cryptsetup open "$DATA_DEV" "$DATA_MAPPER" -
         sudo mkfs.ext4 -L data "/dev/mapper/$DATA_MAPPER"
         sudo mkdir -p "$DATA_MOUNT"
         sudo mount "/dev/mapper/$DATA_MAPPER" "$DATA_MOUNT"
         sudo chown ubuntu:ubuntu "$DATA_MOUNT"
-        log_success "Data volume initialized"
+        log_success "Data volume initialized with MFA"
+        log "🔐 Remember: You need BOTH the BWS keyfile AND your passphrase to unlock"
     else
         # Existing LUKS volume - unlock it
         if [[ ! -e "/dev/mapper/$DATA_MAPPER" ]]; then
             log "Unlocking LUKS volume..."
-            echo -n "$LUKS_KEY" | sudo cryptsetup open "$DATA_DEV" "$DATA_MAPPER" -
+            echo -n "$COMBINED_KEY" | sudo cryptsetup open "$DATA_DEV" "$DATA_MAPPER" - || {
+                log_error "Failed to unlock - wrong passphrase or BWS keyfile changed?"
+                return 1
+            }
         fi
 
         sudo mkdir -p "$DATA_MOUNT"
