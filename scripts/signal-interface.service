@@ -1,0 +1,22 @@
+[Unit]
+Description=Signal Command Interface for PAI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/repos/github.com/dacapo-labs/host/scripts/signal-interface.sh listen
+Restart=always
+RestartSec=10
+
+# Environment
+Environment=HOME=%h
+Environment=PATH=%h/.nix-profile/bin:/usr/local/bin:/usr/bin:/bin
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=signal-interface
+
+[Install]
+WantedBy=default.target

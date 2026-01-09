@@ -109,6 +109,9 @@
       rm = "rm -i";
       cp = "cp -i";
       mv = "mv -i";
+
+      # Signal interface
+      sig = "signal-interface.sh";
     };
 
     # Activation script - runs on home-manager switch
@@ -137,6 +140,16 @@
         mkdir -p "${homeDirectory}/.local/bin"
         mkdir -p "${homeDirectory}/.cache/devbox"
         mkdir -p "${homeDirectory}/.config"
+      '';
+
+      # Install Signal interface systemd service
+      installSignalService = lib.hm.dag.entryAfter [ "writeBoundary" "cloneRepos" ] ''
+        mkdir -p "${homeDirectory}/.config/systemd/user"
+        SCRIPT_DIR="${homeDirectory}/repos/github.com/dacapo-labs/host/scripts"
+        if [ -f "$SCRIPT_DIR/signal-interface.service" ]; then
+          cp "$SCRIPT_DIR/signal-interface.service" "${homeDirectory}/.config/systemd/user/"
+          # Don't enable here - user should enable after linking signal-cli
+        fi
       '';
     };
   };
@@ -210,8 +223,8 @@
     '';
 
     profileExtra = ''
-      # Ensure PATH includes user bins
-      export PATH="$HOME/bin:$HOME/.local/bin:$PATH"
+      # Ensure PATH includes user bins and host scripts
+      export PATH="$HOME/bin:$HOME/.local/bin:$HOME/repos/github.com/dacapo-labs/host/scripts:$PATH"
     '';
   };
 
