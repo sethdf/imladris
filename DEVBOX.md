@@ -22,8 +22,8 @@ Complete reference for the AWS DevBox infrastructure and workflows.
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │  LUKS Encrypted Volume (/data)                                  │
-│  - Work context: /data/work                                     │
-│  - Home context: /data/home                                     │
+│  - Work files: /data/work (repos, tickets)                      │
+│  - Home files: /data/home (repos, projects)                     │
 │  - Persists across instance rebuilds                            │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -34,15 +34,18 @@ Complete reference for the AWS DevBox infrastructure and workflows.
 
 ```
 /home/ubuntu/
-├── work → /data/work           # Work context (symlink)
-├── home → /data/home           # Home context (symlink)
+├── work → /data/work           # Work files (symlink)
+├── home → /data/home           # Home files (symlink)
+├── .claude/                    # PAI (unified, default location)
+│   ├── history/                # Session history
+│   ├── hooks/                  # PAI hooks
+│   └── skills/                 # Installed skills
 ├── bin/                        # Installed scripts
 │   ├── sdp-api                 # SDP API helper
 │   ├── sdp-work                # SDP workflow manager
-│   ├── devbox-init             # LUKS/context setup
+│   ├── devbox-init             # LUKS/directory setup
 │   ├── devbox-check            # Health check
 │   └── devbox-restore          # Session restore
-├── repos/                      # Shared repos (ghq root, ephemeral)
 └── .nix-profile/               # Nix-managed packages
 ```
 
@@ -50,12 +53,8 @@ Complete reference for the AWS DevBox infrastructure and workflows.
 
 ```
 /data/
-├── work/                       # Work context
-│   ├── .envrc                  # direnv: PAI_DIR, GHQ_ROOT, SDP_*
-│   ├── .claude/                # Work PAI installation
-│   │   ├── history/            # Sessions, learnings
-│   │   ├── hooks/              # PAI hooks
-│   │   └── skills/             # Installed skills
+├── work/                       # Work files
+│   ├── .envrc                  # direnv: CONTEXT, GHQ_ROOT, SDP_*
 │   ├── repos/                  # Work repos (ghq)
 │   ├── tickets/                # SDP ticket workspaces
 │   │   └── SDP-12345/
@@ -63,10 +62,8 @@ Complete reference for the AWS DevBox infrastructure and workflows.
 │   │       └── replies/        # Public replies → SDP
 │   └── notes/                  # Work notes
 │
-└── home/                       # Home context
-    ├── .envrc                  # direnv: PAI_DIR, GHQ_ROOT
-    ├── .claude/                # Home PAI installation
-    │   └── history/
+└── home/                       # Home files
+    ├── .envrc                  # direnv: CONTEXT, GHQ_ROOT
     ├── repos/                  # Personal repos (ghq)
     ├── projects/               # Side projects
     └── notes/                  # Personal notes
@@ -151,14 +148,14 @@ sdp-work done
 
 ## Context Switching
 
-Contexts auto-switch via direnv when you `cd`:
+GHQ_ROOT auto-switches via direnv when you `cd`:
 
 ```bash
 $ cd ~/work
-direnv: export CONTEXT=work PAI_DIR=/data/work/.claude GHQ_ROOT=/data/work/repos
+direnv: export CONTEXT=work GHQ_ROOT=/data/work/repos SDP_TICKETS_DIR=/data/work/tickets
 
 $ cd ~/home
-direnv: export CONTEXT=home PAI_DIR=/data/home/.claude GHQ_ROOT=/data/home/repos
+direnv: export CONTEXT=home GHQ_ROOT=/data/home/repos
 
 # Quick switch
 $ ctx work
@@ -171,10 +168,11 @@ $ ctx          # Show current
 | Variable | Work | Home |
 |----------|------|------|
 | `CONTEXT` | work | home |
-| `PAI_DIR` | /data/work/.claude | /data/home/.claude |
 | `GHQ_ROOT` | /data/work/repos | /data/home/repos |
 | `SDP_TICKETS_DIR` | /data/work/tickets | (not set) |
-| `SDP_*` credentials | (set) | (not set) |
+| `SDP_*` credentials | (set via work/.envrc) | (not set) |
+
+**PAI (Claude Code)** uses the default `~/.claude` location - unified across both contexts.
 
 ## Nix Configuration
 
@@ -376,6 +374,7 @@ cat /data/work/.envrc
 | Bootstrap script | `host/scripts/user-data-nix.sh` |
 | DevBox scripts | `host/scripts/devbox-*.sh` |
 | SDP skill | `host/skills/servicedesk-plus/` |
-| Work PAI | `/data/work/.claude/` |
-| Home PAI | `/data/home/.claude/` |
+| PAI (unified) | `~/.claude/` |
+| Work repos | `/data/work/repos/` |
+| Home repos | `/data/home/repos/` |
 | Tickets | `/data/work/tickets/` |

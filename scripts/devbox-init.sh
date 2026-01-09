@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# devbox-init - Initialize LUKS encrypted data volume with work/home contexts
+# devbox-init - Initialize LUKS encrypted data volume with work/home directories
 set -euo pipefail
 
 DATA_DEV="/dev/nvme1n1"
@@ -90,45 +90,45 @@ setup_luks() {
 }
 
 # =============================================================================
-# Context Directory Setup (work/home separation)
+# Directory Setup (work/home separation - files only, unified PAI)
 # =============================================================================
 
-setup_contexts() {
-    log "Setting up work/home contexts..."
+setup_directories() {
+    log "Setting up work/home directories..."
 
-    # Create context directories on encrypted volume
-    for ctx in work home; do
-        local ctx_dir="$DATA_MOUNT/$ctx"
-        mkdir -p "$ctx_dir"/{.claude/history,repos,notes}
+    # Create directory structure on encrypted volume
+    # Work directories
+    mkdir -p "$DATA_MOUNT/work"/{repos,tickets,notes}
 
-        # Create .envrc for auto-context switching via direnv
-        if [[ ! -f "$ctx_dir/.envrc" ]]; then
-            cat > "$ctx_dir/.envrc" << EOF
+    # Home directories
+    mkdir -p "$DATA_MOUNT/home"/{repos,projects,notes}
+
+    # Create .envrc for context-aware settings via direnv
+    # Note: PAI uses default ~/.claude location (unified history)
+    if [[ ! -f "$DATA_MOUNT/work/.envrc" ]]; then
+        cat > "$DATA_MOUNT/work/.envrc" << 'EOF'
 # Auto-loaded by direnv when entering this directory
-export CONTEXT="$ctx"
-export PAI_DIR="\$PWD/.claude"
-export GHQ_ROOT="\$PWD/repos"
-EOF
-            log "  Created $ctx/.envrc"
-        fi
-    done
-
-    # Work-specific additions
-    mkdir -p "$DATA_MOUNT/work/tickets"
-    if ! grep -q "SDP_TICKETS_DIR" "$DATA_MOUNT/work/.envrc" 2>/dev/null; then
-        cat >> "$DATA_MOUNT/work/.envrc" << 'EOF'
+export CONTEXT="work"
+export GHQ_ROOT="$PWD/repos"
 export SDP_TICKETS_DIR="$PWD/tickets"
 EOF
+        log "  Created work/.envrc"
     fi
 
-    # Home-specific additions
-    mkdir -p "$DATA_MOUNT/home/projects"
+    if [[ ! -f "$DATA_MOUNT/home/.envrc" ]]; then
+        cat > "$DATA_MOUNT/home/.envrc" << 'EOF'
+# Auto-loaded by direnv when entering this directory
+export CONTEXT="home"
+export GHQ_ROOT="$PWD/repos"
+EOF
+        log "  Created home/.envrc"
+    fi
 
-    # Create symlinks from user home to contexts
+    # Create symlinks from user home to directories
     ln -sfn "$DATA_MOUNT/work" "$HOME/work"
     ln -sfn "$DATA_MOUNT/home" "$HOME/home"
 
-    # Allow direnv for both contexts
+    # Allow direnv for both directories
     mkdir -p "$HOME/.config/direnv"
     if [[ ! -f "$HOME/.config/direnv/direnv.toml" ]]; then
         cat > "$HOME/.config/direnv/direnv.toml" << EOF
@@ -141,68 +141,55 @@ EOF
     direnv allow "$DATA_MOUNT/work" 2>/dev/null || true
     direnv allow "$DATA_MOUNT/home" 2>/dev/null || true
 
-    log_success "Work/home contexts created"
-    log "  ~/work  → $DATA_MOUNT/work  (PAI_DIR, tickets, work repos)"
-    log "  ~/home  → $DATA_MOUNT/home  (PAI_DIR, personal repos/projects)"
+    log_success "Work/home directories created"
+    log "  ~/work  → $DATA_MOUNT/work  (work repos, tickets)"
+    log "  ~/home  → $DATA_MOUNT/home  (personal repos, projects)"
+    log "  PAI uses default ~/.claude (unified history)"
 }
 
 # =============================================================================
-# PAI Bootstrap (per-context)
+# PAI Setup (unified - uses default ~/.claude)
 # =============================================================================
 
 setup_pai() {
-    local PAI_REPO="$HOME/repos/github.com/danielmiessler/Personal_AI_Infrastructure"
+    log "Checking PAI setup..."
 
-    # Check ghq location first, fall back to old location
-    if [[ ! -d "$PAI_REPO" ]]; then
-        PAI_REPO="$HOME/pai"
-    fi
+    # PAI uses default location ~/.claude
+    local PAI_DIR="$HOME/.claude"
 
-    if [[ ! -d "$PAI_REPO" ]]; then
-        log "PAI repo not found - skipping bootstrap"
-        log "  Clone with: ghq get danielmiessler/Personal_AI_Infrastructure"
+    if [[ -d "$PAI_DIR/hooks" ]] || [[ -d "$PAI_DIR/skills" ]]; then
+        log_success "PAI already configured at $PAI_DIR"
         return 0
     fi
 
-    # Bootstrap PAI for each context that doesn't have it
-    for ctx in work home; do
-        local ctx_pai="$DATA_MOUNT/$ctx/.claude"
+    # Check if PAI repo is available for bootstrapping
+    local PAI_REPO="$HOME/work/repos/github.com/danielmiessler/Personal_AI_Infrastructure"
+    if [[ ! -d "$PAI_REPO" ]]; then
+        PAI_REPO="$HOME/home/repos/github.com/danielmiessler/Personal_AI_Infrastructure"
+    fi
 
-        if [[ -d "$ctx_pai/hooks" ]]; then
-            log "PAI already bootstrapped for $ctx context"
-            continue
-        fi
+    if [[ ! -d "$PAI_REPO" ]]; then
+        log "PAI repo not found - install PAI manually or clone:"
+        log "  ghq get danielmiessler/Personal_AI_Infrastructure"
+        log "  Then run PAI installer from Bundles/Official"
+        return 0
+    fi
 
-        log "Bootstrapping PAI for $ctx context..."
-
-        mkdir -p "$ctx_pai"/{hooks,skills,history,rules}
-
-        # Copy default settings if not exists
-        if [[ ! -f "$ctx_pai/settings.json" ]]; then
-            cat > "$ctx_pai/settings.json" << 'EOF'
-{
-  "permissions": {
-    "allow": [],
-    "deny": []
-  },
-  "hooks": {}
-}
-EOF
-        fi
-
-        log_success "PAI directory created for $ctx"
-        log "  Run PAI installer: cd $PAI_REPO/Bundles/Official && PAI_DIR=$ctx_pai bun run install.ts"
-    done
+    log "PAI repo found at: $PAI_REPO"
+    log "Run PAI installer: cd $PAI_REPO/Bundles/Official && bun run install.ts"
 }
 
 # =============================================================================
-# Custom Skills Installation
+# Custom Skills Installation (to default ~/.claude)
 # =============================================================================
 
 install_custom_skills() {
-    local SKILLS_SRC="$HOME/repos/github.com/dacapo-labs/host/skills"
+    local SKILLS_SRC="$HOME/work/repos/github.com/dacapo-labs/host/skills"
 
-    # Fall back to old location
+    # Fall back to home context or old location
+    if [[ ! -d "$SKILLS_SRC" ]]; then
+        SKILLS_SRC="$HOME/home/repos/github.com/dacapo-labs/host/skills"
+    fi
     if [[ ! -d "$SKILLS_SRC" ]]; then
         SKILLS_SRC="$HOME/skills"
     fi
@@ -212,9 +199,10 @@ install_custom_skills() {
         return 0
     fi
 
-    log "Installing custom skills to work context..."
+    log "Installing custom skills..."
 
-    local SKILLS_DST="$DATA_MOUNT/work/.claude/skills"
+    # Install to default ~/.claude location
+    local SKILLS_DST="$HOME/.claude/skills"
     mkdir -p "$SKILLS_DST"
 
     # Install skill markdown files
@@ -229,7 +217,7 @@ install_custom_skills() {
         fi
     done
 
-    # Install helper scripts
+    # Install helper scripts to ~/bin
     mkdir -p "$HOME/bin"
     for script in "$SKILLS_SRC"/*/src/*.sh; do
         [[ -f "$script" ]] || continue
@@ -239,8 +227,8 @@ install_custom_skills() {
         log "  Installed script: ${script_name%.sh}"
     done
 
-    # Install hooks
-    local HOOKS_DST="$DATA_MOUNT/work/.claude/hooks"
+    # Install hooks to default location
+    local HOOKS_DST="$HOME/.claude/hooks"
     mkdir -p "$HOOKS_DST"
     for hook in "$SKILLS_SRC"/*/src/*-hook.ts; do
         [[ -f "$hook" ]] || continue
@@ -248,7 +236,7 @@ install_custom_skills() {
         log "  Installed hook: $(basename "$hook")"
     done
 
-    log_success "Custom skills installed to work context"
+    log_success "Custom skills installed to ~/.claude"
 }
 
 # =============================================================================
@@ -286,7 +274,7 @@ EOF
 }
 
 # =============================================================================
-# Session Sync Setup (per-context)
+# Session Sync Setup (unified ~/.claude/history)
 # =============================================================================
 
 setup_session_sync() {
@@ -300,34 +288,30 @@ setup_session_sync() {
 
     log "Setting up session-sync..."
 
-    for ctx in work home; do
-        local history_dir="$DATA_MOUNT/$ctx/.claude/history"
-        mkdir -p "$history_dir"
+    # Use default ~/.claude location (symlinked to /data for persistence)
+    local history_dir="$HOME/.claude/history"
+    mkdir -p "$history_dir"
 
-        if [[ ! -d "$history_dir/.git" ]]; then
-            cd "$history_dir"
-            git init -q
-            # Use context-specific branch
-            git checkout -b "$ctx" 2>/dev/null || true
-            git remote add origin "$SESSIONS_REPO" 2>/dev/null || git remote set-url origin "$SESSIONS_REPO"
-            echo "# PAI Session History ($ctx)" > README.md
-            git add README.md
-            git commit -q -m "Initial $ctx history" 2>/dev/null || true
-            git push -u origin "$ctx" 2>/dev/null || log "  Push failed for $ctx - may need to create repo first"
-        fi
+    if [[ ! -d "$history_dir/.git" ]]; then
+        cd "$history_dir"
+        git init -q
+        git remote add origin "$SESSIONS_REPO" 2>/dev/null || git remote set-url origin "$SESSIONS_REPO"
+        echo "# PAI Session History" > README.md
+        git add README.md
+        git commit -q -m "Initial history" 2>/dev/null || true
+        git push -u origin main 2>/dev/null || log "  Push failed - may need to create repo first"
+    fi
 
-        # Configure session-sync service
-        mkdir -p "$HOME/.config/session-sync"
-        cat > "$HOME/.config/session-sync/$ctx.conf" << EOF
+    # Configure session-sync service
+    mkdir -p "$HOME/.config/session-sync"
+    cat > "$HOME/.config/session-sync/default.conf" << EOF
 SYNC_DIR=$history_dir
-BRANCH=$ctx
+BRANCH=main
 EOF
 
-        systemctl --user enable "session-sync@$ctx" 2>/dev/null || true
-        log "  Configured session-sync for $ctx context"
-    done
+    systemctl --user enable "session-sync@default" 2>/dev/null || true
 
-    log_success "Session sync configured for work and home contexts"
+    log_success "Session sync configured for ~/.claude/history"
 }
 
 # =============================================================================
@@ -379,19 +363,19 @@ if ! setup_luks; then
     exit 1
 fi
 
-# Set up work/home contexts with direnv
-setup_contexts
+# Set up work/home directories (files only, unified PAI)
+setup_directories
 
-# Bootstrap PAI for each context
+# Check PAI setup (uses default ~/.claude)
 setup_pai
 
-# Install custom skills (to work context)
+# Install custom skills (to ~/.claude)
 install_custom_skills
 
 # Configure SDP credentials (work context)
 setup_sdp_credentials
 
-# Session sync for both contexts
+# Session sync (unified history)
 setup_session_sync
 
 # Shell helpers
@@ -401,10 +385,11 @@ log ""
 log_success "DevBox initialization complete"
 log ""
 log "Directory structure:"
-log "  ~/work   → Work context (tickets, work repos, work PAI)"
-log "  ~/home   → Home context (projects, personal repos, home PAI)"
+log "  ~/work   → Work files (repos, tickets, notes)"
+log "  ~/home   → Personal files (repos, projects, notes)"
+log "  ~/.claude → PAI (unified history, skills, hooks)"
 log ""
-log "Context auto-switches via direnv when you cd into each directory."
+log "GHQ_ROOT auto-switches via direnv when you cd into ~/work or ~/home."
 log ""
 log "Next steps:"
 log "  1. cd ~/work && direnv allow"
