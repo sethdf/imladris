@@ -140,6 +140,7 @@
         mkdir -p "${homeDirectory}/.local/bin"
         mkdir -p "${homeDirectory}/.cache/devbox"
         mkdir -p "${homeDirectory}/.config"
+        mkdir -p "${homeDirectory}/.config/bws"
       '';
 
       # Install Signal interface systemd service
@@ -190,6 +191,10 @@
     };
 
     initExtra = ''
+      # Silence warnings about unset prompt variables
+      : "''${RPS1:=}"
+      : "''${AWS_PROFILE_REGION:=}"
+
       # Tool initialization
       eval "$(mise activate zsh)"
       eval "$(zoxide init zsh)"
@@ -217,7 +222,8 @@
       export FZF_ALT_C_COMMAND='fd --type d --hidden --follow --exclude .git'
 
       # Auto-attach to tmux on SSH (unless disabled)
-      if [ -n "$SSH_CONNECTION" ] && [ -z "$TMUX" ] && [ -z "$DEVBOX_NO_TMUX" ]; then
+      # Use ${VAR:-} syntax to handle unset variables in strict mode
+      if [ -n "''${SSH_CONNECTION:-}" ] && [ -z "''${TMUX:-}" ] && [ -z "''${DEVBOX_NO_TMUX:-}" ]; then
         tmux attach -t main 2>/dev/null || tmux new -s main
       fi
     '';
