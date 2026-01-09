@@ -1,5 +1,7 @@
 # ServiceDesk Plus Ticket Workflow
 
+> **Context:** Work only. Requires `CONTEXT=work`. If not in work context, suggest: `cd ~/work` or `ctx work`.
+
 A skill for managing ServiceDesk Plus tickets with local workspace and automatic sync.
 
 ## Problem
