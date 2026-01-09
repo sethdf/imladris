@@ -160,8 +160,8 @@ resource "aws_instance" "devbox" {
       # Nix bootstrap: minimal vars, packages managed by home-manager
       hostname           = var.hostname
       timezone           = var.schedule_timezone
-      tailscale_auth_key = data.bitwarden-secrets_secret.tailscale.value
-      tailscale_api_key  = data.bitwarden-secrets_secret.tailscale_api.value
+      tailscale_auth_key = var.tailscale_auth_key
+      tailscale_api_key  = var.tailscale_api_key
       tailscale_hostname = var.tailscale_hostname
       architecture       = var.architecture
       github_username    = var.github_username
@@ -172,8 +172,8 @@ resource "aws_instance" "devbox" {
       # Legacy bootstrap: all packages installed via apt/curl
       hostname           = var.hostname
       timezone           = var.schedule_timezone
-      tailscale_auth_key = data.bitwarden-secrets_secret.tailscale.value
-      tailscale_api_key  = data.bitwarden-secrets_secret.tailscale_api.value
+      tailscale_auth_key = var.tailscale_auth_key
+      tailscale_api_key  = var.tailscale_api_key
       tailscale_hostname = var.tailscale_hostname
       architecture       = var.architecture
       github_username    = var.github_username
@@ -209,6 +209,11 @@ resource "aws_ebs_volume" "data" {
   tags = {
     Name   = "devbox-data"
     Backup = "daily"
+  }
+
+  # Prevent accidental deletion - this volume contains LUKS-encrypted user data
+  lifecycle {
+    prevent_destroy = true
   }
 }
 
