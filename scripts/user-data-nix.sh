@@ -175,19 +175,27 @@ setup_home_manager() {
         sudo -u ubuntu git clone https://github.com/dacapo-labs/host.git "$REPO_DIR"
     fi
 
+    # Ensure ubuntu owns cache directories (nix install may have created them as root)
+    sudo -u ubuntu mkdir -p /home/ubuntu/.cache/nix /home/ubuntu/.local/share/nix
+    chown -R ubuntu:ubuntu /home/ubuntu/.cache /home/ubuntu/.local
+
     # Determine architecture for flake target
     local HM_CONFIG="ubuntu"
     if [ "$(uname -m)" = "x86_64" ]; then
         HM_CONFIG="ubuntu-x86"
     fi
 
-    # Run home-manager as ubuntu user
+    # Run home-manager as ubuntu user (with output to log)
+    log "Running home-manager switch for $HM_CONFIG..."
     cd "$REPO_DIR/nix"
-    sudo -u ubuntu -i bash -c "
+    sudo -u ubuntu bash -c "
         . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
         cd $REPO_DIR/nix
-        nix run home-manager -- switch --flake .#$HM_CONFIG
-    "
+        nix run home-manager -- switch --flake .#$HM_CONFIG 2>&1
+    " || {
+        log_error "home-manager switch failed, will need manual run"
+        return 1
+    }
 }
 
 # =============================================================================
