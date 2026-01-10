@@ -1,5 +1,5 @@
 variable "aws_region" {
-  description = "AWS region to deploy the devbox"
+  description = "AWS region to deploy the imladris"
   type        = string
   default     = "us-east-1"
 }
@@ -17,7 +17,7 @@ variable "architecture" {
 
 variable "instance_type" {
   description = <<-EOT
-    EC2 instance type for the devbox.
+    EC2 instance type for the imladris.
 
     Recommended Graviton (arm64) types in order of preference:
       1. m7g.xlarge  - Latest gen, best performance (default)
@@ -88,9 +88,9 @@ variable "volume_throughput" {
 }
 
 variable "hostname" {
-  description = "Hostname for the devbox"
+  description = "Hostname for the imladris"
   type        = string
-  default     = "aws-dev-box"
+  default     = "imladris"
 }
 
 variable "use_spot" {
@@ -174,7 +174,7 @@ variable "github_username" {
 variable "tailscale_hostname" {
   description = "Hostname for this machine in Tailscale"
   type        = string
-  default     = "devbox"
+  default     = "imladris"
 }
 
 # =============================================================================

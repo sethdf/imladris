@@ -260,21 +260,21 @@ setup_home_manager() {
 # DevBox Scripts (outside of Nix - for LUKS/BWS operations)
 # =============================================================================
 
-setup_devbox_scripts() {
+setup_imladris_scripts() {
     # Scripts are in dacapo-labs/host repo (not user's personal repo)
     local SCRIPTS_BASE="https://raw.githubusercontent.com/dacapo-labs/host/master/scripts"
 
     mkdir -p /home/ubuntu/bin
     cd /home/ubuntu/bin
 
-    # Download devbox management scripts
-    curl -fsSL "$SCRIPTS_BASE/devbox-init.sh" -o devbox-init
-    curl -fsSL "$SCRIPTS_BASE/devbox-check.sh" -o devbox-check
-    curl -fsSL "$SCRIPTS_BASE/devbox-restore.sh" -o devbox-restore
+    # Download imladris management scripts
+    curl -fsSL "$SCRIPTS_BASE/imladris-init.sh" -o imladris-init
+    curl -fsSL "$SCRIPTS_BASE/imladris-check.sh" -o imladris-check
+    curl -fsSL "$SCRIPTS_BASE/imladris-restore.sh" -o imladris-restore
     curl -fsSL "$SCRIPTS_BASE/bws-init.sh" -o bws-init
     curl -fsSL "$SCRIPTS_BASE/session-sync-setup.sh" -o session-sync-setup
 
-    chmod +x devbox-init devbox-check devbox-restore bws-init session-sync-setup
+    chmod +x imladris-init imladris-check imladris-restore bws-init session-sync-setup
     chown -R ubuntu:ubuntu /home/ubuntu/bin
 
     # Session sync systemd template
@@ -303,19 +303,31 @@ setup_shell() {
 setup_motd() {
     cat > /etc/motd <<'MOTD'
 
-  ____             ____
- |  _ \  _____   _| __ )  _____  __
- | | | |/ _ \ \ / /  _ \ / _ \ \/ /
- | |_| |  __/\ V /| |_) | (_) >  <
- |____/ \___| \_/ |____/ \___/_/\_\
+              .     *    .        .   *       .
+        *    .    ___|___    .        .     *
+           .    /   |   \     *    .        .
+      .       /    /|\    \       .     *
+           __/____/_|_\____\__     .        .
+    *     |  _______________ |        *
+         |  |  ^   ^   ^  |  |   .        .
+    .    |  | /|\ /|\ /|\ |  |      *
+         |  | |||_|||_||| |  |  .       .
+      *  |  | ||| ||| ||| |  |     *
+    .    |__|_|||_|||_|||_|__|        .    *
+         /   \-----------/   \   .
+        /     \  /   \  /     \      .
+       /       \/     \/       \   *
+      /_________\     /_________\       .
+
+     I M L A D R I S   -   Sanctuary of Lore
 
  Managed by: Nix + home-manager
  Config:     ~/repos/github.com/dacapo-labs/host/nix/
 
  Commands:
    home-manager switch    Apply config changes
-   devbox-init           Initialize LUKS volume
-   devbox-check          Health check
+   imladris-init          Initialize LUKS volume
+   imladris-check         Health check
 
 MOTD
 }
@@ -340,7 +352,7 @@ main() {
     run_step "spot_handler"  "Spot interruption"      setup_spot_handler
     run_step "nix"           "Nix installation"       setup_nix
     run_step "home_manager"  "home-manager setup"     setup_home_manager
-    run_step "devbox_scripts" "DevBox scripts"        setup_devbox_scripts
+    run_step "imladris_scripts" "DevBox scripts"        setup_imladris_scripts
     run_step "shell"         "Default shell"          setup_shell
     run_step "motd"          "Login message"          setup_motd
 

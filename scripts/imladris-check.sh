@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# devbox-check - Health check for devbox infrastructure
+# imladris-check - Health check for imladris infrastructure
 set -uo pipefail
 
 RED='\033[0;31m'
@@ -15,7 +15,7 @@ warn() { echo -e "${YELLOW}⚠${NC} $1"; ((WARNINGS++)); }
 fail() { echo -e "${RED}✗${NC} $1"; ((ERRORS++)); }
 info() { echo -e "  $1"; }
 
-echo "=== DevBox Health Check ==="
+echo "=== Imladris Health Check ==="
 echo ""
 
 # 1. Check Bitwarden Secrets Manager
@@ -75,13 +75,13 @@ if [[ -b "$DATA_DEV" ]]; then
                 SPACE=$(df -h /data | awk 'NR==2 {print $4 " available"}')
                 info "$SPACE"
             else
-                warn "Not mounted - run devbox-init"
+                warn "Not mounted - run imladris-init"
             fi
         else
-            warn "Locked - run devbox-init"
+            warn "Locked - run imladris-init"
         fi
     else
-        info "Not yet formatted - will format on first devbox-init"
+        info "Not yet formatted - will format on first imladris-init"
     fi
 else
     warn "Data volume not attached ($DATA_DEV)"

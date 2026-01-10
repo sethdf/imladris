@@ -1,11 +1,11 @@
 output "instance_id" {
   description = "EC2 instance ID (empty for Fleet mode - instance IDs are dynamic)"
-  value       = var.use_fleet ? "managed-by-fleet" : aws_instance.devbox[0].id
+  value       = var.use_fleet ? "managed-by-fleet" : aws_instance.imladris[0].id
 }
 
 output "fleet_id" {
   description = "EC2 Fleet ID (if using Fleet mode)"
-  value       = var.use_fleet ? aws_ec2_fleet.devbox[0].id : ""
+  value       = var.use_fleet ? aws_ec2_fleet.imladris[0].id : ""
 }
 
 output "tailscale_hostname" {

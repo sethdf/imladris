@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# devbox-init - Initialize LUKS encrypted data volume with work/home directories
+# imladris-init - Initialize LUKS encrypted data volume with work/home directories
 set -euo pipefail
 
 DATA_DEV="/dev/nvme1n1"
@@ -374,7 +374,7 @@ setup_shell_integration() {
 
     # Add context helper functions to zshrc
     local zshrc_additions='
-# DevBox Context Helpers
+# Imladris Context Helpers
 ctx() {
     case "${1:-}" in
         work|w) cd ~/work ;;
@@ -387,7 +387,7 @@ ctx() {
 # PROMPT="%F{cyan}[${CONTEXT:-?}]%f $PROMPT"
 '
 
-    if ! grep -q "DevBox Context Helpers" "$HOME/.zshrc" 2>/dev/null; then
+    if ! grep -q "Imladris Context Helpers" "$HOME/.zshrc" 2>/dev/null; then
         echo "$zshrc_additions" >> "$HOME/.zshrc"
         log "  Added context helpers to .zshrc"
     fi
@@ -401,7 +401,7 @@ ctx() {
 # Main
 # =============================================================================
 
-log "=== DevBox Init ==="
+log "=== Imladris Init ==="
 log ""
 
 if ! check_bws; then
@@ -433,7 +433,7 @@ setup_session_sync
 setup_shell_integration
 
 log ""
-log_success "DevBox initialization complete"
+log_success "Imladris initialization complete"
 log ""
 log "Directory structure:"
 log "  ~/work   → Work files (repos, tickets, notes)"

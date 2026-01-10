@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# devbox-restore - Show status and optionally auto-unlock LUKS
+# imladris-restore - Show status and optionally auto-unlock LUKS
 set -euo pipefail
 
 DATA_DEV="/dev/nvme1n1"
@@ -46,7 +46,7 @@ show_status() {
     docker_status="$containers running"
 
     echo "┌────────────────────────────────────┐"
-    echo "│         DevBox Status              │"
+    echo "│         Imladris Status              │"
     echo "├────────────────────────────────────┤"
     printf "│  LUKS:      %-22s│\n" "$luks_status"
     printf "│  Tailscale: %-22s│\n" "$tailscale_status"
@@ -111,6 +111,6 @@ case "${1:-status}" in
         show_status
         ;;
     *)
-        echo "Usage: devbox-restore [status|unlock]"
+        echo "Usage: imladris-restore [status|unlock]"
         ;;
 esac

@@ -125,7 +125,7 @@ setup_tailscale() {
         curl -fsSL https://tailscale.com/install.sh | sh
     fi
 
-    # Remove old devbox devices from tailnet before registering
+    # Remove old imladris devices from tailnet before registering
     log "Cleaning up old Tailscale devices matching '${tailscale_hostname}'..."
     OLD_DEVICES=$(curl -s -u "${tailscale_api_key}:" \
         "https://api.tailscale.com/api/v2/tailnet/-/devices" \
@@ -283,7 +283,7 @@ GITCFG
 
 setup_spot_watcher() {
     # Download the comprehensive spot interruption handler
-    local SCRIPTS_BASE="https://raw.githubusercontent.com/${github_username}/aws-devbox/master/scripts"
+    local SCRIPTS_BASE="https://raw.githubusercontent.com/${github_username}/aws-imladris/master/scripts"
     curl -fsSL "$SCRIPTS_BASE/spot-interruption-handler.sh" -o /usr/local/bin/spot-interruption-handler || {
         log "Failed to download spot-interruption-handler, creating basic version"
         cat > /usr/local/bin/spot-interruption-handler <<'BASICHANDLER'
@@ -341,20 +341,20 @@ SPOTENV
 }
 
 setup_bootstrap_scripts() {
-    SCRIPTS_BASE="https://raw.githubusercontent.com/${github_username}/aws-devbox/master/scripts"
+    SCRIPTS_BASE="https://raw.githubusercontent.com/${github_username}/aws-imladris/master/scripts"
     mkdir -p /home/ubuntu/bin
 
     curl -fsSL "$SCRIPTS_BASE/bws-init.sh" -o /home/ubuntu/bin/bws-init || log "Failed to download bws-init"
-    curl -fsSL "$SCRIPTS_BASE/devbox-init.sh" -o /home/ubuntu/bin/devbox-init || log "Failed to download devbox-init"
-    curl -fsSL "$SCRIPTS_BASE/devbox-check.sh" -o /home/ubuntu/bin/devbox-check || log "Failed to download devbox-check"
-    curl -fsSL "$SCRIPTS_BASE/devbox-restore.sh" -o /home/ubuntu/bin/devbox-restore || log "Failed to download devbox-restore"
+    curl -fsSL "$SCRIPTS_BASE/imladris-init.sh" -o /home/ubuntu/bin/imladris-init || log "Failed to download imladris-init"
+    curl -fsSL "$SCRIPTS_BASE/imladris-check.sh" -o /home/ubuntu/bin/imladris-check || log "Failed to download imladris-check"
+    curl -fsSL "$SCRIPTS_BASE/imladris-restore.sh" -o /home/ubuntu/bin/imladris-restore || log "Failed to download imladris-restore"
 
-    chmod +x /home/ubuntu/bin/bws-init /home/ubuntu/bin/devbox-init /home/ubuntu/bin/devbox-check /home/ubuntu/bin/devbox-restore 2>/dev/null || true
+    chmod +x /home/ubuntu/bin/bws-init /home/ubuntu/bin/imladris-init /home/ubuntu/bin/imladris-check /home/ubuntu/bin/imladris-restore 2>/dev/null || true
     chown -R ubuntu:ubuntu /home/ubuntu/bin
 }
 
 setup_session_sync() {
-    SCRIPTS_BASE="https://raw.githubusercontent.com/${github_username}/aws-devbox/master/scripts"
+    SCRIPTS_BASE="https://raw.githubusercontent.com/${github_username}/aws-imladris/master/scripts"
 
     # Install session-sync script
     curl -fsSL "$SCRIPTS_BASE/session-sync.sh" -o /usr/local/bin/session-sync.sh || log "Failed to download session-sync.sh"
@@ -393,7 +393,7 @@ setup_bun() {
 
 setup_pai() {
     # Clone PAI (Personal AI Infrastructure) repo only
-    # Bootstrap runs in devbox-init.sh after LUKS is mounted (so sessions are encrypted)
+    # Bootstrap runs in imladris-init.sh after LUKS is mounted (so sessions are encrypted)
     local PAI_REPO="/home/ubuntu/pai"
 
     if [[ -d "$PAI_REPO" ]]; then
@@ -409,12 +409,12 @@ setup_pai() {
     fi
 
     chown -R ubuntu:ubuntu "$PAI_REPO"
-    log "PAI repo cloned. Bootstrap runs after LUKS unlock via devbox-init."
+    log "PAI repo cloned. Bootstrap runs after LUKS unlock via imladris-init."
 }
 
 setup_custom_skills() {
-    # Download skills from devbox repo (same repo as bootstrap scripts)
-    local REPO_BASE="https://raw.githubusercontent.com/${github_username}/aws-devbox/master"
+    # Download skills from imladris repo (same repo as bootstrap scripts)
+    local REPO_BASE="https://raw.githubusercontent.com/${github_username}/aws-imladris/master"
     local SKILLS_DIR="/home/ubuntu/skills"
 
     mkdir -p "$SKILLS_DIR/servicedesk-plus/src"
@@ -426,7 +426,7 @@ setup_custom_skills() {
 
     chmod +x "$SKILLS_DIR/servicedesk-plus/src/sdp-api.sh"
     chown -R ubuntu:ubuntu "$SKILLS_DIR"
-    log "Skills downloaded to $SKILLS_DIR. Install via devbox-init."
+    log "Skills downloaded to $SKILLS_DIR. Install via imladris-init."
 }
 
 setup_user_environment() {
@@ -571,19 +571,19 @@ command -v zoxide &>/dev/null && eval "$(zoxide init zsh)"
 command -v direnv &>/dev/null && eval "$(direnv hook zsh)"
 export PATH="$HOME/bin:$HOME/.local/bin:$PATH"
 alias ls='eza' ll='eza -la' lg='lazygit' ld='lazydocker'
-alias init='~/bin/devbox-init' check='~/bin/devbox-check'
-alias restore='~/bin/devbox-restore' status='~/bin/devbox-restore status'
+alias init='~/bin/imladris-init' check='~/bin/imladris-check'
+alias restore='~/bin/imladris-restore' status='~/bin/imladris-restore status'
 
 # Track last working directory for restore
-DEVBOX_LAST_DIR="$HOME/.cache/devbox/last-working-dir"
+DEVBOX_LAST_DIR="$HOME/.cache/imladris/last-working-dir"
 mkdir -p "$(dirname "$DEVBOX_LAST_DIR")"
 chpwd() { echo "$PWD" > "$DEVBOX_LAST_DIR" }
 
 # Auto-attach to tmux on SSH login (never lose your session)
 if [[ -z "$${TMUX:-}" && -n "$${SSH_CONNECTION:-}" && -z "$${DEVBOX_NO_TMUX:-}" ]]; then
-    # Run devbox-restore first (unlocks LUKS if needed)
+    # Run imladris-restore first (unlocks LUKS if needed)
     if [[ -z "$${DEVBOX_NO_RESTORE:-}" ]]; then
-        ~/bin/devbox-restore 2>/dev/null || true
+        ~/bin/imladris-restore 2>/dev/null || true
     fi
 
     # Attach to existing session or create new one
@@ -613,7 +613,7 @@ command -v zoxide &>/dev/null && eval "$(zoxide init bash)"
 command -v direnv &>/dev/null && eval "$(direnv hook bash)"
 export PATH="$HOME/bin:$HOME/.local/bin:$PATH"
 alias ls='eza' ll='eza -la' lg='lazygit' ld='lazydocker'
-alias init='~/bin/devbox-init' check='~/bin/devbox-check'
+alias init='~/bin/imladris-init' check='~/bin/imladris-check'
 BASHRC
 fi
 
@@ -626,14 +626,14 @@ CLAUDE
 cat > ~/.claude/rules/save-progress.md <<'SAVEMD'
 # Save Progress Frequently
 
-This devbox does NOT hibernate - stopping loses all running state.
+This imladris does NOT hibernate - stopping loses all running state.
 However, auto-restore recovers: tmux sessions, last directory, and Docker projects.
 
 ## What Auto-Restores
 - tmux session layout (windows, panes, working directories)
 - Programs: vim, nvim, psql, mysql, ssh, htop, etc.
 - Last working directory
-- Docker projects (listed in ~/.config/devbox/docker-projects.txt)
+- Docker projects (listed in ~/.config/imladris/docker-projects.txt)
 
 ## What Does NOT Restore
 - Running builds/dev servers (must restart manually)
@@ -652,7 +652,7 @@ Sessions auto-save every 10 minutes via tmux-continuum.
 - Never leave uncommitted work when stepping away
 
 ## Commands
-- `status` - Show devbox status (Bitwarden, Docker, /home)
+- `status` - Show imladris status (Bitwarden, Docker, /home)
 - `restore` - Manually trigger restore
 - `DEVBOX_NO_RESTORE=1 zsh` - Skip auto-restore
 
@@ -685,7 +685,7 @@ MOTD
 # Main Execution
 # =============================================================================
 
-log "=== Starting devbox setup ==="
+log "=== Starting imladris setup ==="
 touch "$CHECKPOINT_FILE"
 
 # Architecture must run first (sets env vars)

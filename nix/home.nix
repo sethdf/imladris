@@ -94,10 +94,10 @@
       tf = "terraform";
 
       # DevBox scripts
-      init = "devbox-init";
-      check = "devbox-check";
-      restore = "devbox-restore";
-      status = "devbox-restore status";
+      init = "imladris-init";
+      check = "imladris-check";
+      restore = "imladris-restore";
+      status = "imladris-restore status";
 
       # Tmux
       ta = "tmux attach -t main || tmux new -s main";
@@ -142,7 +142,7 @@
       createDirs = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
         mkdir -p "${homeDirectory}/bin"
         mkdir -p "${homeDirectory}/.local/bin"
-        mkdir -p "${homeDirectory}/.cache/devbox"
+        mkdir -p "${homeDirectory}/.cache/imladris"
         mkdir -p "${homeDirectory}/.config"
         mkdir -p "${homeDirectory}/.config/bws"
       '';
