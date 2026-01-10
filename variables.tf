@@ -47,6 +47,22 @@ variable "instance_type_fallbacks" {
   default     = ["m6g.xlarge", "c7g.xlarge", "r7g.large"]
 }
 
+variable "fleet_instance_types" {
+  description = <<-EOT
+    Instance types for EC2 Fleet to choose from (capacity-optimized).
+    Fleet automatically picks the type with best spot availability.
+    Order matters for capacity-optimized-prioritized strategy.
+  EOT
+  type        = list(string)
+  default     = ["t4g.large", "t4g.xlarge", "m6g.large", "m6g.xlarge", "m7g.large", "m7g.xlarge"]
+}
+
+variable "use_fleet" {
+  description = "Use EC2 Fleet for better spot availability across instance types"
+  type        = bool
+  default     = true
+}
+
 variable "volume_size" {
   description = "Root EBS volume size in GB"
   type        = number

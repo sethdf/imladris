@@ -107,20 +107,217 @@ resource "aws_security_group" "devbox" {
 }
 
 # -----------------------------------------------------------------------------
-# EC2 Instance
+# IAM Instance Profile (for EBS self-attachment)
+# -----------------------------------------------------------------------------
+
+resource "aws_iam_role" "devbox_instance" {
+  name = "devbox-instance-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "ec2.amazonaws.com"
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy" "devbox_ebs" {
+  name = "devbox-ebs-attach"
+  role = aws_iam_role.devbox_instance.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ec2:AttachVolume",
+          "ec2:DetachVolume"
+        ]
+        Resource = [
+          "arn:aws:ec2:${var.aws_region}:*:volume/*",
+          "arn:aws:ec2:${var.aws_region}:*:instance/*"
+        ]
+        Condition = {
+          StringEquals = {
+            "ec2:ResourceTag/Project" = "aws-devbox"
+          }
+        }
+      },
+      {
+        Effect   = "Allow"
+        Action   = "ec2:DescribeVolumes"
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_instance_profile" "devbox" {
+  name = "devbox-instance-profile"
+  role = aws_iam_role.devbox_instance.name
+}
+
+# -----------------------------------------------------------------------------
+# User Data Template
+# -----------------------------------------------------------------------------
+
+locals {
+  user_data_content = var.use_nix ? templatefile("${path.module}/scripts/user-data-nix.sh", {
+    hostname           = var.hostname
+    timezone           = var.schedule_timezone
+    tailscale_auth_key = var.tailscale_auth_key
+    tailscale_api_key  = var.tailscale_api_key
+    tailscale_hostname = var.tailscale_hostname
+    architecture       = var.architecture
+    github_username    = var.github_username
+    sns_topic_arn      = length(var.notification_emails) > 0 ? aws_sns_topic.devbox[0].arn : ""
+    distro_id          = "ubuntu"
+    distro_codename    = "noble"
+    data_volume_tag    = "devbox-data"
+  }) : templatefile("${path.module}/scripts/user-data-legacy.sh", {
+    hostname           = var.hostname
+    timezone           = var.schedule_timezone
+    tailscale_auth_key = var.tailscale_auth_key
+    tailscale_api_key  = var.tailscale_api_key
+    tailscale_hostname = var.tailscale_hostname
+    architecture       = var.architecture
+    github_username    = var.github_username
+    distro_id          = "ubuntu"
+    distro_codename    = "noble"
+    sns_topic_arn      = length(var.notification_emails) > 0 ? aws_sns_topic.devbox[0].arn : ""
+    data_volume_tag    = "devbox-data"
+  })
+}
+
+# -----------------------------------------------------------------------------
+# EC2 Launch Template (used by Fleet)
+# -----------------------------------------------------------------------------
+
+resource "aws_launch_template" "devbox" {
+  name_prefix   = "devbox-"
+  image_id      = data.aws_ami.ubuntu.id
+
+  iam_instance_profile {
+    name = aws_iam_instance_profile.devbox.name
+  }
+
+  network_interfaces {
+    associate_public_ip_address = true
+    security_groups             = [aws_security_group.devbox.id]
+    subnet_id                   = aws_subnet.devbox.id
+  }
+
+  block_device_mappings {
+    device_name = "/dev/sda1"
+    ebs {
+      volume_size           = var.volume_size
+      volume_type           = "gp3"
+      iops                  = var.volume_iops
+      throughput            = var.volume_throughput
+      delete_on_termination = true
+      encrypted             = true
+    }
+  }
+
+  metadata_options {
+    http_tokens   = "required"
+    http_endpoint = "enabled"
+  }
+
+  user_data = base64gzip(local.user_data_content)
+
+  tag_specifications {
+    resource_type = "instance"
+    tags = {
+      Name    = var.hostname
+      Project = "aws-devbox"
+    }
+  }
+
+  tag_specifications {
+    resource_type = "volume"
+    tags = {
+      Name    = "devbox-root"
+      Backup  = "false"
+      Project = "aws-devbox"
+    }
+  }
+
+  tags = {
+    Name = "devbox-launch-template"
+  }
+}
+
+# -----------------------------------------------------------------------------
+# EC2 Fleet (capacity-optimized spot across multiple instance types)
+# -----------------------------------------------------------------------------
+
+resource "aws_ec2_fleet" "devbox" {
+  count = var.use_fleet ? 1 : 0
+
+  type                               = "maintain"
+  terminate_instances                = true
+  terminate_instances_with_expiration = true
+
+  target_capacity_specification {
+    default_target_capacity_type = var.use_spot ? "spot" : "on-demand"
+    total_target_capacity        = 1
+    spot_target_capacity         = var.use_spot ? 1 : 0
+    on_demand_target_capacity    = var.use_spot ? 0 : 1
+  }
+
+  launch_template_config {
+    launch_template_specification {
+      launch_template_id = aws_launch_template.devbox.id
+      version            = "$Latest"
+    }
+
+    # Generate overrides for each instance type in the fleet
+    dynamic "override" {
+      for_each = var.fleet_instance_types
+      content {
+        instance_type     = override.value
+        availability_zone = data.aws_availability_zones.available.names[0]
+      }
+    }
+  }
+
+  spot_options {
+    allocation_strategy            = "capacity-optimized"
+    instance_interruption_behavior = "stop"
+  }
+
+  tags = {
+    Name = "devbox-fleet"
+  }
+
+  lifecycle {
+    ignore_changes = [launch_template_config]
+  }
+}
+
+# -----------------------------------------------------------------------------
+# EC2 Instance (fallback if not using fleet)
 # -----------------------------------------------------------------------------
 
 resource "aws_instance" "devbox" {
+  count = var.use_fleet ? 0 : 1
+
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.instance_type
   subnet_id              = aws_subnet.devbox.id
   vpc_security_group_ids = [aws_security_group.devbox.id]
+  iam_instance_profile   = aws_iam_instance_profile.devbox.name
 
-  # Hibernation disabled - RAM dumps to root EBS would expose LUKS keys
-  # Trade-off: Lose running state on stop, but disk data stays secure
   hibernation = false
 
-  # Spot instance configuration (optional)
   dynamic "instance_market_options" {
     for_each = var.use_spot ? [1] : []
     content {
@@ -142,61 +339,33 @@ resource "aws_instance" "devbox" {
     encrypted             = true
 
     tags = {
-      Name   = "devbox-root"
-      Backup = "false"
+      Name    = "devbox-root"
+      Backup  = "false"
+      Project = "aws-devbox"
     }
   }
 
-  # Require IMDSv2 for enhanced security
   metadata_options {
-    http_tokens   = "required" # Require IMDSv2 token
+    http_tokens   = "required"
     http_endpoint = "enabled"
   }
 
-  # User data - bootstrap script selection based on use_nix variable
-  # Compressed with gzip (AWS auto-decompresses) to stay under 16KB limit
-  user_data_base64 = base64gzip(
-    var.use_nix ? templatefile("${path.module}/scripts/user-data-nix.sh", {
-      # Nix bootstrap: minimal vars, packages managed by home-manager
-      hostname           = var.hostname
-      timezone           = var.schedule_timezone
-      tailscale_auth_key = var.tailscale_auth_key
-      tailscale_api_key  = var.tailscale_api_key
-      tailscale_hostname = var.tailscale_hostname
-      architecture       = var.architecture
-      github_username    = var.github_username
-      sns_topic_arn      = length(var.notification_emails) > 0 ? aws_sns_topic.devbox[0].arn : ""
-      distro_id          = "ubuntu"
-      distro_codename    = "noble"
-      }) : templatefile("${path.module}/scripts/user-data-legacy.sh", {
-      # Legacy bootstrap: all packages installed via apt/curl
-      hostname           = var.hostname
-      timezone           = var.schedule_timezone
-      tailscale_auth_key = var.tailscale_auth_key
-      tailscale_api_key  = var.tailscale_api_key
-      tailscale_hostname = var.tailscale_hostname
-      architecture       = var.architecture
-      github_username    = var.github_username
-      distro_id          = "ubuntu"
-      distro_codename    = "noble"
-      sns_topic_arn      = length(var.notification_emails) > 0 ? aws_sns_topic.devbox[0].arn : ""
-    })
-  )
+  user_data_base64 = base64gzip(local.user_data_content)
 
-  # Protect instance from accidental deletion; don't recreate if user-data changes
-  # NOTE: Set prevent_destroy = false temporarily when intentionally destroying
   lifecycle {
-    prevent_destroy = true
+    prevent_destroy = false  # Set true after deploy
     ignore_changes  = [user_data_base64]
   }
 
   tags = {
-    Name = var.hostname
+    Name    = var.hostname
+    Project = "aws-devbox"
   }
 }
 
 # -----------------------------------------------------------------------------
 # Data Volume (LUKS encrypted by user, not AWS)
+# Self-attached by instance via user-data script (required for Fleet)
 # -----------------------------------------------------------------------------
 
 resource "aws_ebs_volume" "data" {
@@ -208,22 +377,20 @@ resource "aws_ebs_volume" "data" {
   encrypted         = true # AWS encryption layer (LUKS adds user-controlled layer)
 
   tags = {
-    Name   = "devbox-data"
-    Backup = "daily"
+    Name    = "devbox-data"
+    Backup  = "daily"
+    Project = "aws-devbox"
   }
 
   # Prevent accidental deletion - this volume contains LUKS-encrypted user data
   # NOTE: Set to false temporarily when intentionally destroying
   lifecycle {
-    prevent_destroy = true
+    prevent_destroy = false  # Set true after deploy
   }
 }
 
-resource "aws_volume_attachment" "data" {
-  device_name = "/dev/sdf"
-  volume_id   = aws_ebs_volume.data.id
-  instance_id = aws_instance.devbox.id
-}
+# Volume attachment handled by user-data script using AWS CLI
+# This allows Fleet to attach volume to whatever instance it launches
 
 # -----------------------------------------------------------------------------
 # DLM Snapshot Policy (Daily backups)
@@ -306,9 +473,9 @@ resource "aws_sns_topic_subscription" "devbox_email" {
   endpoint  = each.value
 }
 
-# IAM Role for Lambda
+# IAM Role for Lambda (non-fleet mode only)
 resource "aws_iam_role" "spot_restart" {
-  count = var.use_spot ? 1 : 0
+  count = var.use_spot && !var.use_fleet ? 1 : 0
   name  = "devbox-spot-restart-role"
 
   assume_role_policy = jsonencode({
@@ -326,7 +493,7 @@ resource "aws_iam_role" "spot_restart" {
 }
 
 resource "aws_iam_role_policy" "spot_restart" {
-  count = var.use_spot ? 1 : 0
+  count = var.use_spot && !var.use_fleet ? 1 : 0
   name  = "devbox-spot-restart-policy"
   role  = aws_iam_role.spot_restart[0].id
 
@@ -369,16 +536,16 @@ resource "aws_iam_role_policy" "spot_restart" {
   })
 }
 
-# Lambda function
+# Lambda function (only for non-fleet mode; Fleet auto-maintains capacity)
 data "archive_file" "spot_restart" {
-  count       = var.use_spot ? 1 : 0
+  count       = var.use_spot && !var.use_fleet ? 1 : 0
   type        = "zip"
   source_file = "${path.module}/scripts/spot_restart.py"
   output_path = "${path.module}/.terraform/spot_restart.zip"
 }
 
 resource "aws_lambda_function" "spot_restart" {
-  count            = var.use_spot ? 1 : 0
+  count            = var.use_spot && !var.use_fleet ? 1 : 0
   filename         = data.archive_file.spot_restart[0].output_path
   function_name    = "devbox-spot-restart"
   role             = aws_iam_role.spot_restart[0].arn
@@ -389,7 +556,7 @@ resource "aws_lambda_function" "spot_restart" {
 
   environment {
     variables = {
-      INSTANCE_ID   = aws_instance.devbox.id
+      INSTANCE_ID   = var.use_fleet ? "" : aws_instance.devbox[0].id
       MAX_ATTEMPTS  = tostring(var.spot_restart_attempts)
       SNS_TOPIC_ARN = length(var.notification_emails) > 0 ? aws_sns_topic.devbox[0].arn : ""
     }
@@ -400,9 +567,9 @@ resource "aws_lambda_function" "spot_restart" {
   }
 }
 
-# EventBridge rule to trigger on instance state change
+# EventBridge rule to trigger on instance state change (non-fleet mode only)
 resource "aws_cloudwatch_event_rule" "spot_restart" {
-  count       = var.use_spot ? 1 : 0
+  count       = var.use_spot && !var.use_fleet ? 1 : 0
   name        = "devbox-spot-restart"
   description = "Trigger restart when devbox instance is stopped (spot interruption)"
 
@@ -411,20 +578,20 @@ resource "aws_cloudwatch_event_rule" "spot_restart" {
     detail-type = ["EC2 Instance State-change Notification"]
     detail = {
       state       = ["stopped"]
-      instance-id = [aws_instance.devbox.id]
+      instance-id = [aws_instance.devbox[0].id]
     }
   })
 }
 
 resource "aws_cloudwatch_event_target" "spot_restart" {
-  count     = var.use_spot ? 1 : 0
+  count     = var.use_spot && !var.use_fleet ? 1 : 0
   rule      = aws_cloudwatch_event_rule.spot_restart[0].name
   target_id = "devbox-spot-restart"
   arn       = aws_lambda_function.spot_restart[0].arn
 }
 
 resource "aws_lambda_permission" "spot_restart" {
-  count         = var.use_spot ? 1 : 0
+  count         = var.use_spot && !var.use_fleet ? 1 : 0
   statement_id  = "AllowEventBridge"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.spot_restart[0].function_name
@@ -436,9 +603,9 @@ resource "aws_lambda_permission" "spot_restart" {
 # Scheduled Start/Stop (EventBridge Scheduler)
 # -----------------------------------------------------------------------------
 
-# IAM Role for EventBridge Scheduler
+# IAM Role for EventBridge Scheduler (non-fleet mode only)
 resource "aws_iam_role" "scheduler" {
-  count = var.enable_schedule ? 1 : 0
+  count = var.enable_schedule && !var.use_fleet ? 1 : 0
   name  = "devbox-scheduler-role"
 
   assume_role_policy = jsonencode({
@@ -456,7 +623,7 @@ resource "aws_iam_role" "scheduler" {
 }
 
 resource "aws_iam_role_policy" "scheduler" {
-  count = var.enable_schedule ? 1 : 0
+  count = var.enable_schedule && !var.use_fleet ? 1 : 0
   name  = "devbox-scheduler-policy"
   role  = aws_iam_role.scheduler[0].id
 
@@ -469,15 +636,15 @@ resource "aws_iam_role_policy" "scheduler" {
           "ec2:StartInstances",
           "ec2:StopInstances"
         ]
-        Resource = aws_instance.devbox.arn
+        Resource = aws_instance.devbox[0].arn
       }
     ]
   })
 }
 
-# Schedule: Stop at 11pm Mountain
+# Schedule: Stop at 11pm Mountain (non-fleet mode only)
 resource "aws_scheduler_schedule" "stop" {
-  count       = var.enable_schedule ? 1 : 0
+  count       = var.enable_schedule && !var.use_fleet ? 1 : 0
   name        = "devbox-stop"
   description = "Stop devbox instance at night"
 
@@ -493,15 +660,15 @@ resource "aws_scheduler_schedule" "stop" {
     role_arn = aws_iam_role.scheduler[0].arn
 
     input = jsonencode({
-      InstanceIds = [aws_instance.devbox.id]
+      InstanceIds = [aws_instance.devbox[0].id]
       # Hibernate disabled for security - RAM would expose LUKS keys
     })
   }
 }
 
-# Schedule: Start at 5am Mountain
+# Schedule: Start at 5am Mountain (non-fleet mode only)
 resource "aws_scheduler_schedule" "start" {
-  count       = var.enable_schedule ? 1 : 0
+  count       = var.enable_schedule && !var.use_fleet ? 1 : 0
   name        = "devbox-start"
   description = "Start devbox instance in the morning"
 
@@ -517,7 +684,7 @@ resource "aws_scheduler_schedule" "start" {
     role_arn = aws_iam_role.scheduler[0].arn
 
     input = jsonencode({
-      InstanceIds = [aws_instance.devbox.id]
+      InstanceIds = [aws_instance.devbox[0].id]
     })
   }
 }

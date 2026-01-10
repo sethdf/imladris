@@ -99,6 +99,64 @@ setup_tailscale() {
     tailscale up --auth-key=${tailscale_auth_key} --hostname=${tailscale_hostname} --ssh
 }
 
+setup_data_volume() {
+    # Self-attach the data EBS volume (required for EC2 Fleet where instance IDs change)
+    # Find volume by tag and attach it to this instance
+
+    local VOLUME_TAG="${data_volume_tag}"
+    local DEVICE_NAME="/dev/sdf"
+    local REGION=$(curl -s http://169.254.169.254/latest/meta-data/placement/region)
+    local INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
+
+    # Check if already attached
+    if [ -e /dev/nvme1n1 ] || [ -e /dev/xvdf ]; then
+        log "Data volume already attached"
+        return 0
+    fi
+
+    # Install AWS CLI if not present (needed for volume attachment)
+    if ! command -v aws &>/dev/null; then
+        apt-get install -y awscli
+    fi
+
+    # Find the volume by tag
+    local VOLUME_ID
+    VOLUME_ID=$(aws ec2 describe-volumes \
+        --region "$REGION" \
+        --filters "Name=tag:Name,Values=$VOLUME_TAG" "Name=status,Values=available" \
+        --query "Volumes[0].VolumeId" \
+        --output text 2>/dev/null)
+
+    if [ -z "$VOLUME_ID" ] || [ "$VOLUME_ID" = "None" ]; then
+        log "No available data volume found with tag: $VOLUME_TAG"
+        log "Volume may already be attached or doesn't exist"
+        return 0
+    fi
+
+    log "Attaching volume $VOLUME_ID to instance $INSTANCE_ID"
+    aws ec2 attach-volume \
+        --region "$REGION" \
+        --volume-id "$VOLUME_ID" \
+        --instance-id "$INSTANCE_ID" \
+        --device "$DEVICE_NAME"
+
+    # Wait for attachment
+    local MAX_WAIT=60
+    local WAITED=0
+    while [ ! -e /dev/nvme1n1 ] && [ ! -e /dev/xvdf ] && [ $WAITED -lt $MAX_WAIT ]; do
+        sleep 2
+        WAITED=$((WAITED + 2))
+        log "Waiting for volume to attach... ($WAITED/$MAX_WAIT)"
+    done
+
+    if [ -e /dev/nvme1n1 ] || [ -e /dev/xvdf ]; then
+        log_success "Data volume attached successfully"
+    else
+        log_error "Volume attachment timed out"
+        return 1
+    fi
+}
+
 setup_spot_handler() {
     local SCRIPTS_BASE="https://raw.githubusercontent.com/dacapo-labs/host/master/scripts"
 
@@ -278,6 +336,7 @@ main() {
     run_step "system"        "System setup"           setup_system
     run_step "docker"        "Docker"                 setup_docker
     run_step "tailscale"     "Tailscale"              setup_tailscale
+    run_step "data_volume"   "Data volume attach"     setup_data_volume
     run_step "spot_handler"  "Spot interruption"      setup_spot_handler
     run_step "nix"           "Nix installation"       setup_nix
     run_step "home_manager"  "home-manager setup"     setup_home_manager

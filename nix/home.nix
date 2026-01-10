@@ -54,6 +54,7 @@
 
       # Session & system
       inotify-tools
+      mosh
 
       # Version management
       mise

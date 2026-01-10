@@ -1,6 +1,11 @@
 output "instance_id" {
-  description = "EC2 instance ID"
-  value       = aws_instance.devbox.id
+  description = "EC2 instance ID (empty for Fleet mode - instance IDs are dynamic)"
+  value       = var.use_fleet ? "managed-by-fleet" : aws_instance.devbox[0].id
+}
+
+output "fleet_id" {
+  description = "EC2 Fleet ID (if using Fleet mode)"
+  value       = var.use_fleet ? aws_ec2_fleet.devbox[0].id : ""
 }
 
 output "tailscale_hostname" {
@@ -11,6 +16,11 @@ output "tailscale_hostname" {
 output "ssh_command" {
   description = "SSH command to connect (via Tailscale)"
   value       = "ssh ${var.tailscale_hostname}"
+}
+
+output "mosh_command" {
+  description = "Mosh command to connect (via Tailscale)"
+  value       = "mosh ${var.tailscale_hostname}"
 }
 
 output "vscode_remote" {
@@ -32,8 +42,13 @@ output "ami_name" {
 }
 
 output "instance_type" {
-  description = "Instance type"
-  value       = var.instance_type
+  description = "Instance type (for non-Fleet mode) or Fleet types"
+  value       = var.use_fleet ? join(", ", var.fleet_instance_types) : var.instance_type
+}
+
+output "fleet_enabled" {
+  description = "Whether EC2 Fleet is enabled for multi-instance-type availability"
+  value       = var.use_fleet
 }
 
 output "spot_enabled" {
@@ -43,13 +58,13 @@ output "spot_enabled" {
 
 output "pricing_estimate" {
   description = "Estimated hourly cost"
-  value       = var.use_spot ? "~$0.06/hr (spot)" : "~$0.20/hr (on-demand)"
+  value       = var.use_spot ? "~$0.03-0.10/hr (spot, varies by type)" : "~$0.08-0.20/hr (on-demand, varies by type)"
 }
 
 output "volumes" {
   description = "EBS volumes"
   value = {
     root = "${var.volume_size}GB (OS, tools)"
-    data = "${var.data_volume_size}GB (LUKS encrypted /home)"
+    data = "${var.data_volume_size}GB (LUKS encrypted /data)"
   }
 }
