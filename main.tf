@@ -184,6 +184,7 @@ resource "aws_instance" "devbox" {
   )
 
   # Protect instance from accidental deletion; don't recreate if user-data changes
+  # NOTE: Set prevent_destroy = false temporarily when intentionally destroying
   lifecycle {
     prevent_destroy = true
     ignore_changes  = [user_data_base64]
@@ -212,6 +213,7 @@ resource "aws_ebs_volume" "data" {
   }
 
   # Prevent accidental deletion - this volume contains LUKS-encrypted user data
+  # NOTE: Set to false temporarily when intentionally destroying
   lifecycle {
     prevent_destroy = true
   }

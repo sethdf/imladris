@@ -162,15 +162,21 @@ variable "tailscale_hostname" {
 }
 
 # =============================================================================
-# SECRETS FROM BITWARDEN SECRETS MANAGER
+# SECRETS (pass via TF_VAR_ env vars or terraform.tfvars)
 # =============================================================================
-#
-# Access token stored in lifemaestro/secrets/bw-sm-access-token
-#
-# Required secrets:
-#   - tailscale-auth-key : Auth key for joining tailnet (Terraform)
-#   - tailscale-api-key  : API key for device cleanup (Terraform)
-#   - luks-key           : LUKS encryption passphrase (devbox-init)
-#
-# Create secrets: ./scripts/bws-create-secrets.sh
+# Fetch from bws before running terraform:
+#   export TF_VAR_tailscale_auth_key=$(bws secret get <id> | jq -r .value)
+#   export TF_VAR_tailscale_api_key=$(bws secret get <id> | jq -r .value)
 # =============================================================================
+
+variable "tailscale_auth_key" {
+  description = "Tailscale auth key for joining tailnet"
+  type        = string
+  sensitive   = true
+}
+
+variable "tailscale_api_key" {
+  description = "Tailscale API key for device cleanup"
+  type        = string
+  sensitive   = true
+}
