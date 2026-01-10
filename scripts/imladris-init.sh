@@ -211,15 +211,34 @@ bws_get() {
 }
 
 # =============================================================================
-# LUKS Setup (BWS keyfile only)
+# LUKS Setup (MFA: BWS keyfile + personal passphrase)
 # =============================================================================
 
 get_luks_key() {
-    bws_get "luks-keyfile" || {
+    local BWS_KEYFILE PASSPHRASE
+
+    BWS_KEYFILE=$(bws_get "luks-keyfile") || {
         log_error "luks-keyfile not found in Secrets Manager"
         log_error "Create a secret named 'luks-keyfile' with random data (e.g., openssl rand -base64 32)"
         return 1
     }
+
+    echo ""
+    echo "╔════════════════════════════════════════════════════════════════╗"
+    echo "║  LUKS MFA: Enter your personal passphrase                      ║"
+    echo "║  (Combined with BWS keyfile - both required to unlock)         ║"
+    echo "╚════════════════════════════════════════════════════════════════╝"
+    echo ""
+    read -rs -p "Passphrase: " PASSPHRASE
+    echo ""
+
+    if [[ -z "$PASSPHRASE" ]]; then
+        log_error "Passphrase cannot be empty"
+        return 1
+    fi
+
+    # Return combined key
+    echo -n "${BWS_KEYFILE}${PASSPHRASE}"
 }
 
 setup_luks() {
@@ -228,13 +247,26 @@ setup_luks() {
         return 0
     fi
 
-    log "Setting up encrypted data volume..."
+    log "Setting up encrypted data volume (MFA)..."
 
     local LUKS_KEY
     LUKS_KEY=$(get_luks_key) || return 1
 
     if ! sudo cryptsetup isLuks "$DATA_DEV" 2>/dev/null; then
-        # First time setup
+        # First time setup - confirm passphrase
+        echo ""
+        read -rs -p "Confirm passphrase: " CONFIRM_PASS
+        echo ""
+
+        local BWS_KEYFILE
+        BWS_KEYFILE=$(bws_get "luks-keyfile")
+        local CHECK_KEY="${BWS_KEYFILE}${CONFIRM_PASS}"
+
+        if [[ "$LUKS_KEY" != "$CHECK_KEY" ]]; then
+            log_error "Passphrases do not match"
+            return 1
+        fi
+
         log "Formatting $DATA_DEV with LUKS2..."
         log "⚠️  WARNING: This will DESTROY all data on $DATA_DEV"
         read -p "Type 'yes' to continue: " CONFIRM
@@ -247,14 +279,14 @@ setup_luks() {
         sudo mkdir -p "$DATA_MOUNT"
         sudo mount "/dev/mapper/$DATA_MAPPER" "$DATA_MOUNT"
         sudo chown ubuntu:ubuntu "$DATA_MOUNT"
-        log_success "Data volume initialized"
-        log "🔐 Key stored in BWS as 'luks-keyfile'"
+        log_success "Data volume initialized with MFA"
+        log "🔐 Unlock requires: BWS keyfile + your passphrase"
     else
         # Existing LUKS volume - unlock it
         if [[ ! -e "/dev/mapper/$DATA_MAPPER" ]]; then
             log "Unlocking LUKS volume..."
             echo -n "$LUKS_KEY" | sudo cryptsetup open "$DATA_DEV" "$DATA_MAPPER" - || {
-                log_error "Failed to unlock - BWS keyfile may have changed"
+                log_error "Failed to unlock - wrong passphrase or BWS keyfile changed"
                 return 1
             }
         fi
