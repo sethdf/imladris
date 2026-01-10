@@ -191,9 +191,11 @@
     };
 
     initExtra = ''
-      # Silence warnings about unset prompt variables
+      # Silence warnings about unset prompt variables (oh-my-zsh)
       : "''${RPS1:=}"
+      : "''${RPS2:=}"
       : "''${AWS_PROFILE_REGION:=}"
+      : "''${_omz_git_prompt_info:=}"
 
       # Tool initialization
       eval "$(mise activate zsh)"
