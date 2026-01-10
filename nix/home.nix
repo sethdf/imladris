@@ -179,25 +179,10 @@
       extended = true;
     };
 
-    oh-my-zsh = {
-      enable = true;
-      plugins = [
-        "docker"
-        "kubectl"
-        "aws"
-        "terraform"
-        "fzf"
-        "z"
-      ];
-      # Use empty theme - starship handles prompt
-      theme = "";
-    };
+    # oh-my-zsh disabled - using starship for prompt, zoxide for z, fzf via programs.fzf
+    # Completions for docker/kubectl/aws/terraform can be added manually if needed
 
     initExtra = ''
-      # Disable zsh warnings about unset variables (oh-my-zsh async prompt uses many)
-      setopt NO_WARN_CREATE_GLOBAL 2>/dev/null || true
-      typeset -gA _OMZ_ASYNC_OUTPUT 2>/dev/null || true
-
       # Tool initialization
       eval "$(mise activate zsh)"
       eval "$(zoxide init zsh)"
