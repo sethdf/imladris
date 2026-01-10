@@ -195,6 +195,10 @@
       [[ -f "$HOME/repos/github.com/dacapo-labs/host/scripts/bws-init.sh" ]] && \
         source "$HOME/repos/github.com/dacapo-labs/host/scripts/bws-init.sh"
 
+      # Imladris shell helpers (created by imladris-init)
+      [[ -f "$HOME/.config/imladris/shell-helpers.sh" ]] && \
+        source "$HOME/.config/imladris/shell-helpers.sh"
+
       # GHQ + FZF integration
       ghq-cd() {
         local dir

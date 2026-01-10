@@ -499,8 +499,11 @@ EOF
 setup_shell_integration() {
     log "Setting up shell integration..."
 
-    # Add context helper functions to zshrc
-    local zshrc_additions='
+    # Write context helpers to separate file (zshrc is managed by nix)
+    local helpers_file="$HOME/.config/imladris/shell-helpers.sh"
+    mkdir -p "$(dirname "$helpers_file")"
+
+    cat > "$helpers_file" << 'EOF'
 # Imladris Context Helpers
 ctx() {
     case "${1:-}" in
@@ -509,16 +512,9 @@ ctx() {
         *) echo "Current: ${CONTEXT:-none}"; echo "Usage: ctx [work|home]" ;;
     esac
 }
+EOF
 
-# Show context in prompt (optional)
-# PROMPT="%F{cyan}[${CONTEXT:-?}]%f $PROMPT"
-'
-
-    if ! grep -q "Imladris Context Helpers" "$HOME/.zshrc" 2>/dev/null; then
-        echo "$zshrc_additions" >> "$HOME/.zshrc"
-        log "  Added context helpers to .zshrc"
-    fi
-
+    log "  Created $helpers_file"
     log_success "Shell integration configured"
     log "  Use 'ctx work' or 'ctx home' to switch contexts"
     log "  Or just 'cd ~/work' / 'cd ~/home' (direnv auto-switches)"
