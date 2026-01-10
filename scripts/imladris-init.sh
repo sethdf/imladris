@@ -223,21 +223,22 @@ get_luks_key() {
         return 1
     }
 
-    echo ""
-    echo "╔════════════════════════════════════════════════════════════════╗"
-    echo "║  LUKS MFA: Enter your personal passphrase                      ║"
-    echo "║  (Combined with BWS keyfile - both required to unlock)         ║"
-    echo "╚════════════════════════════════════════════════════════════════╝"
-    echo ""
-    read -rs -p "Passphrase: " PASSPHRASE
-    echo ""
+    # UI goes to stderr so it doesn't get captured with the key
+    echo "" >&2
+    echo "╔════════════════════════════════════════════════════════════════╗" >&2
+    echo "║  LUKS MFA: Enter your personal passphrase                      ║" >&2
+    echo "║  (Combined with BWS keyfile - both required to unlock)         ║" >&2
+    echo "╚════════════════════════════════════════════════════════════════╝" >&2
+    echo "" >&2
+    read -rs -p "Passphrase: " PASSPHRASE </dev/tty
+    echo "" >&2
 
     if [[ -z "$PASSPHRASE" ]]; then
         log_error "Passphrase cannot be empty"
         return 1
     fi
 
-    # Return combined key
+    # Return combined key (only this goes to stdout)
     echo -n "${BWS_KEYFILE}${PASSPHRASE}"
 }
 
