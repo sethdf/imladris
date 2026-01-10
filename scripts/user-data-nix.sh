@@ -48,6 +48,11 @@ setup_system() {
     hostnamectl set-hostname "${hostname}"
     timedatectl set-timezone "${timezone}"
 
+    # Remove SSM agent - we use Tailscale SSH only
+    snap remove amazon-ssm-agent 2>/dev/null || true
+    systemctl stop snap.amazon-ssm-agent.amazon-ssm-agent.service 2>/dev/null || true
+    systemctl disable snap.amazon-ssm-agent.amazon-ssm-agent.service 2>/dev/null || true
+
     # Increase inotify watches for file watchers
     echo "fs.inotify.max_user_watches=524288" >> /etc/sysctl.conf
     sysctl -p
@@ -257,6 +262,43 @@ setup_home_manager() {
 }
 
 # =============================================================================
+# Bitwarden Secrets Manager CLI
+# =============================================================================
+
+setup_bws() {
+    if command -v bws &>/dev/null; then
+        log "bws CLI already installed"
+        return 0
+    fi
+
+    local BWS_VERSION="1.0.0"
+    local ARCH
+    if [ "$(uname -m)" = "aarch64" ]; then
+        ARCH="aarch64-unknown-linux-gnu"
+    else
+        ARCH="x86_64-unknown-linux-gnu"
+    fi
+
+    local BWS_URL="https://github.com/bitwarden/sdk/releases/download/bws-v${BWS_VERSION}/bws-${ARCH}-${BWS_VERSION}.zip"
+
+    log "Installing bws CLI v${BWS_VERSION} for ${ARCH}..."
+    cd /tmp
+    curl -fsSL "$BWS_URL" -o bws.zip
+    unzip -o bws.zip
+    mv bws /usr/local/bin/
+    chmod +x /usr/local/bin/bws
+    rm -f bws.zip
+
+    # Verify installation
+    if bws --version &>/dev/null; then
+        log_success "bws CLI installed: $(bws --version)"
+    else
+        log_error "bws CLI installation failed"
+        return 1
+    fi
+}
+
+# =============================================================================
 # DevBox Scripts (outside of Nix - for LUKS/BWS operations)
 # =============================================================================
 
@@ -353,6 +395,7 @@ main() {
     run_step "nix"           "Nix installation"       setup_nix
     run_step "home_manager"  "home-manager setup"     setup_home_manager
     run_step "imladris_scripts" "DevBox scripts"        setup_imladris_scripts
+    run_step "bws"           "BWS CLI"                setup_bws
     run_step "shell"         "Default shell"          setup_shell
     run_step "motd"          "Login message"          setup_motd
 

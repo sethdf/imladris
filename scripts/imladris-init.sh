@@ -14,6 +14,19 @@ log_error() { echo "[$(date '+%H:%M:%S')] ✗ $*"; }
 # Bitwarden Secrets Manager
 # =============================================================================
 
+# Required secrets (init fails without these)
+REQUIRED_SECRETS=("luks-keyfile")
+
+# Optional secrets (features work without, but enhanced with)
+OPTIONAL_SECRETS=(
+    "sdp-base-url:ServiceDesk Plus base URL"
+    "sdp-api-key:ServiceDesk Plus API key"
+    "sdp-technician-id:ServiceDesk Plus technician ID"
+    "sessions-git-repo:Git repo for session history sync"
+    "github-token:GitHub personal access token"
+    "tailscale-auth-key:Tailscale auth key for additional devices"
+)
+
 check_bws() {
     if ! command -v bws &>/dev/null; then
         log_error "bws CLI not installed"
@@ -38,6 +51,155 @@ check_bws() {
     fi
 
     log_success "Connected to Bitwarden Secrets Manager"
+}
+
+list_secrets() {
+    bws secret list 2>/dev/null | jq -r '.[].key' | sort
+}
+
+secret_exists() {
+    local name="$1"
+    bws secret list 2>/dev/null | jq -e --arg name "$name" '.[] | select(.key == $name)' &>/dev/null
+}
+
+create_secret() {
+    local name="$1"
+    local value="$2"
+    local project_id
+
+    # Get the first project ID (or create one if needed)
+    project_id=$(bws project list 2>/dev/null | jq -r '.[0].id // empty')
+
+    if [[ -z "$project_id" ]]; then
+        log_error "No BWS project found. Create one in Bitwarden first."
+        return 1
+    fi
+
+    bws secret create "$name" "$value" "$project_id" &>/dev/null
+}
+
+manage_secrets() {
+    echo ""
+    echo "╔════════════════════════════════════════════════════════════════╗"
+    echo "║              Bitwarden Secrets Manager                         ║"
+    echo "╚════════════════════════════════════════════════════════════════╝"
+    echo ""
+
+    # Get existing secrets
+    local existing_secrets
+    existing_secrets=$(list_secrets)
+
+    echo "📋 Current secrets in BWS:"
+    if [[ -n "$existing_secrets" ]]; then
+        echo "$existing_secrets" | sed 's/^/   • /'
+    else
+        echo "   (none)"
+    fi
+    echo ""
+
+    # Check required secrets
+    echo "🔐 Required secrets:"
+    local missing_required=()
+    for secret in "${REQUIRED_SECRETS[@]}"; do
+        if secret_exists "$secret"; then
+            echo "   ✓ $secret"
+        else
+            echo "   ✗ $secret (MISSING)"
+            missing_required+=("$secret")
+        fi
+    done
+    echo ""
+
+    # Check optional secrets
+    echo "📦 Optional secrets:"
+    local missing_optional=()
+    for entry in "${OPTIONAL_SECRETS[@]}"; do
+        local name="${entry%%:*}"
+        local desc="${entry#*:}"
+        if secret_exists "$name"; then
+            echo "   ✓ $name"
+        else
+            echo "   ○ $name - $desc"
+            missing_optional+=("$entry")
+        fi
+    done
+    echo ""
+
+    # Handle missing required secrets
+    if [[ ${#missing_required[@]} -gt 0 ]]; then
+        echo "⚠️  Missing required secrets. Create them now?"
+        echo ""
+        for secret in "${missing_required[@]}"; do
+            case "$secret" in
+                luks-keyfile)
+                    echo "luks-keyfile: Random data for LUKS encryption"
+                    read -p "  Generate random keyfile? [Y/n] " choice
+                    if [[ "${choice:-y}" =~ ^[Yy]$ ]]; then
+                        local keyfile
+                        keyfile=$(openssl rand -base64 32)
+                        if create_secret "luks-keyfile" "$keyfile"; then
+                            log_success "Created luks-keyfile"
+                        else
+                            log_error "Failed to create luks-keyfile"
+                            return 1
+                        fi
+                    else
+                        log_error "luks-keyfile is required for LUKS encryption"
+                        return 1
+                    fi
+                    ;;
+            esac
+        done
+        echo ""
+    fi
+
+    # Offer to create optional secrets
+    if [[ ${#missing_optional[@]} -gt 0 ]]; then
+        echo "Would you like to configure optional secrets?"
+        read -p "  Configure optional secrets? [y/N] " choice
+
+        if [[ "${choice:-n}" =~ ^[Yy]$ ]]; then
+            echo ""
+            echo "Select secrets to configure (space-separated numbers, or 'all'):"
+            local i=1
+            for entry in "${missing_optional[@]}"; do
+                local name="${entry%%:*}"
+                local desc="${entry#*:}"
+                echo "  $i) $name - $desc"
+                ((i++))
+            done
+            echo ""
+            read -p "Selection: " selection
+
+            if [[ "$selection" == "all" ]]; then
+                selection=$(seq 1 ${#missing_optional[@]} | tr '\n' ' ')
+            fi
+
+            for num in $selection; do
+                if [[ $num -ge 1 && $num -le ${#missing_optional[@]} ]]; then
+                    local entry="${missing_optional[$((num-1))]}"
+                    local name="${entry%%:*}"
+                    local desc="${entry#*:}"
+                    echo ""
+                    echo "Creating: $name ($desc)"
+                    read -sp "  Value: " value
+                    echo ""
+                    if [[ -n "$value" ]]; then
+                        if create_secret "$name" "$value"; then
+                            log_success "Created $name"
+                        else
+                            log_error "Failed to create $name"
+                        fi
+                    else
+                        log "  Skipped (empty value)"
+                    fi
+                fi
+            done
+        fi
+        echo ""
+    fi
+
+    log_success "Secrets configuration complete"
 }
 
 bws_get() {
@@ -401,12 +563,53 @@ ctx() {
 # Main
 # =============================================================================
 
+show_help() {
+    cat << EOF
+Usage: imladris-init [OPTIONS]
+
+Initialize the Imladris devbox environment.
+
+Options:
+  --secrets      Only run secrets management (list/create BWS secrets)
+  --skip-secrets Skip interactive secrets management
+  --help         Show this help message
+
+Examples:
+  imladris-init              Full initialization with interactive secrets
+  imladris-init --secrets    Just manage BWS secrets
+  imladris-init --skip-secrets  Skip secrets prompts (requires luks-keyfile exists)
+EOF
+}
+
+# Parse arguments
+SECRETS_ONLY=false
+SKIP_SECRETS=false
+for arg in "$@"; do
+    case "$arg" in
+        --secrets) SECRETS_ONLY=true ;;
+        --skip-secrets) SKIP_SECRETS=true ;;
+        --help|-h) show_help; exit 0 ;;
+        *) log_error "Unknown option: $arg"; show_help; exit 1 ;;
+    esac
+done
+
 log "=== Imladris Init ==="
 log ""
 
 if ! check_bws; then
     log_error "Cannot proceed without Bitwarden Secrets Manager access"
     exit 1
+fi
+
+# Secrets-only mode
+if [[ "$SECRETS_ONLY" == true ]]; then
+    manage_secrets
+    exit 0
+fi
+
+# Interactive secrets management (unless skipped)
+if [[ "$SKIP_SECRETS" == false ]]; then
+    manage_secrets
 fi
 
 if ! setup_luks; then
