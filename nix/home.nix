@@ -61,6 +61,9 @@
       # Repo management
       ghq
 
+      # Prompt
+      starship
+
       # Notifications
       signal-cli
     ];
@@ -179,7 +182,6 @@
     oh-my-zsh = {
       enable = true;
       plugins = [
-        "git"
         "docker"
         "kubectl"
         "aws"
@@ -187,7 +189,8 @@
         "fzf"
         "z"
       ];
-      theme = "robbyrussell";
+      # Use empty theme - starship handles prompt
+      theme = "";
     };
 
     initExtra = ''
@@ -364,9 +367,9 @@
     };
   };
 
-  # Starship prompt (optional, commented out - using oh-my-zsh theme instead)
-  # programs.starship = {
-  #   enable = true;
-  #   enableZshIntegration = true;
-  # };
+  # Starship prompt (replaces oh-my-zsh theme to avoid async git warnings)
+  programs.starship = {
+    enable = true;
+    enableZshIntegration = true;
+  };
 }
