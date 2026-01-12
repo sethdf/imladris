@@ -281,9 +281,9 @@ setup_bws() {
         ARCH="x86_64-unknown-linux-gnu"
     fi
 
-    local BWS_URL="https://github.com/bitwarden/sdk/releases/download/bws-v${BWS_VERSION}/bws-${ARCH}-${BWS_VERSION}.zip"
+    local BWS_URL="https://github.com/bitwarden/sdk/releases/download/bws-v$${BWS_VERSION}/bws-$${ARCH}-$${BWS_VERSION}.zip"
 
-    log "Installing bws CLI v${BWS_VERSION} for ${ARCH}..."
+    log "Installing bws CLI v$${BWS_VERSION} for $${ARCH}..."
     cd /tmp || return 1
     curl -fsSL "$BWS_URL" -o bws.zip
     unzip -o bws.zip
