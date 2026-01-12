@@ -273,11 +273,14 @@ setup_bws() {
         return 0
     fi
 
+    # shellcheck disable=SC2034 # Used in Terraform template interpolation below
     local BWS_VERSION="1.0.0"
     local ARCH
     if [ "$(uname -m)" = "aarch64" ]; then
+        # shellcheck disable=SC2034 # Used in Terraform template interpolation below
         ARCH="aarch64-unknown-linux-gnu"
     else
+        # shellcheck disable=SC2034 # Used in Terraform template interpolation below
         ARCH="x86_64-unknown-linux-gnu"
     fi
 
