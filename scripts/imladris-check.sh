@@ -50,7 +50,7 @@ echo "Required Secrets:"
 if $BWS_OK; then
     SECRETS=$(bws secret list 2>/dev/null | jq -r '.[].key' || echo "")
 
-    for secret in "luks-key" "tailscale-auth-key" "tailscale-api-key"; do
+    for secret in "luks-keyfile" "tailscale-auth-key" "tailscale-api-key"; do
         if echo "$SECRETS" | grep -q "^${secret}$"; then
             ok "$secret"
         else

@@ -137,7 +137,7 @@ setup_tailscale() {
             "https://api.tailscale.com/api/v2/device/$DEVICE_ID" || true
     done
 
-    tailscale up --auth-key=${tailscale_auth_key} --hostname=${tailscale_hostname} --ssh
+    tailscale up --auth-key="${tailscale_auth_key}" --hostname="${tailscale_hostname}" --ssh
 }
 
 setup_aws_cli() {
@@ -255,8 +255,8 @@ setup_cloud_clis() {
 }
 
 setup_system_config() {
-    hostnamectl set-hostname ${hostname}
-    timedatectl set-timezone ${timezone}
+    hostnamectl set-hostname "${hostname}"
+    timedatectl set-timezone "${timezone}"
 
     if ! grep -q "fs.inotify.max_user_watches" /etc/sysctl.conf; then
         echo "fs.inotify.max_user_watches=524288" >> /etc/sysctl.conf

@@ -49,9 +49,6 @@ git checkout -q "$BRANCH" 2>/dev/null || git checkout -q -b "$BRANCH"
 log "Starting session-sync for $WATCH_DIR on branch $BRANCH"
 log "Debounce: ${DEBOUNCE_SECONDS}s, Batch window: ${BATCH_WINDOW}s"
 
-# Track pending changes state
-pending_changes=false
-
 sync_changes() {
     # Stage all changes
     git add -A
@@ -100,6 +97,13 @@ trap cleanup SIGTERM SIGINT
 # Main loop using inotifywait in monitor mode
 log "Watching for changes..."
 
+TRIGGER_FILE="$WATCH_DIR/.git/.sync-trigger"
+PENDING_FILE="$WATCH_DIR/.git/.sync-pending"
+
+# Clean up any stale state
+rm -f "$TRIGGER_FILE" "$PENDING_FILE"
+
+# Start inotifywait in background, writing events to a pipe
 inotifywait -m -r -q \
     --exclude '\.git' \
     -e modify -e create -e delete -e move \
@@ -108,33 +112,31 @@ while read -r _directory event filename; do
     # Skip git internal files
     [[ "$filename" == .git* ]] && continue
 
-    if [[ "$pending_changes" == false ]]; then
-        # First change in a batch - start the timer
-        pending_changes=true
+    # Check if we already have a pending sync scheduled
+    if [[ ! -f "$PENDING_FILE" ]]; then
+        # First change in a batch - mark as pending and start timer
+        touch "$PENDING_FILE"
         log "Change detected: $filename ($event)"
 
         # Background process to handle debounced sync
         (
             sleep "$DEBOUNCE_SECONDS"
-            # Signal main process that debounce period is over
-            # We do this by touching a trigger file
-            touch "$WATCH_DIR/.git/.sync-trigger" 2>/dev/null || true
+            # Signal that debounce period is over
+            touch "$TRIGGER_FILE" 2>/dev/null || true
         ) &
     fi
 done &
 
 INOTIFY_PID=$!
 
-# Monitor for sync triggers
-while true; do
-    if [[ -f "$WATCH_DIR/.git/.sync-trigger" ]]; then
-        rm -f "$WATCH_DIR/.git/.sync-trigger"
-        if [[ "$pending_changes" == true ]]; then
-            sync_changes || true
-            pending_changes=false
-        fi
+# Monitor for sync triggers in main process
+while kill -0 $INOTIFY_PID 2>/dev/null; do
+    if [[ -f "$TRIGGER_FILE" ]]; then
+        rm -f "$TRIGGER_FILE" "$PENDING_FILE"
+        sync_changes || true
     fi
     sleep 1
-done &
+done
 
-wait $INOTIFY_PID
+# Final cleanup
+rm -f "$TRIGGER_FILE" "$PENDING_FILE"

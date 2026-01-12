@@ -292,7 +292,7 @@ Required secrets in BWS:
 |--------|---------|
 | `tailscale-auth-key` | Join Tailscale network |
 | `tailscale-api-key` | Device cleanup |
-| `luks-key` | LUKS encryption passphrase |
+| `luks-keyfile` | LUKS encryption keyfile (combined with passphrase) |
 | `sdp-base-url` | ServiceDesk Plus URL |
 | `sdp-api-key` | SDP API authentication |
 | `sdp-technician-id` | Your technician ID |

@@ -101,7 +101,7 @@ setup_tailscale() {
             "https://api.tailscale.com/api/v2/device/$DEVICE_ID" || true
     done
 
-    tailscale up --auth-key=${tailscale_auth_key} --hostname=${tailscale_hostname} --ssh
+    tailscale up --auth-key="${tailscale_auth_key}" --hostname="${tailscale_hostname}" --ssh
 }
 
 setup_data_volume() {
@@ -225,8 +225,22 @@ setup_nix() {
 experimental-features = nix-command flakes
 NIXCONF
 
-    # Restart nix-daemon to pick up config
+    # Restart nix-daemon to pick up config and wait for it to be ready
     systemctl restart nix-daemon
+    sleep 2
+
+    # Wait for nix-daemon socket to be ready (max 30 seconds)
+    local wait_count=0
+    while ! systemctl is-active --quiet nix-daemon && [ $wait_count -lt 30 ]; do
+        sleep 1
+        ((wait_count++))
+    done
+
+    if ! systemctl is-active --quiet nix-daemon; then
+        log_error "nix-daemon failed to start"
+        return 1
+    fi
+    log "nix-daemon is ready"
 }
 
 setup_home_manager() {

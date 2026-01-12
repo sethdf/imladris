@@ -2,13 +2,34 @@
 # imladris-init - Initialize LUKS encrypted data volume with work/home directories
 set -euo pipefail
 
-DATA_DEV="/dev/nvme1n1"
 DATA_MAPPER="data"
 DATA_MOUNT="/data"
 
 log() { echo "[$(date '+%H:%M:%S')] $*"; }
 log_success() { echo "[$(date '+%H:%M:%S')] ✓ $*"; }
 log_error() { echo "[$(date '+%H:%M:%S')] ✗ $*"; }
+
+# Detect data device (handles both NVMe and Xen naming)
+detect_data_device() {
+    # NVMe instances (t4g, m6g, etc) - second NVMe device
+    if [[ -b /dev/nvme1n1 ]]; then
+        echo "/dev/nvme1n1"
+        return 0
+    fi
+    # Xen instances - /dev/xvdf is common for additional volumes
+    if [[ -b /dev/xvdf ]]; then
+        echo "/dev/xvdf"
+        return 0
+    fi
+    # Fallback for older instances
+    if [[ -b /dev/sdf ]]; then
+        echo "/dev/sdf"
+        return 0
+    fi
+    return 1
+}
+
+DATA_DEV=""
 
 # =============================================================================
 # Bitwarden Secrets Manager
@@ -243,10 +264,12 @@ get_luks_key() {
 }
 
 setup_luks() {
-    if [[ ! -b "$DATA_DEV" ]]; then
-        log "No data device at $DATA_DEV - skipping LUKS setup"
+    # Detect data device dynamically
+    DATA_DEV=$(detect_data_device) || {
+        log "No data device found (checked nvme1n1, xvdf, sdf) - skipping LUKS setup"
         return 0
-    fi
+    }
+    log "Detected data device: $DATA_DEV"
 
     log "Setting up encrypted data volume (MFA)..."
 

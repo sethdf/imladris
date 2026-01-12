@@ -2,9 +2,30 @@
 # imladris-restore - Show status and optionally auto-unlock LUKS
 set -euo pipefail
 
-DATA_DEV="/dev/nvme1n1"
 DATA_MAPPER="data"
 DATA_MOUNT="/data"
+
+# Detect data device (handles both NVMe and Xen naming)
+detect_data_device() {
+    # NVMe instances (t4g, m6g, etc) - second NVMe device
+    if [[ -b /dev/nvme1n1 ]]; then
+        echo "/dev/nvme1n1"
+        return 0
+    fi
+    # Xen instances - /dev/xvdf is common for additional volumes
+    if [[ -b /dev/xvdf ]]; then
+        echo "/dev/xvdf"
+        return 0
+    fi
+    # Fallback for older instances
+    if [[ -b /dev/sdf ]]; then
+        echo "/dev/sdf"
+        return 0
+    fi
+    return 1
+}
+
+DATA_DEV=$(detect_data_device 2>/dev/null) || DATA_DEV=""
 
 # =============================================================================
 # Status Display
@@ -79,7 +100,7 @@ auto_unlock() {
 
     # Get LUKS key
     local luks_key secret_id
-    secret_id=$(bws secret list 2>/dev/null | jq -r '.[] | select(.key == "luks-key") | .id' 2>/dev/null)
+    secret_id=$(bws secret list 2>/dev/null | jq -r '.[] | select(.key == "luks-keyfile") | .id' 2>/dev/null)
     [[ -z "$secret_id" ]] && return 0
 
     luks_key=$(bws secret get "$secret_id" 2>/dev/null | jq -r '.value')
