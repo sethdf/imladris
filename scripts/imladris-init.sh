@@ -301,6 +301,48 @@ setup_luks() {
 }
 
 # =============================================================================
+# BWS Token Persistence (store on LUKS, remove from root)
+# =============================================================================
+
+persist_bws_token() {
+    local SECRETS_DIR="$DATA_MOUNT/.secrets"
+    local TOKEN_FILE="$SECRETS_DIR/bws-token"
+    local ROOT_TOKEN_FILE="$HOME/.config/bws/access-token"
+
+    # Create secrets directory on LUKS with restricted permissions
+    sudo mkdir -p "$SECRETS_DIR"
+    sudo chown ubuntu:ubuntu "$SECRETS_DIR"
+    chmod 700 "$SECRETS_DIR"
+
+    # Store token on LUKS
+    if [[ -n "${BWS_ACCESS_TOKEN:-}" ]]; then
+        echo -n "$BWS_ACCESS_TOKEN" > "$TOKEN_FILE"
+        chmod 600 "$TOKEN_FILE"
+        log_success "BWS token stored on encrypted volume"
+    fi
+
+    # Remove token from root volume (if present)
+    if [[ -f "$ROOT_TOKEN_FILE" ]]; then
+        rm -f "$ROOT_TOKEN_FILE"
+        log "Removed BWS token from root volume"
+    fi
+
+    # Remove parent dir if empty
+    rmdir "$HOME/.config/bws" 2>/dev/null || true
+}
+
+load_bws_token_from_luks() {
+    local TOKEN_FILE="$DATA_MOUNT/.secrets/bws-token"
+
+    if [[ -f "$TOKEN_FILE" ]]; then
+        BWS_ACCESS_TOKEN=$(cat "$TOKEN_FILE")
+        export BWS_ACCESS_TOKEN
+        return 0
+    fi
+    return 1
+}
+
+# =============================================================================
 # Directory Setup (work/home separation - files only, unified PAI)
 # =============================================================================
 
@@ -534,10 +576,11 @@ EOF
 setup_shell_integration() {
     log "Setting up shell integration..."
 
-    # Write context helpers to separate file (zshrc is managed by nix)
-    local helpers_file="$HOME/.config/imladris/shell-helpers.sh"
-    mkdir -p "$(dirname "$helpers_file")"
+    local config_dir="$HOME/.config/imladris"
+    mkdir -p "$config_dir"
 
+    # Write context helpers to separate file (zshrc is managed by nix)
+    local helpers_file="$config_dir/shell-helpers.sh"
     cat > "$helpers_file" << 'EOF'
 # Imladris Context Helpers
 ctx() {
@@ -548,11 +591,25 @@ ctx() {
     esac
 }
 EOF
-
     log "  Created $helpers_file"
+
+    # Write BWS token sourcing script
+    local bws_env_file="$config_dir/bws-env.sh"
+    cat > "$bws_env_file" << 'EOF'
+# Imladris BWS Token Loader
+# Source this in your shell profile to auto-load BWS token from LUKS
+_bws_token_file="/data/.secrets/bws-token"
+if [[ -f "$_bws_token_file" ]]; then
+    export BWS_ACCESS_TOKEN="$(cat "$_bws_token_file")"
+fi
+unset _bws_token_file
+EOF
+    chmod 600 "$bws_env_file"
+    log "  Created $bws_env_file"
+
     log_success "Shell integration configured"
     log "  Use 'ctx work' or 'ctx home' to switch contexts"
-    log "  Or just 'cd ~/work' / 'cd ~/home' (direnv auto-switches)"
+    log "  Source bws-env.sh in profile for BWS token auto-load"
 }
 
 # =============================================================================
@@ -612,6 +669,9 @@ if ! setup_luks; then
     log_error "LUKS setup failed"
     exit 1
 fi
+
+# Persist BWS token to LUKS and remove from root volume
+persist_bws_token
 
 # Set up work/home directories (files only, unified PAI)
 setup_directories
