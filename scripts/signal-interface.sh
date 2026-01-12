@@ -41,8 +41,12 @@ _get_phone() {
 
     # Try to find from signal-cli data
     if [[ -d "$SIGNAL_DATA_DIR/data" ]]; then
-        local found
-        found=$(ls "$SIGNAL_DATA_DIR/data" 2>/dev/null | grep '^+' | head -1)
+        local found=""
+        for f in "$SIGNAL_DATA_DIR/data"/+*; do
+            [[ -e "$f" ]] || continue
+            found=$(basename "$f")
+            break
+        done
         if [[ -n "$found" ]]; then
             echo "$found"
             return
@@ -107,7 +111,8 @@ cmd_link() {
     echo ""
 
     # Generate link with device name
-    local device_name="${HOSTNAME:-devbox}-$(date +%Y%m%d)"
+    local device_name
+    device_name="${HOSTNAME:-devbox}-$(date +%Y%m%d)"
     signal-cli link -n "$device_name"
 
     echo ""
@@ -215,10 +220,9 @@ cmd_listen() {
         if [[ -n "$messages" ]]; then
             # Process each message
             echo "$messages" | jq -c 'select(.envelope.dataMessage.message != null)' 2>/dev/null | while read -r msg; do
-                local sender body timestamp
+                local sender body
                 sender=$(echo "$msg" | jq -r '.envelope.source // empty')
                 body=$(echo "$msg" | jq -r '.envelope.dataMessage.message // empty')
-                timestamp=$(echo "$msg" | jq -r '.envelope.dataMessage.timestamp // empty')
 
                 if [[ -n "$body" && "$sender" == "$phone" ]]; then
                     log "Received from self: $body"

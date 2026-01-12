@@ -419,7 +419,8 @@ install_custom_skills() {
     # Install skill markdown files
     for skill_dir in "$SKILLS_SRC"/*/; do
         [[ -d "$skill_dir" ]] || continue
-        local name=$(basename "$skill_dir")
+        local name
+        name=$(basename "$skill_dir")
         [[ "$name" == .* ]] && continue
 
         if [[ -f "$skill_dir/README.md" ]]; then
@@ -432,7 +433,8 @@ install_custom_skills() {
     mkdir -p "$HOME/bin"
     for script in "$SKILLS_SRC"/*/src/*.sh; do
         [[ -f "$script" ]] || continue
-        local script_name=$(basename "$script")
+        local script_name
+        script_name=$(basename "$script")
         cp "$script" "$HOME/bin/${script_name%.sh}"
         chmod +x "$HOME/bin/${script_name%.sh}"
         log "  Installed script: ${script_name%.sh}"

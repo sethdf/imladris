@@ -49,8 +49,7 @@ git checkout -q "$BRANCH" 2>/dev/null || git checkout -q -b "$BRANCH"
 log "Starting session-sync for $WATCH_DIR on branch $BRANCH"
 log "Debounce: ${DEBOUNCE_SECONDS}s, Batch window: ${BATCH_WINDOW}s"
 
-# Track last activity time
-last_change=0
+# Track pending changes state
 pending_changes=false
 
 sync_changes() {
@@ -63,8 +62,10 @@ sync_changes() {
     fi
 
     # Get summary of changes
-    local added=$(git diff --cached --numstat | wc -l)
-    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    local added
+    added=$(git diff --cached --numstat | wc -l)
+    local timestamp
+    timestamp=$(date '+%Y-%m-%d %H:%M:%S')
 
     # Commit with timestamp
     git commit -q -m "Auto-sync: $timestamp" -m "Files changed: $added"
@@ -103,16 +104,13 @@ inotifywait -m -r -q \
     --exclude '\.git' \
     -e modify -e create -e delete -e move \
     "$WATCH_DIR" |
-while read -r directory event filename; do
+while read -r _directory event filename; do
     # Skip git internal files
     [[ "$filename" == .git* ]] && continue
-
-    current_time=$(date +%s)
 
     if [[ "$pending_changes" == false ]]; then
         # First change in a batch - start the timer
         pending_changes=true
-        last_change=$current_time
         log "Change detected: $filename ($event)"
 
         # Background process to handle debounced sync
@@ -122,9 +120,6 @@ while read -r directory event filename; do
             # We do this by touching a trigger file
             touch "$WATCH_DIR/.git/.sync-trigger" 2>/dev/null || true
         ) &
-    else
-        # Additional changes - update timestamp
-        last_change=$current_time
     fi
 done &
 

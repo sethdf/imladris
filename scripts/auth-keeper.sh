@@ -111,6 +111,7 @@ _ak_aws_refresh() {
     echo "$output"
 }
 
+# shellcheck disable=SC2120
 _ak_ensure_aws() {
     if ! _ak_aws_token_valid; then
         _ak_aws_refresh "$@"
@@ -126,7 +127,7 @@ aws() {
             ;;
     esac
 
-    _ak_ensure_aws
+    _ak_ensure_aws "$@"
     command aws "$@"
 }
 
@@ -322,8 +323,8 @@ elif [[ -n "${BASH_VERSION:-}" ]]; then
     _auth_keeper_comp() {
         local cur="${COMP_WORDS[COMP_CWORD]}"
         case "${COMP_WORDS[1]:-}" in
-            refresh) COMPREPLY=($(compgen -W "aws azure all" -- "$cur")) ;;
-            *) COMPREPLY=($(compgen -W "status refresh help" -- "$cur")) ;;
+            refresh) mapfile -t COMPREPLY < <(compgen -W "aws azure all" -- "$cur") ;;
+            *) mapfile -t COMPREPLY < <(compgen -W "status refresh help" -- "$cur") ;;
         esac
     }
     complete -F _auth_keeper_comp auth-keeper

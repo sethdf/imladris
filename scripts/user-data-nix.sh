@@ -110,8 +110,10 @@ setup_data_volume() {
 
     local VOLUME_TAG="${data_volume_tag}"
     local DEVICE_NAME="/dev/sdf"
-    local REGION=$(curl -s http://169.254.169.254/latest/meta-data/placement/region)
-    local INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
+    local REGION
+    local INSTANCE_ID
+    REGION=$(curl -s http://169.254.169.254/latest/meta-data/placement/region)
+    INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
 
     # Check if already attached
     if [ -e /dev/nvme1n1 ] || [ -e /dev/xvdf ]; then
@@ -250,7 +252,7 @@ setup_home_manager() {
 
     # Run home-manager as ubuntu user (with output to log)
     log "Running home-manager switch for $HM_CONFIG..."
-    cd "$REPO_DIR/nix"
+    cd "$REPO_DIR/nix" || return 1
     sudo -u ubuntu bash -c "
         . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
         cd $REPO_DIR/nix
@@ -282,7 +284,7 @@ setup_bws() {
     local BWS_URL="https://github.com/bitwarden/sdk/releases/download/bws-v${BWS_VERSION}/bws-${ARCH}-${BWS_VERSION}.zip"
 
     log "Installing bws CLI v${BWS_VERSION} for ${ARCH}..."
-    cd /tmp
+    cd /tmp || return 1
     curl -fsSL "$BWS_URL" -o bws.zip
     unzip -o bws.zip
     mv bws /usr/local/bin/
@@ -307,7 +309,7 @@ setup_imladris_scripts() {
     local SCRIPTS_BASE="https://raw.githubusercontent.com/dacapo-labs/host/master/scripts"
 
     mkdir -p /home/ubuntu/bin
-    cd /home/ubuntu/bin
+    cd /home/ubuntu/bin || return 1
 
     # Download imladris management scripts
     curl -fsSL "$SCRIPTS_BASE/imladris-init.sh" -o imladris-init
