@@ -229,62 +229,6 @@ setup_data_volume() {
     return 1
 }
 
-setup_spot_handler() {
-    local SCRIPTS_BASE="https://raw.githubusercontent.com/sethdf/imladris/master/scripts"
-    local HANDLER_PATH="/usr/local/bin/spot-interruption-handler"
-    local TMP_HANDLER="/tmp/spot-handler.sh"
-
-    # Download spot interruption handler with verification
-    log "Downloading spot interruption handler..."
-    if curl -fsSL "$SCRIPTS_BASE/spot-interruption-handler.sh" -o "$TMP_HANDLER"; then
-        # Verify the script looks legitimate (basic sanity checks)
-        if grep -q "SPOT INTERRUPTION" "$TMP_HANDLER" && \
-           grep -q "169.254.169.254" "$TMP_HANDLER" && \
-           grep -q "^#!/bin/bash" "$TMP_HANDLER"; then
-            mv "$TMP_HANDLER" "$HANDLER_PATH"
-            log_success "Spot handler downloaded and verified"
-        else
-            log_error "Spot handler verification failed - using fallback"
-            rm -f "$TMP_HANDLER"
-        fi
-    fi
-
-    # Fallback: create basic handler if download failed or verification failed
-    if [ ! -f "$HANDLER_PATH" ]; then
-        log "Creating basic spot handler (fallback)"
-        cat > "$HANDLER_PATH" <<'HANDLER'
-#!/bin/bash
-while true; do
-    if curl -s -m 2 http://169.254.169.254/latest/meta-data/spot/instance-action &>/dev/null; then
-        wall "SPOT INTERRUPTION: Instance will be terminated soon!"
-        sleep 120
-    fi
-    sleep 5
-done
-HANDLER
-    fi
-    chmod +x "$HANDLER_PATH"
-
-    cat > /etc/systemd/system/spot-interruption-handler.service <<'SERVICE'
-[Unit]
-Description=EC2 Spot Instance Interruption Handler
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/spot-interruption-handler
-Restart=always
-RestartSec=5
-Environment="SNS_TOPIC_ARN=${sns_topic_arn}"
-
-[Install]
-WantedBy=multi-user.target
-SERVICE
-
-    systemctl daemon-reload
-    systemctl enable --now spot-interruption-handler
-}
-
 # =============================================================================
 # Nix Installation
 # =============================================================================
@@ -576,7 +520,6 @@ main() {
     run_step "docker"        "Docker"                 setup_docker
     run_step "tailscale"     "Tailscale"              setup_tailscale
     run_step "data_volume"   "Data volume attach"     setup_data_volume
-    run_step "spot_handler"  "Spot interruption"      setup_spot_handler
     run_step "nix"           "Nix installation"       setup_nix
     run_step "home_manager"  "home-manager setup"     setup_home_manager
     run_step "claude_code"   "Claude Code & MCP"      setup_claude_code
