@@ -337,10 +337,11 @@ persist_bws_token() {
     sudo chown ubuntu:ubuntu "$SECRETS_DIR"
     chmod 700 "$SECRETS_DIR"
 
-    # Store token on LUKS
+    # Store token on LUKS (atomic write to prevent brief world-readable window)
     if [[ -n "${BWS_ACCESS_TOKEN:-}" ]]; then
-        echo -n "$BWS_ACCESS_TOKEN" > "$TOKEN_FILE"
-        chmod 600 "$TOKEN_FILE"
+        local TMP_FILE="$TOKEN_FILE.tmp.$$"
+        (umask 077; echo -n "$BWS_ACCESS_TOKEN" > "$TMP_FILE")
+        mv "$TMP_FILE" "$TOKEN_FILE"
         log_success "BWS token stored on encrypted volume"
     fi
 

@@ -30,6 +30,8 @@ data "aws_availability_zones" "available" {
   state = "available"
 }
 
+data "aws_caller_identity" "current" {}
+
 # -----------------------------------------------------------------------------
 # Networking
 # -----------------------------------------------------------------------------
@@ -137,8 +139,8 @@ resource "aws_iam_role_policy" "imladris_ebs" {
           "ec2:DetachVolume"
         ]
         Resource = [
-          "arn:aws:ec2:${var.aws_region}:*:volume/*",
-          "arn:aws:ec2:${var.aws_region}:*:instance/*"
+          "arn:aws:ec2:${var.aws_region}:${data.aws_caller_identity.current.account_id}:volume/*",
+          "arn:aws:ec2:${var.aws_region}:${data.aws_caller_identity.current.account_id}:instance/*"
         ]
         Condition = {
           StringEquals = {
@@ -147,8 +149,11 @@ resource "aws_iam_role_policy" "imladris_ebs" {
         }
       },
       {
-        Effect   = "Allow"
-        Action   = "ec2:DescribeVolumes"
+        Effect = "Allow"
+        Action = [
+          "ec2:DescribeVolumes",
+          "ec2:DescribeInstances"
+        ]
         Resource = "*"
       }
     ]
@@ -284,13 +289,15 @@ resource "aws_dlm_lifecycle_policy" "imladris" {
         interval_unit = "HOURS"
       }
 
+      # Retain 24 hourly snapshots (24 hours of protection)
       retain_rule {
-        count = 10
+        count = 24
       }
 
       tags_to_add = {
         SnapshotCreator = "DLM"
         Project         = "imladris"
+        SnapshotType    = "hourly"
       }
 
       copy_tags = true

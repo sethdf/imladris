@@ -153,8 +153,10 @@ persist_bws_token() {
     chmod 700 "$SECRETS_DIR"
 
     if [[ -n "${BWS_ACCESS_TOKEN:-}" ]]; then
-        echo -n "$BWS_ACCESS_TOKEN" > "$TOKEN_FILE"
-        chmod 600 "$TOKEN_FILE"
+        # Atomic write: create with correct permissions, then move
+        local TMP_FILE="$TOKEN_FILE.tmp.$$"
+        (umask 077; echo -n "$BWS_ACCESS_TOKEN" > "$TMP_FILE")
+        mv "$TMP_FILE" "$TOKEN_FILE"
         log_success "BWS token stored on encrypted volume"
     fi
 

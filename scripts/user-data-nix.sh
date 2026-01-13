@@ -107,13 +107,21 @@ setup_tailscale() {
 setup_data_volume() {
     # Self-attach the data EBS volume (required for EC2 Fleet where instance IDs change)
     # Find volume by tag and attach it to this instance
+    # Includes race condition handling for multiple simultaneous instance launches
 
     local VOLUME_TAG="${data_volume_tag}"
     local DEVICE_NAME="/dev/sdf"
     local REGION
     local INSTANCE_ID
-    REGION=$(curl -s http://169.254.169.254/latest/meta-data/placement/region)
-    INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
+    local TOKEN
+
+    # Get IMDSv2 token for metadata requests
+    TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+        -H "X-aws-ec2-metadata-token-ttl-seconds: 300" 2>/dev/null)
+    REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" \
+        http://169.254.169.254/latest/meta-data/placement/region)
+    INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" \
+        http://169.254.169.254/latest/meta-data/instance-id)
 
     # Check if already attached
     if [ -e /dev/nvme1n1 ] || [ -e /dev/xvdf ]; then
@@ -126,51 +134,120 @@ setup_data_volume() {
         apt-get install -y awscli
     fi
 
-    # Find the volume by tag
-    local VOLUME_ID
-    VOLUME_ID=$(aws ec2 describe-volumes \
-        --region "$REGION" \
-        --filters "Name=tag:Name,Values=$VOLUME_TAG" "Name=status,Values=available" \
-        --query "Volumes[0].VolumeId" \
-        --output text 2>/dev/null)
+    # Retry loop for volume attachment (handles race conditions)
+    local MAX_ATTEMPTS=3
+    local ATTEMPT=1
 
-    if [ -z "$VOLUME_ID" ] || [ "$VOLUME_ID" = "None" ]; then
-        log "No available data volume found with tag: $VOLUME_TAG"
-        log "Volume may already be attached or doesn't exist"
+    while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
+        log "Volume attachment attempt $ATTEMPT/$MAX_ATTEMPTS"
+
+        # Find the volume by tag (must be available)
+        local VOLUME_ID
+        VOLUME_ID=$(aws ec2 describe-volumes \
+            --region "$REGION" \
+            --filters "Name=tag:Name,Values=$VOLUME_TAG" "Name=status,Values=available" \
+            --query "Volumes[0].VolumeId" \
+            --output text 2>/dev/null)
+
+        if [ -z "$VOLUME_ID" ] || [ "$VOLUME_ID" = "None" ]; then
+            # Check if volume exists but is already attached (to us or another instance)
+            local ATTACHED_VOLUME
+            ATTACHED_VOLUME=$(aws ec2 describe-volumes \
+                --region "$REGION" \
+                --filters "Name=tag:Name,Values=$VOLUME_TAG" \
+                --query "Volumes[0].{Id:VolumeId,State:State,AttachedTo:Attachments[0].InstanceId}" \
+                --output json 2>/dev/null)
+
+            local ATTACHED_TO
+            ATTACHED_TO=$(echo "$ATTACHED_VOLUME" | jq -r '.AttachedTo // empty' 2>/dev/null)
+
+            if [ "$ATTACHED_TO" = "$INSTANCE_ID" ]; then
+                log "Volume already attached to this instance"
+                break
+            elif [ -n "$ATTACHED_TO" ]; then
+                log "Volume attached to different instance: $ATTACHED_TO"
+                log "This may be a race condition - waiting and retrying..."
+                sleep $((ATTEMPT * 5))
+                ATTEMPT=$((ATTEMPT + 1))
+                continue
+            else
+                log "No data volume found with tag: $VOLUME_TAG"
+                return 0
+            fi
+        fi
+
+        log "Attaching volume $VOLUME_ID to instance $INSTANCE_ID"
+
+        # Attempt attachment
+        if aws ec2 attach-volume \
+            --region "$REGION" \
+            --volume-id "$VOLUME_ID" \
+            --instance-id "$INSTANCE_ID" \
+            --device "$DEVICE_NAME" 2>/dev/null; then
+
+            # Wait for attachment
+            local MAX_WAIT=60
+            local WAITED=0
+            while [ ! -e /dev/nvme1n1 ] && [ ! -e /dev/xvdf ] && [ $WAITED -lt $MAX_WAIT ]; do
+                sleep 2
+                WAITED=$((WAITED + 2))
+                log "Waiting for volume to attach... ($WAITED/$MAX_WAIT)"
+            done
+
+            if [ -e /dev/nvme1n1 ] || [ -e /dev/xvdf ]; then
+                log_success "Data volume attached successfully"
+                return 0
+            else
+                log_error "Volume attachment timed out"
+            fi
+        else
+            local ERROR_CODE=$?
+            log_error "Volume attachment failed (exit code: $ERROR_CODE)"
+
+            # Check if it's a race condition (volume no longer available)
+            if [ $ATTEMPT -lt $MAX_ATTEMPTS ]; then
+                log "Retrying in $((ATTEMPT * 5)) seconds..."
+                sleep $((ATTEMPT * 5))
+            fi
+        fi
+
+        ATTEMPT=$((ATTEMPT + 1))
+    done
+
+    # Final check - maybe it attached despite errors
+    if [ -e /dev/nvme1n1 ] || [ -e /dev/xvdf ]; then
+        log_success "Data volume attached (detected after retries)"
         return 0
     fi
 
-    log "Attaching volume $VOLUME_ID to instance $INSTANCE_ID"
-    aws ec2 attach-volume \
-        --region "$REGION" \
-        --volume-id "$VOLUME_ID" \
-        --instance-id "$INSTANCE_ID" \
-        --device "$DEVICE_NAME"
-
-    # Wait for attachment
-    local MAX_WAIT=60
-    local WAITED=0
-    while [ ! -e /dev/nvme1n1 ] && [ ! -e /dev/xvdf ] && [ $WAITED -lt $MAX_WAIT ]; do
-        sleep 2
-        WAITED=$((WAITED + 2))
-        log "Waiting for volume to attach... ($WAITED/$MAX_WAIT)"
-    done
-
-    if [ -e /dev/nvme1n1 ] || [ -e /dev/xvdf ]; then
-        log_success "Data volume attached successfully"
-    else
-        log_error "Volume attachment timed out"
-        return 1
-    fi
+    log_error "Failed to attach data volume after $MAX_ATTEMPTS attempts"
+    return 1
 }
 
 setup_spot_handler() {
     local SCRIPTS_BASE="https://raw.githubusercontent.com/dacapo-labs/host/master/scripts"
+    local HANDLER_PATH="/usr/local/bin/spot-interruption-handler"
+    local TMP_HANDLER="/tmp/spot-handler.sh"
 
-    # Download spot interruption handler
-    curl -fsSL "$SCRIPTS_BASE/spot-interruption-handler.sh" -o /usr/local/bin/spot-interruption-handler || {
-        log "Creating basic spot handler"
-        cat > /usr/local/bin/spot-interruption-handler <<'HANDLER'
+    # Download spot interruption handler with verification
+    log "Downloading spot interruption handler..."
+    if curl -fsSL "$SCRIPTS_BASE/spot-interruption-handler.sh" -o "$TMP_HANDLER"; then
+        # Verify the script looks legitimate (basic sanity checks)
+        if grep -q "SPOT INTERRUPTION" "$TMP_HANDLER" && \
+           grep -q "169.254.169.254" "$TMP_HANDLER" && \
+           grep -q "^#!/bin/bash" "$TMP_HANDLER"; then
+            mv "$TMP_HANDLER" "$HANDLER_PATH"
+            log_success "Spot handler downloaded and verified"
+        else
+            log_error "Spot handler verification failed - using fallback"
+            rm -f "$TMP_HANDLER"
+        fi
+    fi
+
+    # Fallback: create basic handler if download failed or verification failed
+    if [ ! -f "$HANDLER_PATH" ]; then
+        log "Creating basic spot handler (fallback)"
+        cat > "$HANDLER_PATH" <<'HANDLER'
 #!/bin/bash
 while true; do
     if curl -s -m 2 http://169.254.169.254/latest/meta-data/spot/instance-action &>/dev/null; then
@@ -180,8 +257,8 @@ while true; do
     sleep 5
 done
 HANDLER
-    }
-    chmod +x /usr/local/bin/spot-interruption-handler
+    fi
+    chmod +x "$HANDLER_PATH"
 
     cat > /etc/systemd/system/spot-interruption-handler.service <<'SERVICE'
 [Unit]
@@ -216,8 +293,28 @@ setup_nix() {
     # Set HOME for nix installer (required when running as root)
     export HOME=/root
 
+    # Download and verify Nix installer
+    # Using the determinate systems installer for better reliability
+    local NIX_INSTALLER="/tmp/nix-installer.sh"
+    local NIX_URL="https://nixos.org/nix/install"
+
+    log "Downloading Nix installer..."
+    curl -fsSL "$NIX_URL" -o "$NIX_INSTALLER" || {
+        log_error "Failed to download Nix installer"
+        return 1
+    }
+
+    # Verify the installer looks legitimate (basic sanity check)
+    if ! grep -q "nix-build" "$NIX_INSTALLER" || ! grep -q "NIX_" "$NIX_INSTALLER"; then
+        log_error "Nix installer verification failed - file may be corrupted"
+        rm -f "$NIX_INSTALLER"
+        return 1
+    fi
+
     # Install Nix in multi-user mode
-    curl -L https://nixos.org/nix/install | sh -s -- --daemon --yes
+    chmod +x "$NIX_INSTALLER"
+    "$NIX_INSTALLER" --daemon --yes
+    rm -f "$NIX_INSTALLER"
 
     # Enable flakes
     mkdir -p /etc/nix
