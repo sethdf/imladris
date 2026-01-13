@@ -236,8 +236,8 @@
     '';
 
     profileExtra = ''
-      # Ensure PATH includes user bins and host scripts
-      export PATH="$HOME/bin:$HOME/.local/bin:$HOME/repos/github.com/sethdf/imladris/scripts:$PATH"
+      # Ensure PATH includes user bins, bun global, and host scripts
+      export PATH="$HOME/bin:$HOME/.local/bin:$HOME/.bun/bin:$HOME/repos/github.com/sethdf/imladris/scripts:$PATH"
     '';
   };
 
