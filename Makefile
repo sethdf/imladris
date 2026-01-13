@@ -1,4 +1,4 @@
-.PHONY: init plan apply destroy unlock lock commit-state backup-keys backup-gitcrypt-to-bws cost ssh-config lint test test-shell test-all validate check
+.PHONY: init plan apply destroy unlock lock commit-state backup-keys backup-gitcrypt-to-bws cost ssh-config lint test test-shell test-all validate check test-docker-build test-docker-shell test-docker-terraform test-docker-integration test-docker test-docker-dev test-docker-clean
 
 # Decrypt secrets before running terraform
 SECRETS_FILE := secrets.yaml
@@ -287,3 +287,42 @@ test-all: test test-shell
 check: lint test
 	@echo ""
 	@echo "✓ All checks passed"
+
+# =============================================================================
+# DOCKER-BASED TESTING
+# =============================================================================
+
+# Build test container
+test-docker-build:
+	@echo "=== Building test container ==="
+	cd tests/docker && docker compose build
+
+# Run shell tests in Docker (isolated Ubuntu environment)
+test-docker-shell: test-docker-build
+	@echo "=== Running Shell Tests (Docker) ==="
+	cd tests/docker && docker compose --profile shell run --rm test-shell
+
+# Run Terraform validation in Docker
+test-docker-terraform: test-docker-build
+	@echo "=== Running Terraform Tests (Docker) ==="
+	cd tests/docker && docker compose --profile terraform run --rm test-terraform
+
+# Run integration tests in Docker
+test-docker-integration: test-docker-build
+	@echo "=== Running Integration Tests (Docker) ==="
+	cd tests/docker && docker compose --profile integration run --rm test-integration
+
+# Run all Docker tests
+test-docker: test-docker-build
+	@echo "=== Running All Docker Tests ==="
+	cd tests/docker && docker compose --profile all up --abort-on-container-exit
+
+# Interactive Docker shell for debugging
+test-docker-dev: test-docker-build
+	@echo "=== Starting interactive test shell ==="
+	cd tests/docker && docker compose --profile dev run --rm dev
+
+# Clean up Docker test resources
+test-docker-clean:
+	@echo "=== Cleaning Docker test resources ==="
+	cd tests/docker && docker compose down -v --remove-orphans

@@ -1,0 +1,66 @@
+version: '3.8'
+
+services:
+  # Shell script tests (bats)
+  test-shell:
+    build:
+      context: ../..
+      dockerfile: tests/docker/Dockerfile
+    volumes:
+      - ../..:/project:ro
+      - test-cache:/home/ubuntu/.cache
+    environment:
+      - BWS_ACCESS_TOKEN=mock-token-for-testing
+    command: |
+      bash -c "cd /project && tests/docker/run-shell-tests.sh"
+    profiles:
+      - shell
+      - all
+
+  # Terraform validation tests
+  test-terraform:
+    build:
+      context: ../..
+      dockerfile: tests/docker/Dockerfile
+    volumes:
+      - ../..:/project:ro
+    command: |
+      bash -c "cd /project && tests/docker/run-terraform-tests.sh"
+    profiles:
+      - terraform
+      - all
+
+  # Integration tests (simulated bootstrap)
+  test-integration:
+    build:
+      context: ../..
+      dockerfile: tests/docker/Dockerfile
+    volumes:
+      - ../..:/project:ro
+      - test-home:/home/ubuntu
+    environment:
+      - BWS_ACCESS_TOKEN=mock-token-for-testing
+    command: |
+      bash -c "cd /project && tests/docker/run-integration-tests.sh"
+    profiles:
+      - integration
+      - all
+
+  # Interactive shell for debugging
+  dev:
+    build:
+      context: ../..
+      dockerfile: tests/docker/Dockerfile
+    volumes:
+      - ../..:/project
+      - test-home:/home/ubuntu
+    environment:
+      - BWS_ACCESS_TOKEN=mock-token-for-testing
+    stdin_open: true
+    tty: true
+    profiles:
+      - dev
+
+volumes:
+  test-cache:
+  test-home:

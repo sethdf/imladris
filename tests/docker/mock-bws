@@ -1,0 +1,76 @@
+#!/bin/bash
+# Mock bws (Bitwarden Secrets Manager) CLI for testing
+# Simulates BWS responses without requiring real credentials
+
+set -euo pipefail
+
+# Check for BWS_ACCESS_TOKEN (required by real CLI)
+if [[ -z "${BWS_ACCESS_TOKEN:-}" ]]; then
+    echo "Error: BWS_ACCESS_TOKEN not set" >&2
+    exit 1
+fi
+
+# Mock responses
+case "${1:-}" in
+    --version)
+        echo "bws 1.0.0 (mock)"
+        ;;
+
+    secret)
+        case "${2:-}" in
+            list)
+                # Return mock secrets list
+                cat <<'JSON'
+[
+  {"id": "mock-1", "key": "luks-keyfile", "value": "mock-keyfile-content"},
+  {"id": "mock-2", "key": "sdp-api-key", "value": "mock-sdp-key"},
+  {"id": "mock-3", "key": "github-token", "value": "mock-github-token"}
+]
+JSON
+                ;;
+            get)
+                # Get specific secret by ID or name
+                local secret_id="${3:-}"
+                case "$secret_id" in
+                    "mock-1"|"luks-keyfile")
+                        echo '{"id": "mock-1", "key": "luks-keyfile", "value": "mock-keyfile-content-32bytes-long"}'
+                        ;;
+                    *)
+                        echo '{"id": "mock-unknown", "key": "unknown", "value": "mock-value"}'
+                        ;;
+                esac
+                ;;
+            create)
+                echo '{"id": "mock-new", "key": "'"${3:-new}"'", "value": "'"${4:-value}"'"}'
+                ;;
+            *)
+                echo "Unknown secret subcommand: ${2:-}" >&2
+                exit 1
+                ;;
+        esac
+        ;;
+
+    project)
+        case "${2:-}" in
+            list)
+                cat <<'JSON'
+[
+  {"id": "proj-mock-1", "name": "DevBox", "organizationId": "org-mock"}
+]
+JSON
+                ;;
+            *)
+                echo "Unknown project subcommand: ${2:-}" >&2
+                exit 1
+                ;;
+        esac
+        ;;
+
+    *)
+        echo "Mock bws: Unknown command: ${1:-}" >&2
+        echo "Usage: bws [secret|project] <subcommand>" >&2
+        exit 1
+        ;;
+esac
+
+exit 0

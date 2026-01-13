@@ -7,6 +7,8 @@ BWS_TOKEN_FILE="$HOME/.config/bws/access-token"
 
 # Initialize BWS_ACCESS_TOKEN from file
 _bws_init() {
+    local verbose="${1:-false}"
+
     # Already set?
     if [[ -n "${BWS_ACCESS_TOKEN:-}" ]]; then
         return 0
@@ -19,9 +21,19 @@ _bws_init() {
         return 0
     fi
 
-    echo "Error: BWS access token not found"
-    echo "Create $BWS_TOKEN_FILE with your machine account access token"
-    echo "Or set BWS_ACCESS_TOKEN environment variable"
+    # Also check LUKS-encrypted location
+    local luks_token_file="/data/.secrets/bws-token"
+    if [[ -f "$luks_token_file" ]]; then
+        BWS_ACCESS_TOKEN=$(cat "$luks_token_file")
+        export BWS_ACCESS_TOKEN
+        return 0
+    fi
+
+    # Only show error if verbose (called by a function that needs the token)
+    if [[ "$verbose" == "true" ]]; then
+        echo "Error: BWS access token not found" >&2
+        echo "Run 'imladris-init' to set up BWS access" >&2
+    fi
     return 1
 }
 
@@ -31,7 +43,7 @@ bws_get() {
     local secret_name="$1"
 
     if [[ -z "${BWS_ACCESS_TOKEN:-}" ]]; then
-        _bws_init || return 1
+        _bws_init true || return 1
     fi
 
     # List all secrets and find by key name, then get the value
@@ -52,7 +64,7 @@ bws_exists() {
     local secret_name="$1"
 
     if [[ -z "${BWS_ACCESS_TOKEN:-}" ]]; then
-        _bws_init || return 1
+        _bws_init true || return 1
     fi
 
     bws secret list 2>/dev/null | jq -e --arg name "$secret_name" '.[] | select(.key == $name)' &>/dev/null
@@ -61,7 +73,7 @@ bws_exists() {
 # List all available secrets (names only)
 bws_list() {
     if [[ -z "${BWS_ACCESS_TOKEN:-}" ]]; then
-        _bws_init || return 1
+        _bws_init true || return 1
     fi
 
     bws secret list 2>/dev/null | jq -r '.[].key' | sort

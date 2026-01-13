@@ -153,22 +153,29 @@ teardown() {
 # =============================================================================
 
 @test "check_bws fails without bws command" {
-    rm -f "$MOCK_DIR/bws"
+    # Ensure bws is not in PATH for this test
+    local old_path="$PATH"
+    export PATH="/bin:/usr/bin"
 
-    run bash -c 'command -v bws &>/dev/null || echo "bws not found"'
+    run bash -c 'command -v bws &>/dev/null && echo "found" || echo "bws not found"'
     assert_contains "$output" "bws not found"
+
+    export PATH="$old_path"
 }
 
 @test "check_bws fails without token" {
     unset BWS_ACCESS_TOKEN
 
-    # Simulate token check logic
-    run bash -c '
-        if [[ -z "${BWS_ACCESS_TOKEN:-}" ]] && [[ ! -f "$HOME/.config/bws/access-token" ]]; then
-            echo "BWS_ACCESS_TOKEN not set"
+    # Simulate token check logic with non-existent config file
+    local test_home=$(mktemp -d)
+    run bash -c "
+        export HOME='$test_home'
+        if [[ -z \"\${BWS_ACCESS_TOKEN:-}\" ]] && [[ ! -f \"\$HOME/.config/bws/access-token\" ]]; then
+            echo 'BWS_ACCESS_TOKEN not set'
             exit 1
         fi
-    '
+    "
+    rm -rf "$test_home"
     [[ $status -eq 1 ]]
     assert_contains "$output" "BWS_ACCESS_TOKEN not set"
 }
