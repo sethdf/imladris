@@ -584,6 +584,58 @@ install_curu_skills() {
 }
 
 # =============================================================================
+# Anthropic Official Skills Installation
+# https://github.com/anthropics/skills
+# =============================================================================
+
+install_anthropic_skills() {
+    # Look for anthropics/skills repo in standard ghq locations
+    local SKILLS_SRC=""
+    for repo_root in "$HOME/repos" "$HOME/work/repos" "$HOME/home/repos"; do
+        if [[ -d "$repo_root/github.com/anthropics/skills" ]]; then
+            SKILLS_SRC="$repo_root/github.com/anthropics/skills"
+            break
+        fi
+    done
+
+    if [[ -z "$SKILLS_SRC" ]]; then
+        log "Anthropic skills repo not found - clone it first:"
+        log "  ghq get anthropics/skills"
+        return 0
+    fi
+
+    log "Installing Anthropic official skills from $SKILLS_SRC..."
+
+    local SKILLS_DST="$HOME/.claude/skills"
+    mkdir -p "$SKILLS_DST"
+
+    local skill_count=0
+
+    # Install skills from skills/ directory
+    if [[ -d "$SKILLS_SRC/skills" ]]; then
+        for skill_dir in "$SKILLS_SRC/skills"/*/*/; do
+            [[ -d "$skill_dir" ]] || continue
+            local name
+            name=$(basename "$skill_dir")
+            [[ "$name" == .* ]] && continue
+
+            # Check for SKILL.md
+            if [[ -f "$skill_dir/SKILL.md" ]]; then
+                # Prefix with "anthropic-" to avoid conflicts
+                cp -r "$skill_dir" "$SKILLS_DST/anthropic-${name}"
+                ((skill_count++))
+            fi
+        done
+    fi
+
+    if [[ $skill_count -gt 0 ]]; then
+        log_success "Anthropic skills installed: $skill_count skills"
+    else
+        log "No Anthropic skills found to install"
+    fi
+}
+
+# =============================================================================
 # Configure SDP API from BWS
 # =============================================================================
 
@@ -940,6 +992,9 @@ setup_pai
 
 # Install Curu skills (to ~/.claude, persisted on /data)
 install_curu_skills
+
+# Install Anthropic official skills
+install_anthropic_skills
 
 # Curu development tools (sync, watch, commit)
 setup_curu_tools

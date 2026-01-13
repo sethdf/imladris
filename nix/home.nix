@@ -142,6 +142,11 @@
         if [ ! -d "$GHQ_ROOT/github.com/danielmiessler/Personal_AI_Infrastructure" ]; then
           ${pkgs.ghq}/bin/ghq get danielmiessler/Personal_AI_Infrastructure || true
         fi
+
+        # Anthropic official skills
+        if [ ! -d "$GHQ_ROOT/github.com/anthropics/skills" ]; then
+          ${pkgs.ghq}/bin/ghq get anthropics/skills || true
+        fi
       '';
 
       # Create standard directories
