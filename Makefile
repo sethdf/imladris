@@ -1,4 +1,4 @@
-.PHONY: init plan apply destroy unlock lock commit-state backup-keys backup-gitcrypt-to-bws cost ssh-config lint test validate
+.PHONY: init plan apply destroy unlock lock commit-state backup-keys backup-gitcrypt-to-bws cost ssh-config lint test test-shell test-all validate check
 
 # Decrypt secrets before running terraform
 SECRETS_FILE := secrets.yaml
@@ -23,7 +23,10 @@ help:
 	@echo "Testing:"
 	@echo "  make validate    - Validate terraform and lint scripts"
 	@echo "  make lint        - Run all linters (shellcheck, tfsec, pylint)"
-	@echo "  make test        - Run unit tests"
+	@echo "  make test        - Run Python unit tests"
+	@echo "  make test-shell  - Run shell tests (bats)"
+	@echo "  make test-all    - Run all tests (Python + shell)"
+	@echo "  make check       - Run all checks (lint + test)"
 	@echo ""
 	@echo "First-time setup:"
 	@echo "  make setup       - Initialize git-crypt, sops, and terraform"
@@ -251,9 +254,9 @@ lint: validate
 		echo "  ⚠ pylint not installed (pip install pylint)"; \
 	fi
 
-# Run unit tests
+# Run Python unit tests
 test:
-	@echo "=== Running Unit Tests ==="
+	@echo "=== Running Python Unit Tests ==="
 	@if [ -d tests ] && command -v pytest >/dev/null 2>&1; then \
 		cd tests && pip install -q -r requirements.txt 2>/dev/null; \
 		pytest unit/ -v --tb=short; \
@@ -261,6 +264,24 @@ test:
 		echo "pytest not installed. Run: pip install pytest"; \
 		exit 1; \
 	fi
+
+# Run shell tests (bats)
+test-shell:
+	@echo "=== Running Shell Tests ==="
+	@if command -v bats >/dev/null 2>&1; then \
+		bats tests/shell/*.bats; \
+	else \
+		echo "bats not installed."; \
+		echo "  Ubuntu: sudo apt-get install bats"; \
+		echo "  macOS:  brew install bats-core"; \
+		echo "  Nix:    nix-env -iA nixpkgs.bats"; \
+		exit 1; \
+	fi
+
+# Run all tests (Python + shell)
+test-all: test test-shell
+	@echo ""
+	@echo "✓ All tests passed"
 
 # Run all checks (lint + test)
 check: lint test

@@ -5,9 +5,37 @@ set -euo pipefail
 DATA_MAPPER="data"
 DATA_MOUNT="/data"
 
+# Timeouts (in seconds)
+BWS_TIMEOUT=30
+CURL_TIMEOUT=10
+CRYPTSETUP_TIMEOUT=60
+
 log() { echo "[$(date '+%H:%M:%S')] $*"; }
 log_success() { echo "[$(date '+%H:%M:%S')] ✓ $*"; }
 log_error() { echo "[$(date '+%H:%M:%S')] ✗ $*"; }
+
+# Retry wrapper with exponential backoff
+# Usage: retry <max_attempts> <command> [args...]
+retry() {
+    local max_attempts=$1
+    shift
+    local attempt=1
+    local wait_time=2
+
+    while [[ $attempt -le $max_attempts ]]; do
+        if "$@"; then
+            return 0
+        fi
+        if [[ $attempt -lt $max_attempts ]]; then
+            log "Attempt $attempt failed, retrying in ${wait_time}s..."
+            sleep $wait_time
+            wait_time=$((wait_time * 2))
+            [[ $wait_time -gt 30 ]] && wait_time=30
+        fi
+        ((attempt++))
+    done
+    return 1
+}
 
 # Detect data device (handles both NVMe and Xen naming)
 detect_data_device() {
@@ -56,7 +84,12 @@ check_bws() {
 
     if [[ -z "${BWS_ACCESS_TOKEN:-}" ]]; then
         local token_file="$HOME/.config/bws/access-token"
-        if [[ -f "$token_file" ]]; then
+        # Also check LUKS-encrypted location
+        local luks_token_file="$DATA_MOUNT/.secrets/bws-token"
+        if [[ -f "$luks_token_file" ]]; then
+            BWS_ACCESS_TOKEN=$(cat "$luks_token_file")
+            export BWS_ACCESS_TOKEN
+        elif [[ -f "$token_file" ]]; then
             BWS_ACCESS_TOKEN=$(cat "$token_file")
             export BWS_ACCESS_TOKEN
         else
@@ -66,8 +99,9 @@ check_bws() {
         fi
     fi
 
-    if ! bws secret list &>/dev/null; then
-        log_error "Failed to connect to Bitwarden Secrets Manager"
+    # Test connection with timeout and retry
+    if ! retry 3 timeout "$BWS_TIMEOUT" bws secret list &>/dev/null; then
+        log_error "Failed to connect to Bitwarden Secrets Manager (timeout: ${BWS_TIMEOUT}s)"
         return 1
     fi
 
@@ -75,12 +109,12 @@ check_bws() {
 }
 
 list_secrets() {
-    bws secret list 2>/dev/null | jq -r '.[].key' | sort
+    timeout "$BWS_TIMEOUT" bws secret list 2>/dev/null | jq -r '.[].key' | sort
 }
 
 secret_exists() {
     local name="$1"
-    bws secret list 2>/dev/null | jq -e --arg name "$name" '.[] | select(.key == $name)' &>/dev/null
+    timeout "$BWS_TIMEOUT" bws secret list 2>/dev/null | jq -e --arg name "$name" '.[] | select(.key == $name)' &>/dev/null
 }
 
 create_secret() {
@@ -89,14 +123,14 @@ create_secret() {
     local project_id
 
     # Get the first project ID (or create one if needed)
-    project_id=$(bws project list 2>/dev/null | jq -r '.[0].id // empty')
+    project_id=$(timeout "$BWS_TIMEOUT" bws project list 2>/dev/null | jq -r '.[0].id // empty')
 
     if [[ -z "$project_id" ]]; then
         log_error "No BWS project found. Create one in Bitwarden first."
         return 1
     fi
 
-    bws secret create "$name" "$value" "$project_id" &>/dev/null
+    timeout "$BWS_TIMEOUT" bws secret create "$name" "$value" "$project_id" &>/dev/null
 }
 
 manage_secrets() {
@@ -226,9 +260,12 @@ manage_secrets() {
 bws_get() {
     local secret_name="$1"
     local secret_id
-    secret_id=$(bws secret list 2>/dev/null | jq -r --arg name "$secret_name" '.[] | select(.key == $name) | .id')
+
+    # Get secret with timeout and retry
+    secret_id=$(retry 3 timeout "$BWS_TIMEOUT" bws secret list 2>/dev/null | jq -r --arg name "$secret_name" '.[] | select(.key == $name) | .id')
     [[ -z "$secret_id" ]] && return 1
-    bws secret get "$secret_id" 2>/dev/null | jq -r '.value'
+
+    timeout "$BWS_TIMEOUT" bws secret get "$secret_id" 2>/dev/null | jq -r '.value'
 }
 
 # =============================================================================
@@ -297,8 +334,14 @@ setup_luks() {
         [[ "$CONFIRM" == "yes" ]] || { log "Aborted"; return 1; }
 
         sudo wipefs -a "$DATA_DEV" 2>/dev/null || true
-        echo -n "$LUKS_KEY" | sudo cryptsetup luksFormat --type luks2 -q "$DATA_DEV" -
-        echo -n "$LUKS_KEY" | sudo cryptsetup open "$DATA_DEV" "$DATA_MAPPER" -
+        echo -n "$LUKS_KEY" | sudo timeout "$CRYPTSETUP_TIMEOUT" cryptsetup luksFormat --type luks2 -q "$DATA_DEV" - || {
+            log_error "LUKS format failed (timeout: ${CRYPTSETUP_TIMEOUT}s)"
+            return 1
+        }
+        echo -n "$LUKS_KEY" | sudo timeout "$CRYPTSETUP_TIMEOUT" cryptsetup open "$DATA_DEV" "$DATA_MAPPER" - || {
+            log_error "LUKS open failed after format"
+            return 1
+        }
         sudo mkfs.ext4 -L data "/dev/mapper/$DATA_MAPPER"
         sudo mkdir -p "$DATA_MOUNT"
         sudo mount "/dev/mapper/$DATA_MAPPER" "$DATA_MOUNT"
@@ -309,8 +352,8 @@ setup_luks() {
         # Existing LUKS volume - unlock it
         if [[ ! -e "/dev/mapper/$DATA_MAPPER" ]]; then
             log "Unlocking LUKS volume..."
-            echo -n "$LUKS_KEY" | sudo cryptsetup open "$DATA_DEV" "$DATA_MAPPER" - || {
-                log_error "Failed to unlock - wrong passphrase or BWS keyfile changed"
+            echo -n "$LUKS_KEY" | sudo timeout "$CRYPTSETUP_TIMEOUT" cryptsetup open "$DATA_DEV" "$DATA_MAPPER" - || {
+                log_error "Failed to unlock - wrong passphrase or BWS keyfile changed (timeout: ${CRYPTSETUP_TIMEOUT}s)"
                 return 1
             }
         fi
