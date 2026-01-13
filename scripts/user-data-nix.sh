@@ -475,7 +475,7 @@ setup_claude_code() {
         "@modelcontextprotocol/server-everything"
     )
 
-    for server in "${MCP_SERVERS[@]}"; do
+    for server in "$${MCP_SERVERS[@]}"; do
         log "  Installing $server..."
         sudo -u ubuntu "$BUN_PATH" install -g "$server" 2>/dev/null || true
     done
