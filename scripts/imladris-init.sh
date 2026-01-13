@@ -538,9 +538,20 @@ install_curu_skills() {
         fi
     done
 
+    # Clone if not found
     if [[ -z "$SKILLS_SRC" ]]; then
-        log "Curu skills repo not found - clone it first:"
-        log "  ghq get -p sethdf/curu-skills"
+        log "Cloning curu-skills..."
+        if command -v ghq &>/dev/null; then
+            ghq get sethdf/curu-skills 2>/dev/null || true
+            SKILLS_SRC="$HOME/repos/github.com/sethdf/curu-skills"
+        else
+            git clone https://github.com/sethdf/curu-skills.git "$HOME/repos/github.com/sethdf/curu-skills" 2>/dev/null || true
+            SKILLS_SRC="$HOME/repos/github.com/sethdf/curu-skills"
+        fi
+    fi
+
+    if [[ ! -d "$SKILLS_SRC" ]]; then
+        log "Could not clone curu-skills repo"
         return 0
     fi
 
@@ -620,9 +631,9 @@ install_anthropic_skills() {
 
     local skill_count=0
 
-    # Install skills from skills/ directory
+    # Install skills from skills/ directory (structure: skills/skill-name/SKILL.md)
     if [[ -d "$SKILLS_SRC/skills" ]]; then
-        for skill_dir in "$SKILLS_SRC/skills"/*/*/; do
+        for skill_dir in "$SKILLS_SRC/skills"/*/; do
             [[ -d "$skill_dir" ]] || continue
             local name
             name=$(basename "$skill_dir")
