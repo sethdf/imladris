@@ -93,19 +93,28 @@ check_bws() {
             BWS_ACCESS_TOKEN=$(cat "$token_file")
             export BWS_ACCESS_TOKEN
         else
-            log_error "BWS_ACCESS_TOKEN not set"
-            log_error "Set env var or create: $token_file"
-            return 1
+            # Prompt for token
+            echo -n "BWS Access Token: "
+            read -r BWS_ACCESS_TOKEN
+            if [[ -z "$BWS_ACCESS_TOKEN" ]]; then
+                return 1
+            fi
+            export BWS_ACCESS_TOKEN
+            # Save for future use
+            mkdir -p "$(dirname "$token_file")"
+            echo "$BWS_ACCESS_TOKEN" > "$token_file"
+            chmod 600 "$token_file"
         fi
     fi
 
     # Test connection with timeout and retry
     if ! retry 3 timeout "$BWS_TIMEOUT" bws secret list &>/dev/null; then
-        log_error "Failed to connect to Bitwarden Secrets Manager (timeout: ${BWS_TIMEOUT}s)"
+        log_error "Invalid token or connection failed"
+        rm -f "$HOME/.config/bws/access-token" 2>/dev/null
         return 1
     fi
 
-    log_success "Connected to Bitwarden Secrets Manager"
+    log_success "BWS connected"
 }
 
 list_secrets() {
