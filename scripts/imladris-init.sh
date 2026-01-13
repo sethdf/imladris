@@ -483,12 +483,16 @@ setup_pai() {
     fi
 
     # Check if PAI repo is available for bootstrapping
-    local PAI_REPO="$HOME/work/repos/github.com/danielmiessler/Personal_AI_Infrastructure"
-    if [[ ! -d "$PAI_REPO" ]]; then
-        PAI_REPO="$HOME/home/repos/github.com/danielmiessler/Personal_AI_Infrastructure"
-    fi
+    # Check multiple possible ghq locations
+    local PAI_REPO=""
+    for repo_root in "$HOME/repos" "$HOME/work/repos" "$HOME/home/repos"; do
+        if [[ -d "$repo_root/github.com/danielmiessler/Personal_AI_Infrastructure" ]]; then
+            PAI_REPO="$repo_root/github.com/danielmiessler/Personal_AI_Infrastructure"
+            break
+        fi
+    done
 
-    if [[ ! -d "$PAI_REPO" ]]; then
+    if [[ -z "$PAI_REPO" ]]; then
         log "PAI repo not found - install PAI manually or clone:"
         log "  ghq get danielmiessler/Personal_AI_Infrastructure"
         log "  Then run PAI installer from Bundles/Official"
