@@ -156,6 +156,14 @@
           # Don't enable here - user should enable after linking signal-cli
         fi
       '';
+
+      # Install Claude Code via bun (not in nixpkgs)
+      installClaudeCode = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+        export PATH="${pkgs.bun}/bin:$PATH"
+        if ! command -v claude &>/dev/null; then
+          ${pkgs.bun}/bin/bun install -g @anthropic-ai/claude-code 2>/dev/null || true
+        fi
+      '';
     };
   };
 
