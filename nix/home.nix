@@ -157,13 +157,8 @@
         fi
       '';
 
-      # Install Claude Code via bun (not in nixpkgs)
-      installClaudeCode = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
-        export PATH="${pkgs.bun}/bin:$PATH"
-        if ! command -v claude &>/dev/null; then
-          ${pkgs.bun}/bin/bun install -g @anthropic-ai/claude-code 2>/dev/null || true
-        fi
-      '';
+      # Note: Claude Code and MCP servers are installed by user-data bootstrap
+      # They're not in nixpkgs, so user-data installs them via bun globally
     };
   };
 

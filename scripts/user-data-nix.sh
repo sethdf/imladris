@@ -436,6 +436,54 @@ setup_bws() {
 }
 
 # =============================================================================
+# Claude Code & MCP Servers
+# =============================================================================
+
+setup_claude_code() {
+    # Install Claude Code and official MCP servers via bun (as ubuntu user)
+    # These aren't in nixpkgs, so we install via bun globally
+
+    local BUN_PATH="/home/ubuntu/.nix-profile/bin/bun"
+    if [ ! -x "$BUN_PATH" ]; then
+        log_error "bun not found at $BUN_PATH - skipping Claude Code install"
+        return 1
+    fi
+
+    log "Installing Claude Code..."
+    sudo -u ubuntu "$BUN_PATH" install -g @anthropic-ai/claude-code || {
+        log_error "Failed to install Claude Code"
+        return 1
+    }
+
+    log "Installing official MCP servers..."
+    # Official Anthropic MCP servers from @modelcontextprotocol
+    local MCP_SERVERS=(
+        "@modelcontextprotocol/server-memory"
+        "@modelcontextprotocol/server-filesystem"
+        "@modelcontextprotocol/server-github"
+        "@modelcontextprotocol/server-gitlab"
+        "@modelcontextprotocol/server-slack"
+        "@modelcontextprotocol/server-postgres"
+        "@modelcontextprotocol/server-sqlite"
+        "@modelcontextprotocol/server-puppeteer"
+        "@modelcontextprotocol/server-brave-search"
+        "@modelcontextprotocol/server-fetch"
+        "@modelcontextprotocol/server-sequential-thinking"
+        "@modelcontextprotocol/server-time"
+        "@modelcontextprotocol/server-google-maps"
+        "@modelcontextprotocol/server-everart"
+        "@modelcontextprotocol/server-everything"
+    )
+
+    for server in "${MCP_SERVERS[@]}"; do
+        log "  Installing $server..."
+        sudo -u ubuntu "$BUN_PATH" install -g "$server" 2>/dev/null || true
+    done
+
+    log_success "Claude Code and MCP servers installed"
+}
+
+# =============================================================================
 # DevBox Scripts (outside of Nix - for LUKS/BWS operations)
 # =============================================================================
 
@@ -531,6 +579,7 @@ main() {
     run_step "spot_handler"  "Spot interruption"      setup_spot_handler
     run_step "nix"           "Nix installation"       setup_nix
     run_step "home_manager"  "home-manager setup"     setup_home_manager
+    run_step "claude_code"   "Claude Code & MCP"      setup_claude_code
     run_step "imladris_scripts" "DevBox scripts"        setup_imladris_scripts
     run_step "bws"           "BWS CLI"                setup_bws
     run_step "shell"         "Default shell"          setup_shell
