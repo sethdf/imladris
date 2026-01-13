@@ -60,7 +60,7 @@ setup_system() {
     # Minimal system packages (just what's needed for Nix bootstrap)
     apt-get update
     DEBIAN_FRONTEND=noninteractive apt-get install -y \
-        curl git cryptsetup ca-certificates gnupg
+        curl git cryptsetup ca-certificates gnupg unzip jq
 
     # Auto-updates for security
     apt-get install -y unattended-upgrades apt-listchanges
@@ -129,9 +129,14 @@ setup_data_volume() {
         return 0
     fi
 
-    # Install AWS CLI if not present (needed for volume attachment)
+    # Install AWS CLI v2 if not present (needed for volume attachment)
     if ! command -v aws &>/dev/null; then
-        apt-get install -y awscli
+        log "Installing AWS CLI v2..."
+        local AWS_CLI_URL="https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip"
+        curl -fsSL "$AWS_CLI_URL" -o /tmp/awscliv2.zip
+        unzip -q /tmp/awscliv2.zip -d /tmp
+        /tmp/aws/install --update
+        rm -rf /tmp/awscliv2.zip /tmp/aws
     fi
 
     # Retry loop for volume attachment (handles race conditions)
@@ -293,40 +298,17 @@ setup_nix() {
     # Set HOME for nix installer (required when running as root)
     export HOME=/root
 
-    # Download and verify Nix installer
-    # Using the determinate systems installer for better reliability
-    local NIX_INSTALLER="/tmp/nix-installer.sh"
-    local NIX_URL="https://nixos.org/nix/install"
-
-    log "Downloading Nix installer..."
-    curl -fsSL "$NIX_URL" -o "$NIX_INSTALLER" || {
-        log_error "Failed to download Nix installer"
+    # Use the Determinate Systems installer - more reliable and designed for CI/automation
+    # https://github.com/DeterminateSystems/nix-installer
+    log "Installing Nix via Determinate Systems installer..."
+    curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | \
+        sh -s -- install --no-confirm || {
+        log_error "Nix installation failed"
         return 1
     }
 
-    # Verify the installer looks legitimate (basic sanity check)
-    if ! grep -q "nix-build" "$NIX_INSTALLER" || ! grep -q "NIX_" "$NIX_INSTALLER"; then
-        log_error "Nix installer verification failed - file may be corrupted"
-        rm -f "$NIX_INSTALLER"
-        return 1
-    fi
-
-    # Install Nix in multi-user mode
-    chmod +x "$NIX_INSTALLER"
-    "$NIX_INSTALLER" --daemon --yes
-    rm -f "$NIX_INSTALLER"
-
-    # Enable flakes
-    mkdir -p /etc/nix
-    cat > /etc/nix/nix.conf <<'NIXCONF'
-experimental-features = nix-command flakes
-NIXCONF
-
-    # Restart nix-daemon to pick up config and wait for it to be ready
-    systemctl restart nix-daemon
-    sleep 2
-
-    # Wait for nix-daemon socket to be ready (max 30 seconds)
+    # Determinate Systems installer enables flakes by default
+    # Wait for nix-daemon to be ready (max 30 seconds)
     local wait_count=0
     while ! systemctl is-active --quiet nix-daemon && [ $wait_count -lt 30 ]; do
         sleep 1
@@ -338,11 +320,50 @@ NIXCONF
         return 1
     fi
     log "nix-daemon is ready"
+
+    # Ensure nix is available in ALL zsh invocations (including non-interactive SSH commands)
+    # /etc/zshenv is sourced by all zsh shells before any other file
+    if [ -f /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh ]; then
+        if ! grep -q "nix-daemon.sh" /etc/zshenv 2>/dev/null; then
+            cat >> /etc/zshenv <<'ZSHENV'
+# Nix - must be in zshenv for non-interactive SSH commands
+if [ -e '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh' ]; then
+    . '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh'
+fi
+ZSHENV
+            log "Added nix profile to /etc/zshenv"
+        fi
+        # Also add to /etc/zprofile for login shells
+        if ! grep -q "nix-daemon.sh" /etc/zprofile 2>/dev/null; then
+            cat >> /etc/zprofile <<'ZPROFILE'
+# Nix
+if [ -e '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh' ]; then
+    . '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh'
+fi
+ZPROFILE
+            log "Added nix profile to /etc/zprofile"
+        fi
+    fi
 }
 
 setup_home_manager() {
-    # Source nix profile
-    . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+    # Source nix profile (handle different installer locations)
+    local NIX_PROFILE=""
+    for profile in /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh \
+                   /etc/profile.d/nix.sh \
+                   /etc/bash.bashrc.backup-before-nix; do
+        if [ -f "$profile" ]; then
+            NIX_PROFILE="$profile"
+            break
+        fi
+    done
+
+    if [ -z "$NIX_PROFILE" ]; then
+        # Fallback: just add nix to PATH directly
+        export PATH="/nix/var/nix/profiles/default/bin:$PATH"
+    else
+        . "$NIX_PROFILE"
+    fi
 
     # Clone the host repo
     local REPO_DIR="/home/ubuntu/repos/github.com/dacapo-labs/host"
@@ -365,7 +386,7 @@ setup_home_manager() {
     log "Running home-manager switch for $HM_CONFIG..."
     cd "$REPO_DIR/nix" || return 1
     sudo -u ubuntu bash -c "
-        . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+        export PATH=\"/nix/var/nix/profiles/default/bin:\$PATH\"
         cd $REPO_DIR/nix
         nix run home-manager -- switch --flake .#$HM_CONFIG 2>&1
     " || {
