@@ -129,10 +129,16 @@
         mkdir -p "$GHQ_ROOT"
 
         # Clone repos if not present
-        if [ ! -d "$GHQ_ROOT/github.com/dacapo-labs/host" ]; then
-          ${pkgs.ghq}/bin/ghq get -p dacapo-labs/host || true
+        if [ ! -d "$GHQ_ROOT/github.com/sethdf/imladris" ]; then
+          ${pkgs.ghq}/bin/ghq get -p sethdf/imladris || true
         fi
 
+        # Curu skills - "Skill" in Elvish (from Curunír, "Man of Skill")
+        if [ ! -d "$GHQ_ROOT/github.com/sethdf/curu-skills" ]; then
+          ${pkgs.ghq}/bin/ghq get -p sethdf/curu-skills || true
+        fi
+
+        # PAI framework (Daniel Miessler's Personal AI Infrastructure)
         if [ ! -d "$GHQ_ROOT/github.com/danielmiessler/Personal_AI_Infrastructure" ]; then
           ${pkgs.ghq}/bin/ghq get danielmiessler/Personal_AI_Infrastructure || true
         fi
@@ -150,7 +156,7 @@
       # Install Signal interface systemd service
       installSignalService = lib.hm.dag.entryAfter [ "writeBoundary" "cloneRepos" ] ''
         mkdir -p "${homeDirectory}/.config/systemd/user"
-        SCRIPT_DIR="${homeDirectory}/repos/github.com/dacapo-labs/host/scripts"
+        SCRIPT_DIR="${homeDirectory}/repos/github.com/sethdf/imladris/scripts"
         if [ -f "$SCRIPT_DIR/signal-interface.service" ]; then
           cp "$SCRIPT_DIR/signal-interface.service" "${homeDirectory}/.config/systemd/user/"
           # Don't enable here - user should enable after linking signal-cli
@@ -193,10 +199,10 @@
       eval "$(direnv hook zsh)"
 
       # Auth-keeper: lazy token refresh
-      [[ -f "$HOME/repos/github.com/dacapo-labs/host/scripts/auth-keeper.sh" ]] && \
-        source "$HOME/repos/github.com/dacapo-labs/host/scripts/auth-keeper.sh"
-      [[ -f "$HOME/repos/github.com/dacapo-labs/host/scripts/bws-init.sh" ]] && \
-        source "$HOME/repos/github.com/dacapo-labs/host/scripts/bws-init.sh"
+      [[ -f "$HOME/repos/github.com/sethdf/imladris/scripts/auth-keeper.sh" ]] && \
+        source "$HOME/repos/github.com/sethdf/imladris/scripts/auth-keeper.sh"
+      [[ -f "$HOME/repos/github.com/sethdf/imladris/scripts/bws-init.sh" ]] && \
+        source "$HOME/repos/github.com/sethdf/imladris/scripts/bws-init.sh"
 
       # Imladris shell helpers (created by imladris-init)
       [[ -f "$HOME/.config/imladris/shell-helpers.sh" ]] && \
@@ -226,7 +232,7 @@
 
     profileExtra = ''
       # Ensure PATH includes user bins and host scripts
-      export PATH="$HOME/bin:$HOME/.local/bin:$HOME/repos/github.com/dacapo-labs/host/scripts:$PATH"
+      export PATH="$HOME/bin:$HOME/.local/bin:$HOME/repos/github.com/sethdf/imladris/scripts:$PATH"
     '';
   };
 

@@ -1,11 +1,11 @@
 [Unit]
-Description=Signal Command Interface for PAI
+Description=Signal Command Interface for Curu
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=%h/repos/github.com/dacapo-labs/host/scripts/signal-interface.sh listen
+ExecStart=%h/repos/github.com/sethdf/imladris/scripts/signal-interface.sh listen
 Restart=always
 RestartSec=10
 

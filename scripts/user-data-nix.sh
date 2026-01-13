@@ -230,7 +230,7 @@ setup_data_volume() {
 }
 
 setup_spot_handler() {
-    local SCRIPTS_BASE="https://raw.githubusercontent.com/dacapo-labs/host/master/scripts"
+    local SCRIPTS_BASE="https://raw.githubusercontent.com/sethdf/imladris/master/scripts"
     local HANDLER_PATH="/usr/local/bin/spot-interruption-handler"
     local TMP_HANDLER="/tmp/spot-handler.sh"
 
@@ -366,10 +366,10 @@ setup_home_manager() {
     fi
 
     # Clone the host repo
-    local REPO_DIR="/home/ubuntu/repos/github.com/dacapo-labs/host"
+    local REPO_DIR="/home/ubuntu/repos/github.com/sethdf/imladris"
     if [ ! -d "$REPO_DIR" ]; then
         sudo -u ubuntu mkdir -p "$(dirname "$REPO_DIR")"
-        sudo -u ubuntu git clone https://github.com/dacapo-labs/host.git "$REPO_DIR"
+        sudo -u ubuntu git clone https://github.com/sethdf/imladris.git "$REPO_DIR"
     fi
 
     # Ensure ubuntu owns cache directories (nix install may have created them as root)
@@ -488,8 +488,8 @@ setup_claude_code() {
 # =============================================================================
 
 setup_imladris_scripts() {
-    # Scripts are in dacapo-labs/host repo (not user's personal repo)
-    local SCRIPTS_BASE="https://raw.githubusercontent.com/dacapo-labs/host/master/scripts"
+    # Scripts are in sethdf/imladris repo (not user's personal repo)
+    local SCRIPTS_BASE="https://raw.githubusercontent.com/sethdf/imladris/master/scripts"
 
     mkdir -p /home/ubuntu/bin
     cd /home/ubuntu/bin || return 1
@@ -549,7 +549,7 @@ setup_motd() {
      I M L A D R I S   -   Sanctuary of Lore
 
  Managed by: Nix + home-manager
- Config:     ~/repos/github.com/dacapo-labs/host/nix/
+ Config:     ~/repos/github.com/sethdf/imladris/nix/
 
  Commands:
    home-manager switch    Apply config changes

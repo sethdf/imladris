@@ -444,9 +444,13 @@ EOF
         log "  Created home/.envrc"
     fi
 
-    # Create symlinks from user home to directories
+    # Create symlinks from user home to data volume
     ln -sfn "$DATA_MOUNT/work" "$HOME/work"
     ln -sfn "$DATA_MOUNT/home" "$HOME/home"
+
+    # Claude Code config - symlink to data volume for persistence
+    mkdir -p "$DATA_MOUNT/.claude"
+    ln -sfn "$DATA_MOUNT/.claude" "$HOME/.claude"
 
     # Allow direnv for both directories
     mkdir -p "$HOME/.config/direnv"
@@ -462,9 +466,9 @@ EOF
     direnv allow "$DATA_MOUNT/home" 2>/dev/null || true
 
     log_success "Work/home directories created"
-    log "  ~/work  → $DATA_MOUNT/work  (work repos, tickets)"
-    log "  ~/home  → $DATA_MOUNT/home  (personal repos, projects)"
-    log "  PAI uses default ~/.claude (unified history)"
+    log "  ~/work   → $DATA_MOUNT/work   (work repos, tickets)"
+    log "  ~/home   → $DATA_MOUNT/home   (personal repos, projects)"
+    log "  ~/.claude → $DATA_MOUNT/.claude (skills, hooks, settings)"
 }
 
 # =============================================================================
@@ -474,15 +478,15 @@ EOF
 setup_pai() {
     log "Checking PAI setup..."
 
-    # PAI uses default location ~/.claude
+    # PAI uses default location ~/.claude (symlinked to /data/.claude)
     local PAI_DIR="$HOME/.claude"
 
-    if [[ -d "$PAI_DIR/hooks" ]] || [[ -d "$PAI_DIR/skills" ]]; then
+    if [[ -d "$PAI_DIR/hooks" ]] && [[ -d "$PAI_DIR/skills" ]]; then
         log_success "PAI already configured at $PAI_DIR"
         return 0
     fi
 
-    # Check if PAI repo is available for bootstrapping
+    # Check if PAI repo is available
     # Check multiple possible ghq locations
     local PAI_REPO=""
     for repo_root in "$HOME/repos" "$HOME/work/repos" "$HOME/home/repos"; do
@@ -493,76 +497,90 @@ setup_pai() {
     done
 
     if [[ -z "$PAI_REPO" ]]; then
-        log "PAI repo not found - install PAI manually or clone:"
+        log "PAI repo not found - clone it first:"
         log "  ghq get danielmiessler/Personal_AI_Infrastructure"
-        log "  Then run PAI installer from Bundles/Official"
         return 0
     fi
 
     log "PAI repo found at: $PAI_REPO"
-    log "Run PAI installer: cd $PAI_REPO/Bundles/Official && bun run install.ts"
+
+    # PAI requires AI-assisted installation (two-phase process)
+    # Phase 1: Interactive bootstrap asks for preferences
+    # Phase 2: AI reads pack files and installs skills/hooks
+    log ""
+    log "To install PAI, run 'claude' and say:"
+    log "  Install PAI from $PAI_REPO/Bundles/Official"
+    log ""
+    log "Claude will handle both bootstrap and pack installation."
 }
 
 # =============================================================================
-# Custom Skills Installation (to default ~/.claude)
+# Curu Skills Installation
+# Curu: "Skill" in Elvish (from Curunír, "Man of Skill")
 # =============================================================================
 
-install_custom_skills() {
-    local SKILLS_SRC="$HOME/work/repos/github.com/dacapo-labs/host/skills"
+install_curu_skills() {
+    # Look for curu-skills repo in standard ghq locations
+    local SKILLS_SRC=""
+    for repo_root in "$HOME/repos" "$HOME/work/repos" "$HOME/home/repos"; do
+        if [[ -d "$repo_root/github.com/sethdf/curu-skills" ]]; then
+            SKILLS_SRC="$repo_root/github.com/sethdf/curu-skills"
+            break
+        fi
+    done
 
-    # Fall back to home context or old location
-    if [[ ! -d "$SKILLS_SRC" ]]; then
-        SKILLS_SRC="$HOME/home/repos/github.com/dacapo-labs/host/skills"
-    fi
-    if [[ ! -d "$SKILLS_SRC" ]]; then
-        SKILLS_SRC="$HOME/skills"
-    fi
-
-    if [[ ! -d "$SKILLS_SRC" ]]; then
-        log "No custom skills found - skipping"
+    if [[ -z "$SKILLS_SRC" ]]; then
+        log "Curu skills repo not found - clone it first:"
+        log "  ghq get -p sethdf/curu-skills"
         return 0
     fi
 
-    log "Installing custom skills..."
+    log "Awakening Curu's skills from $SKILLS_SRC..."
 
-    # Install to default ~/.claude location
+    # Install to ~/.claude (symlinked to /data/.claude for persistence)
     local SKILLS_DST="$HOME/.claude/skills"
-    mkdir -p "$SKILLS_DST"
+    local HOOKS_DST="$HOME/.claude/hooks"
+    mkdir -p "$SKILLS_DST" "$HOOKS_DST" "$HOME/bin"
 
-    # Install skill markdown files
+    # Install skills (PAI format: SkillName/SKILL.md)
+    local skill_count=0
     for skill_dir in "$SKILLS_SRC"/*/; do
         [[ -d "$skill_dir" ]] || continue
         local name
         name=$(basename "$skill_dir")
         [[ "$name" == .* ]] && continue
 
-        if [[ -f "$skill_dir/README.md" ]]; then
-            cp "$skill_dir/README.md" "$SKILLS_DST/${name}.md"
-            log "  Installed skill: $name"
+        # Copy entire skill directory (preserves PAI structure)
+        if [[ -f "$skill_dir/SKILL.md" ]]; then
+            cp -r "$skill_dir" "$SKILLS_DST/"
+            ((skill_count++))
         fi
     done
 
     # Install helper scripts to ~/bin
-    mkdir -p "$HOME/bin"
+    local script_count=0
     for script in "$SKILLS_SRC"/*/src/*.sh; do
         [[ -f "$script" ]] || continue
         local script_name
         script_name=$(basename "$script")
         cp "$script" "$HOME/bin/${script_name%.sh}"
         chmod +x "$HOME/bin/${script_name%.sh}"
-        log "  Installed script: ${script_name%.sh}"
+        ((script_count++))
     done
 
-    # Install hooks to default location
-    local HOOKS_DST="$HOME/.claude/hooks"
-    mkdir -p "$HOOKS_DST"
+    # Install hooks
+    local hook_count=0
     for hook in "$SKILLS_SRC"/*/src/*-hook.ts; do
         [[ -f "$hook" ]] || continue
         cp "$hook" "$HOOKS_DST/"
-        log "  Installed hook: $(basename "$hook")"
+        ((hook_count++))
     done
 
-    log_success "Custom skills installed to ~/.claude"
+    if [[ $skill_count -gt 0 ]] || [[ $script_count -gt 0 ]] || [[ $hook_count -gt 0 ]]; then
+        log_success "Curu awakened: $skill_count skills, $script_count scripts, $hook_count hooks"
+    else
+        log "No skills found in curu-skills repo"
+    fi
 }
 
 # =============================================================================
@@ -684,6 +702,176 @@ EOF
 }
 
 # =============================================================================
+# Curu Development Tools
+# Auto-sync skills to git repo for version control
+# =============================================================================
+
+setup_curu_tools() {
+    log "Setting up Curu development tools..."
+
+    local CURU_REPO="$HOME/repos/github.com/sethdf/curu-skills"
+
+    # Create curu-sync script
+    cat > "$HOME/bin/curu-sync" << 'CURUSYNC'
+#!/bin/bash
+# curu-sync: Sync skills and hooks from ~/.claude back to curu-skills repo
+set -euo pipefail
+
+CURU_REPO="$HOME/repos/github.com/sethdf/curu-skills"
+CLAUDE_SKILLS="$HOME/.claude/skills"
+CLAUDE_HOOKS="$HOME/.claude/hooks"
+
+if [[ ! -d "$CURU_REPO" ]]; then
+    echo "Error: curu-skills repo not found at $CURU_REPO"
+    echo "Run: ghq get -p sethdf/curu-skills"
+    exit 1
+fi
+
+echo "Syncing skills to curu-skills repo..."
+
+# Sync skill directories (only those that exist in repo or are new)
+for skill_dir in "$CLAUDE_SKILLS"/*/; do
+    [[ -d "$skill_dir" ]] || continue
+    skill_name=$(basename "$skill_dir")
+
+    # Skip symlinks (they're already linked to repo or other sources)
+    [[ -L "$skill_dir" ]] && continue
+
+    # Skip PAI core skills (CORE, CreateSkill, etc.)
+    [[ "$skill_name" == "CORE" ]] && continue
+    [[ "$skill_name" == "CreateSkill" ]] && continue
+    [[ "$skill_name" == *.bak ]] && continue
+
+    # Skip work-specific skills
+    [[ "$skill_name" == "sdp-list" ]] && continue
+    [[ "$skill_name" == "servicedesk-plus" ]] && continue
+
+    # Check if it has SKILL.md (proper PAI skill)
+    if [[ -f "$skill_dir/SKILL.md" ]]; then
+        echo "  Syncing: $skill_name"
+        cp -r "$skill_dir" "$CURU_REPO/"
+    fi
+done
+
+# Sync hooks back (match to skill src directories if possible)
+if [[ -d "$CLAUDE_HOOKS" ]]; then
+    for hook in "$CLAUDE_HOOKS"/*-hook.ts; do
+        [[ -f "$hook" ]] || continue
+        hook_name=$(basename "$hook")
+        echo "  Hook: $hook_name (kept in ~/.claude/hooks)"
+    done
+fi
+
+cd "$CURU_REPO"
+echo ""
+echo "Repository status:"
+git status --short
+
+echo ""
+echo "To commit: cd $CURU_REPO && git add -A && git commit -m 'Update skills' && git push"
+CURUSYNC
+    chmod +x "$HOME/bin/curu-sync"
+
+    # Create curu-watch script (auto-commit daemon)
+    cat > "$HOME/bin/curu-watch" << 'CURUWATCH'
+#!/bin/bash
+# curu-watch: Watch for skill changes and auto-commit to git
+set -euo pipefail
+
+CURU_REPO="$HOME/repos/github.com/sethdf/curu-skills"
+CLAUDE_SKILLS="$HOME/.claude/skills"
+CLAUDE_HOOKS="$HOME/.claude/hooks"
+DEBOUNCE_SECONDS=5
+
+if ! command -v inotifywait &>/dev/null; then
+    echo "Error: inotifywait not found. Install inotify-tools."
+    exit 1
+fi
+
+if [[ ! -d "$CURU_REPO" ]]; then
+    echo "Error: curu-skills repo not found at $CURU_REPO"
+    exit 1
+fi
+
+echo "Curu Watch: Monitoring for skill changes..."
+echo "  Skills: $CLAUDE_SKILLS"
+echo "  Hooks:  $CLAUDE_HOOKS"
+echo "  Repo:   $CURU_REPO"
+echo ""
+echo "Press Ctrl+C to stop."
+echo ""
+
+last_sync=0
+
+inotifywait -m -r "$CLAUDE_SKILLS" "$CLAUDE_HOOKS" \
+    -e modify -e create -e delete -e moved_to \
+    --exclude '\.git|\.swp|~$' \
+    2>/dev/null | while read -r directory event filename; do
+
+    # Debounce: skip if synced recently
+    now=$(date +%s)
+    if (( now - last_sync < DEBOUNCE_SECONDS )); then
+        continue
+    fi
+    last_sync=$now
+
+    echo "[$(date '+%H:%M:%S')] $event: $filename"
+
+    # Run sync
+    curu-sync >/dev/null 2>&1 || true
+
+    # Auto-commit if there are changes
+    cd "$CURU_REPO"
+    if [[ -n $(git status --porcelain) ]]; then
+        git add -A
+        git commit -m "Auto: $event $filename" --quiet
+        git push --quiet 2>/dev/null && echo "  Pushed to GitHub" || echo "  Committed locally (push manually)"
+    fi
+done
+CURUWATCH
+    chmod +x "$HOME/bin/curu-watch"
+
+    # Create curu-commit script (manual commit helper)
+    cat > "$HOME/bin/curu-commit" << 'CURUCOMMIT'
+#!/bin/bash
+# curu-commit: Sync and commit skills with a message
+set -euo pipefail
+
+CURU_REPO="$HOME/repos/github.com/sethdf/curu-skills"
+
+# Sync first
+curu-sync
+
+cd "$CURU_REPO"
+
+if [[ -z $(git status --porcelain) ]]; then
+    echo "No changes to commit."
+    exit 0
+fi
+
+# Get commit message
+if [[ $# -gt 0 ]]; then
+    msg="$*"
+else
+    echo "Enter commit message (or Ctrl+C to cancel):"
+    read -r msg
+fi
+
+git add -A
+git commit -m "$msg"
+git push
+
+echo "Changes committed and pushed."
+CURUCOMMIT
+    chmod +x "$HOME/bin/curu-commit"
+
+    log_success "Curu tools installed"
+    log "  curu-sync   - Sync skills from ~/.claude to repo"
+    log "  curu-watch  - Auto-commit daemon (run in background)"
+    log "  curu-commit - Sync and commit with message"
+}
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -750,8 +938,11 @@ setup_directories
 # Check PAI setup (uses default ~/.claude)
 setup_pai
 
-# Install custom skills (to ~/.claude)
-install_custom_skills
+# Install Curu skills (to ~/.claude, persisted on /data)
+install_curu_skills
+
+# Curu development tools (sync, watch, commit)
+setup_curu_tools
 
 # Configure SDP credentials (work context)
 setup_sdp_credentials
@@ -766,13 +957,17 @@ log ""
 log_success "Imladris initialization complete"
 log ""
 log "Directory structure:"
-log "  ~/work   → Work files (repos, tickets, notes)"
-log "  ~/home   → Personal files (repos, projects, notes)"
-log "  ~/.claude → PAI (unified history, skills, hooks)"
+log "  ~/work    → Work files (repos, tickets, notes)"
+log "  ~/home    → Personal files (repos, projects, notes)"
+log "  ~/.claude → Curu (skills, hooks, history) → /data/.claude"
 log ""
-log "GHQ_ROOT auto-switches via direnv when you cd into ~/work or ~/home."
+log "Curu tools (skill development):"
+log "  curu-sync   - Sync skills from ~/.claude to git repo"
+log "  curu-watch  - Auto-commit daemon (run in tmux)"
+log "  curu-commit - Manual sync + commit with message"
 log ""
 log "Next steps:"
 log "  1. cd ~/work && direnv allow"
 log "  2. cd ~/home && direnv allow"
 log "  3. Start Claude: claude"
+log "  4. (Optional) Start auto-sync: curu-watch &"

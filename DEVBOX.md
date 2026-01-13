@@ -180,7 +180,7 @@ $ ctx          # Show current
 
 ```bash
 # Edit config
-cd ~/repos/github.com/dacapo-labs/host/nix
+cd ~/repos/github.com/sethdf/imladris/nix
 vim home.nix
 
 # Apply changes (no reboot needed)
@@ -231,7 +231,7 @@ cd ~/home && direnv allow
 
 # 4. Clone essential repos
 cd ~/work
-ghq get dacapo-labs/host
+ghq get sethdf/imladris
 ghq get danielmiessler/Personal_AI_Infrastructure
 
 # 5. Start Claude
@@ -266,7 +266,7 @@ cd projects/my-app
 
 ```bash
 # Pull latest
-cd ~/work/repos/github.com/dacapo-labs/host
+cd ~/work/repos/github.com/sethdf/imladris
 git pull
 
 # Re-run init to install updated scripts
@@ -279,7 +279,7 @@ cp skills/servicedesk-plus/src/sdp-api.sh ~/bin/sdp-api
 ### Updating Nix Packages
 
 ```bash
-cd ~/work/repos/github.com/dacapo-labs/host/nix
+cd ~/work/repos/github.com/sethdf/imladris/nix
 # Edit home.nix to add/change packages
 home-manager switch --flake .#ubuntu
 ```

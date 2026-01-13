@@ -18,8 +18,8 @@ SIGNAL_DATA_DIR="${HOME}/.local/share/signal-cli"
 POLL_INTERVAL=5  # seconds between message checks
 
 # Load bws helpers if available
-if [[ -f "$HOME/repos/github.com/dacapo-labs/host/scripts/bws-init.sh" ]]; then
-    source "$HOME/repos/github.com/dacapo-labs/host/scripts/bws-init.sh" 2>/dev/null || true
+if [[ -f "$HOME/repos/github.com/sethdf/imladris/scripts/bws-init.sh" ]]; then
+    source "$HOME/repos/github.com/sethdf/imladris/scripts/bws-init.sh" 2>/dev/null || true
 fi
 
 # Get phone number
@@ -208,8 +208,8 @@ cmd_listen() {
     log "Commands will be processed and responses sent back"
 
     # Load auth-keeper for status commands
-    if [[ -f "$HOME/repos/github.com/dacapo-labs/host/scripts/auth-keeper.sh" ]]; then
-        source "$HOME/repos/github.com/dacapo-labs/host/scripts/auth-keeper.sh" 2>/dev/null || true
+    if [[ -f "$HOME/repos/github.com/sethdf/imladris/scripts/auth-keeper.sh" ]]; then
+        source "$HOME/repos/github.com/sethdf/imladris/scripts/auth-keeper.sh" 2>/dev/null || true
     fi
 
     while true; do
