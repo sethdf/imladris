@@ -378,11 +378,12 @@
     settings = {
       # AWS module - shows current profile
       aws = {
+        disabled = false;
         format = "[$symbol($profile )(\\($region\\) )]($style)";
         symbol = "☁️ ";
         style = "bold yellow";
-        # Highlight admin profiles in red
-        # Use different styles based on profile name pattern
+        # Force display even without credentials file
+        force_display = true;
       };
 
       # Custom module to highlight admin usage
