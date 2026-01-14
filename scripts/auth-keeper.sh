@@ -209,6 +209,74 @@ _ak_google_has_refresh() {
 }
 
 # ============================================================================
+# Claude Code OAuth
+# ============================================================================
+
+_ak_claude_auth_file="${CLAUDE_AUTH_FILE:-$HOME/.config/claude/auth.json}"
+
+_ak_claude_token_valid() {
+    [[ -f "$_ak_claude_auth_file" ]] || return 1
+
+    local now buffer expiry
+    now=$(date +%s)
+    buffer=$AUTH_KEEPER_REFRESH_BUFFER
+
+    # Check for expiry field (formats may vary: expiresAt, expires_at, expiry)
+    expiry=$(jq -r '.expiresAt // .expires_at // .expiry // 0' "$_ak_claude_auth_file" 2>/dev/null)
+
+    # Handle both epoch seconds and ISO 8601 formats
+    if [[ "$expiry" =~ ^[0-9]+$ ]]; then
+        # Epoch timestamp - check if milliseconds or seconds
+        if (( expiry > 9999999999 )); then
+            # Milliseconds
+            (( expiry / 1000 - buffer > now ))
+        else
+            # Seconds
+            (( expiry - buffer > now ))
+        fi
+    elif [[ -n "$expiry" ]] && [[ "$expiry" != "0" ]]; then
+        # ISO 8601 format
+        local exp_epoch
+        exp_epoch=$(date -d "$expiry" +%s 2>/dev/null)
+        [[ -n "$exp_epoch" ]] && (( exp_epoch - buffer > now ))
+    else
+        # No expiry found, assume valid (will be checked on next API call)
+        return 0
+    fi
+}
+
+_ak_claude_has_refresh() {
+    [[ -f "$_ak_claude_auth_file" ]] && jq -e '.refreshToken // .refresh_token' "$_ak_claude_auth_file" &>/dev/null
+}
+
+_ak_claude_refresh() {
+    if ! _ak_claude_has_refresh; then
+        _ak_notify "Claude Code" "No refresh token - interactive login required"
+        echo "[auth-keeper] Claude Code: No refresh token available" >&2
+        echo "[auth-keeper] You'll need to re-authenticate when you start Claude" >&2
+        return 1
+    fi
+
+    # Claude Code should automatically refresh tokens on startup if refresh token exists
+    # We don't manually refresh here - just validate that refresh token exists
+    echo "[auth-keeper] Claude Code: Refresh token present, will auto-refresh on startup" >&2
+    return 0
+}
+
+_ak_ensure_claude() {
+    if ! _ak_claude_token_valid; then
+        echo "[auth-keeper] Claude Code token expired or missing" >&2
+        _ak_claude_refresh
+    fi
+}
+
+# Optional: Wrapper for claude command (uncomment to enable)
+# claude() {
+#     _ak_ensure_claude || echo "[auth-keeper] Warning: Claude tokens may be expired" >&2
+#     command claude "$@"
+# }
+
+# ============================================================================
 # Tailscale
 # ============================================================================
 
@@ -254,6 +322,17 @@ auth-keeper() {
                 echo "google: expired"
             else
                 echo "google: not configured"
+            fi
+
+            # Claude Code
+            if _ak_claude_token_valid; then
+                echo "claude-code: valid"
+            elif _ak_claude_has_refresh; then
+                echo "claude-code: expired (has refresh token)"
+            elif [[ -f "$_ak_claude_auth_file" ]]; then
+                echo "claude-code: expired (no refresh token)"
+            else
+                echo "claude-code: using bedrock or not configured"
             fi
 
             # Tailscale

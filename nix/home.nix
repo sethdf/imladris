@@ -76,6 +76,10 @@
       GHQ_ROOT = "${homeDirectory}/repos";
       HISTSIZE = "50000";
       SAVEHIST = "50000";
+      # AWS default region
+      AWS_REGION = "us-east-1";
+      # Claude Code backend managed by claude-backend tool
+      # Default: personal > team > bedrock (for security/logging)
     };
 
     # Shell aliases (shared across shells)
@@ -218,6 +222,15 @@
       # Must explicitly assume a role before cloud CLIs work
       [[ -f "$HOME/repos/github.com/sethdf/imladris/scripts/cloud-assume.sh" ]] && \
         source "$HOME/repos/github.com/sethdf/imladris/scripts/cloud-assume.sh"
+
+      # Claude-backend: switch between Bedrock/Team/Personal plans
+      [[ -f "$HOME/repos/github.com/sethdf/imladris/scripts/claude-backend.sh" ]] && \
+        source "$HOME/repos/github.com/sethdf/imladris/scripts/claude-backend.sh"
+
+      # Apply saved Claude backend (personal by default for better security/logging)
+      if type _cb_apply_backend &>/dev/null; then
+        _cb_apply_backend 2>/dev/null
+      fi
 
       # Imladris shell helpers (created by imladris-init)
       [[ -f "$HOME/.config/imladris/shell-helpers.sh" ]] && \
