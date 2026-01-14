@@ -445,12 +445,29 @@ setup_imladris_scripts() {
     curl -fsSL "$SCRIPTS_BASE/bws-init.sh" -o bws-init
     curl -fsSL "$SCRIPTS_BASE/session-sync-setup.sh" -o session-sync-setup
 
-    chmod +x imladris-init imladris-check imladris-restore bws-init session-sync-setup
+    # Backup scripts
+    curl -fsSL "$SCRIPTS_BASE/backup-stateful.sh" -o backup-stateful
+    curl -fsSL "$SCRIPTS_BASE/backup-to-s3.sh" -o backup-to-s3
+    curl -fsSL "$SCRIPTS_BASE/backup-luks-to-s3.sh" -o backup-luks-to-s3
+    curl -fsSL "$SCRIPTS_BASE/backup-status.sh" -o backup-status
+    curl -fsSL "$SCRIPTS_BASE/backup-overview.sh" -o backup-overview
+
+    # PAI helper scripts
+    curl -fsSL "$SCRIPTS_BASE/pai-today.sh" -o pai-today
+    curl -fsSL "$SCRIPTS_BASE/pai-log.sh" -o pai-log
+
+    chmod +x imladris-* bws-init session-sync-setup backup-* pai-*
     chown -R ubuntu:ubuntu /home/ubuntu/bin
 
     # Session sync systemd template
     curl -fsSL "$SCRIPTS_BASE/session-sync@.service" -o /etc/systemd/system/session-sync@.service
     systemctl daemon-reload
+
+    # Backup systemd timer
+    curl -fsSL "$SCRIPTS_BASE/backup-stateful.service" -o /etc/systemd/system/backup-stateful.service
+    curl -fsSL "$SCRIPTS_BASE/backup-stateful.timer" -o /etc/systemd/system/backup-stateful.timer
+    systemctl daemon-reload
+    systemctl enable backup-stateful.timer
 }
 
 setup_shell() {

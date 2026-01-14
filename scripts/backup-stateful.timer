@@ -1,0 +1,10 @@
+[Unit]
+Description=Hourly backup of stateful files
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=5m
+
+[Install]
+WantedBy=timers.target

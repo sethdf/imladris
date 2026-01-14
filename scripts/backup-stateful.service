@@ -1,0 +1,10 @@
+[Unit]
+Description=Backup stateful files to encrypted volume
+After=data.mount
+
+[Service]
+Type=oneshot
+User=ubuntu
+ExecStart=/home/ubuntu/bin/backup-stateful
+StandardOutput=journal
+StandardError=journal
