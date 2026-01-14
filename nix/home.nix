@@ -209,6 +209,11 @@
       [[ -f "$HOME/repos/github.com/sethdf/imladris/scripts/bws-init.sh" ]] && \
         source "$HOME/repos/github.com/sethdf/imladris/scripts/bws-init.sh"
 
+      # GitHub CLI token from BWS (for gh commands)
+      if type bws_get &>/dev/null && [[ -z "''${GH_TOKEN:-}" ]]; then
+        GH_TOKEN=$(bws_get github-token 2>/dev/null) && export GH_TOKEN
+      fi
+
       # Cloud-assume: access level control (authorization)
       # Must explicitly assume a role before cloud CLIs work
       [[ -f "$HOME/repos/github.com/sethdf/imladris/scripts/cloud-assume.sh" ]] && \
