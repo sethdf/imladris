@@ -83,55 +83,6 @@ create_role "buxtonorgacct" "ImladrisAdmin" "arn:aws:iam::aws:policy/Administrat
 
 echo "=== All roles created ==="
 echo ""
-
-# AWS config content for imladris
-AWS_CONFIG=$(cat <<'AWSCONFIG'
-# Cross-account profiles for imladris
-# Default profiles use ReadOnly (safe for everyday use)
-# Use *-admin profiles explicitly when needed
-
-[profile qat]
-role_arn = arn:aws:iam::QAT_ACCOUNT_ID:role/ImladrisReadOnly
-credential_source = Ec2InstanceMetadata
-region = us-east-1
-
-[profile dev]
-role_arn = arn:aws:iam::DEV_ACCOUNT_ID:role/ImladrisReadOnly
-credential_source = Ec2InstanceMetadata
-region = us-east-1
-
-[profile prod]
-role_arn = arn:aws:iam::PROD_ACCOUNT_ID:role/ImladrisReadOnly
-credential_source = Ec2InstanceMetadata
-region = us-east-1
-
-[profile buxtonorgacct]
-role_arn = arn:aws:iam::BUXTONORGACCT_ACCOUNT_ID:role/ImladrisReadOnly
-credential_source = Ec2InstanceMetadata
-region = us-east-1
-
-[profile qat-admin]
-role_arn = arn:aws:iam::QAT_ACCOUNT_ID:role/ImladrisAdmin
-credential_source = Ec2InstanceMetadata
-region = us-east-1
-
-[profile dev-admin]
-role_arn = arn:aws:iam::DEV_ACCOUNT_ID:role/ImladrisAdmin
-credential_source = Ec2InstanceMetadata
-region = us-east-1
-
-[profile prod-admin]
-role_arn = arn:aws:iam::PROD_ACCOUNT_ID:role/ImladrisAdmin
-credential_source = Ec2InstanceMetadata
-region = us-east-1
-
-[profile buxtonorgacct-admin]
-role_arn = arn:aws:iam::BUXTONORGACCT_ACCOUNT_ID:role/ImladrisAdmin
-credential_source = Ec2InstanceMetadata
-region = us-east-1
-AWSCONFIG
-)
-
 echo "=== Configuring imladris ==="
 echo ""
 
@@ -139,24 +90,22 @@ echo ""
 echo "Clearing old SSH host key for $IMLADRIS_HOST..."
 ssh-keygen -f "$HOME/.ssh/known_hosts" -R "$IMLADRIS_HOST" 2>/dev/null || true
 
-# Create AWS config on imladris
-echo "Creating ~/.aws/config on $IMLADRIS_HOST..."
+# Ensure AWS config exists but is empty (cloud-assume handles access)
+echo "Configuring AWS CLI on $IMLADRIS_HOST..."
 ssh -o StrictHostKeyChecking=accept-new "ubuntu@$IMLADRIS_HOST" bash -c "'
 mkdir -p ~/.aws
-cat > ~/.aws/config << \"EOF\"
-$AWS_CONFIG
-EOF
-echo \"AWS config created successfully\"
+echo \"# Cloud access managed by cloud-assume\" > ~/.aws/config
+echo \"AWS config ready (use cloud-assume for access)\"
 '"
 
 echo ""
 echo "=== Setup complete ==="
 echo ""
-echo "Available profiles on imladris:"
-echo "  ReadOnly (default): qat, dev, prod, buxtonorgacct"
-echo "  Admin (explicit):   qat-admin, dev-admin, prod-admin, buxtonorgacct-admin"
+echo "Usage on imladris (cloud-assume controls access):"
 echo ""
-echo "Usage examples:"
-echo "  aws --profile qat s3 ls"
-echo "  aws --profile dev-admin ec2 describe-instances"
-echo "  AWS_PROFILE=prod aws lambda list-functions"
+echo "  cloud-assume aws qat           # readonly access"
+echo "  cloud-assume aws prod --admin  # admin access (logged)"
+echo "  cloud-assume status            # show current access"
+echo "  cloud-assume clear             # revoke access"
+echo ""
+echo "Available environments: qat, dev, prod, buxtonorgacct"
