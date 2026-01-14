@@ -401,14 +401,15 @@
         format = "[$output ]($style)";
       };
 
-      # Format order
+      # Format order - explicitly list custom modules
       format = lib.concatStrings [
         "$username"
         "$hostname"
         "$directory"
         "$git_branch"
         "$git_status"
-        "$custom"
+        "\${custom.cloud}"
+        "\${custom.cloud_admin}"
         "$cmd_duration"
         "$line_break"
         "$character"
