@@ -160,6 +160,28 @@ resource "aws_iam_role_policy" "imladris_ebs" {
   })
 }
 
+resource "aws_iam_role_policy" "imladris_bedrock" {
+  name = "imladris-bedrock"
+  role = aws_iam_role.imladris_instance.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "bedrock:InvokeModel",
+          "bedrock:InvokeModelWithResponseStream"
+        ]
+        Resource = [
+          "arn:aws:bedrock:*::foundation-model/anthropic.*",
+          "arn:aws:bedrock:*:${data.aws_caller_identity.current.account_id}:inference-profile/*"
+        ]
+      }
+    ]
+  })
+}
+
 resource "aws_iam_instance_profile" "imladris" {
   name = "imladris-instance-profile"
   role = aws_iam_role.imladris_instance.name
