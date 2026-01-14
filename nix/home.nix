@@ -375,5 +375,37 @@
   programs.starship = {
     enable = true;
     enableZshIntegration = true;
+    settings = {
+      # AWS module - shows current profile
+      aws = {
+        format = "[$symbol($profile )(\\($region\\) )]($style)";
+        symbol = "☁️ ";
+        style = "bold yellow";
+        # Highlight admin profiles in red
+        # Use different styles based on profile name pattern
+      };
+
+      # Custom module to highlight admin usage
+      custom.aws_admin = {
+        when = ''test "$AWS_PROFILE" != "''${AWS_PROFILE%-admin}"'';
+        command = ''echo "⚠️ ADMIN"'';
+        style = "bold red";
+        format = "[$output ]($style)";
+      };
+
+      # Format order - put AWS near the front
+      format = lib.concatStrings [
+        "$username"
+        "$hostname"
+        "$directory"
+        "$git_branch"
+        "$git_status"
+        "$aws"
+        "$custom"
+        "$cmd_duration"
+        "$line_break"
+        "$character"
+      ];
+    };
   };
 }
