@@ -203,11 +203,16 @@
       eval "$(zoxide init zsh)"
       eval "$(direnv hook zsh)"
 
-      # Auth-keeper: lazy token refresh
+      # Auth-keeper: lazy token refresh (authentication)
       [[ -f "$HOME/repos/github.com/sethdf/imladris/scripts/auth-keeper.sh" ]] && \
         source "$HOME/repos/github.com/sethdf/imladris/scripts/auth-keeper.sh"
       [[ -f "$HOME/repos/github.com/sethdf/imladris/scripts/bws-init.sh" ]] && \
         source "$HOME/repos/github.com/sethdf/imladris/scripts/bws-init.sh"
+
+      # Cloud-assume: access level control (authorization)
+      # Must explicitly assume a role before cloud CLIs work
+      [[ -f "$HOME/repos/github.com/sethdf/imladris/scripts/cloud-assume.sh" ]] && \
+        source "$HOME/repos/github.com/sethdf/imladris/scripts/cloud-assume.sh"
 
       # Imladris shell helpers (created by imladris-init)
       [[ -f "$HOME/.config/imladris/shell-helpers.sh" ]] && \
@@ -376,32 +381,33 @@
     enable = true;
     enableZshIntegration = true;
     settings = {
-      # AWS module - shows current profile
-      aws = {
-        disabled = false;
-        format = "[$symbol($profile )(\\($region\\) )]($style)";
+      # Disable default AWS module - we use custom cloud-assume display
+      aws.disabled = true;
+
+      # Cloud access indicator (set by cloud-assume)
+      custom.cloud = {
+        when = ''test -n "$CLOUD_CURRENT_PROVIDER"'';
+        command = ''echo "$CLOUD_CURRENT_PROVIDER:$CLOUD_CURRENT_ENV"'';
         symbol = "☁️ ";
         style = "bold yellow";
-        # Force display even without credentials file
-        force_display = true;
+        format = "[$symbol$output ]($style)";
       };
 
-      # Custom module to highlight admin usage
-      custom.aws_admin = {
-        when = ''test "$AWS_PROFILE" != "''${AWS_PROFILE%-admin}"'';
+      # Admin warning (red, prominent)
+      custom.cloud_admin = {
+        when = ''test "$CLOUD_CURRENT_LEVEL" = "admin"'';
         command = ''echo "⚠️ ADMIN"'';
         style = "bold red";
         format = "[$output ]($style)";
       };
 
-      # Format order - put AWS near the front
+      # Format order
       format = lib.concatStrings [
         "$username"
         "$hostname"
         "$directory"
         "$git_branch"
         "$git_status"
-        "$aws"
         "$custom"
         "$cmd_duration"
         "$line_break"
