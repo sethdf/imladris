@@ -21,12 +21,33 @@ set -uo pipefail
 # =============================================================================
 
 # AWS account mapping: env -> account_id
-declare -A CLOUD_AWS_ACCOUNTS=(
-    [qat]="QAT_ACCOUNT_ID"
-    [dev]="DEV_ACCOUNT_ID"
-    [prod]="PROD_ACCOUNT_ID"
-    [buxtonorgacct]="BUXTONORGACCT_ACCOUNT_ID"
-)
+# Loaded from BWS (Bitwarden Secrets Manager) to avoid hardcoding
+declare -A CLOUD_AWS_ACCOUNTS
+
+_cloud_load_aws_accounts() {
+    # Only load once
+    [[ ${#CLOUD_AWS_ACCOUNTS[@]} -gt 0 ]] && return 0
+
+    # Check if bws_get is available
+    if ! type bws_get &>/dev/null; then
+        echo "[cloud-assume] Warning: bws_get not available, AWS accounts not loaded" >&2
+        return 1
+    fi
+
+    # Load account IDs from BWS
+    local qat dev prod buxtonorgacct
+    qat=$(bws_get aws-account-qat 2>/dev/null) || true
+    dev=$(bws_get aws-account-dev 2>/dev/null) || true
+    prod=$(bws_get aws-account-prod 2>/dev/null) || true
+    buxtonorgacct=$(bws_get aws-account-buxtonorgacct 2>/dev/null) || true
+
+    [[ -n "$qat" ]] && CLOUD_AWS_ACCOUNTS[qat]="$qat"
+    [[ -n "$dev" ]] && CLOUD_AWS_ACCOUNTS[dev]="$dev"
+    [[ -n "$prod" ]] && CLOUD_AWS_ACCOUNTS[prod]="$prod"
+    [[ -n "$buxtonorgacct" ]] && CLOUD_AWS_ACCOUNTS[buxtonorgacct]="$buxtonorgacct"
+
+    return 0
+}
 
 # AWS role names
 CLOUD_AWS_READONLY_ROLE="ImladrisReadOnly"
@@ -84,6 +105,9 @@ _cloud_log() {
 _cloud_aws_assume() {
     local env="$1"
     local admin="${2:-false}"
+
+    # Load accounts from BWS if not already loaded
+    _cloud_load_aws_accounts
 
     local account_id="${CLOUD_AWS_ACCOUNTS[$env]:-}"
     if [[ -z "$account_id" ]]; then

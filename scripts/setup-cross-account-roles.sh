@@ -12,7 +12,23 @@
 # - imladris instance running and accessible via Tailscale
 set -euo pipefail
 
-IMLADRIS_ROLE_ARN="arn:aws:iam::IMLADRIS_ACCOUNT_ID:role/imladris-instance-role"
+# Load BWS helpers if available
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bws-init.sh
+[[ -f "$SCRIPT_DIR/bws-init.sh" ]] && source "$SCRIPT_DIR/bws-init.sh"
+
+# Get imladris account ID from BWS or prompt
+_get_imladris_account() {
+    if type bws_get &>/dev/null; then
+        bws_get aws-account-imladris 2>/dev/null && return 0
+    fi
+    # Fallback: prompt user
+    read -rp "Enter imladris AWS account ID: " account_id
+    echo "$account_id"
+}
+
+IMLADRIS_ACCOUNT_ID="$(_get_imladris_account)"
+IMLADRIS_ROLE_ARN="arn:aws:iam::${IMLADRIS_ACCOUNT_ID}:role/imladris-instance-role"
 IMLADRIS_HOST="imladris"
 
 # Trust policy allowing imladris to assume roles
