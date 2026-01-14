@@ -25,6 +25,61 @@ claude
 
 The IAM instance profile has `bedrock:InvokeModel` permissions for all Anthropic models.
 
+## Cross-Account AWS Access
+
+The instance role has `sts:AssumeRole` permission, enabling access to any AWS account that trusts it.
+
+### Setup in Target Accounts
+
+In each AWS account you want to access, update the role's trust policy to allow the imladris instance role:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::IMLADRIS_ACCOUNT_ID:role/imladris-instance-role"
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+```
+
+### Configure Profiles on Instance
+
+Create `~/.aws/config`:
+
+```ini
+[profile org-dev-readonly]
+role_arn = arn:aws:iam::111111111111:role/ReadOnlyAccess
+credential_source = Ec2InstanceMetadata
+
+[profile org-dev-admin]
+role_arn = arn:aws:iam::111111111111:role/AdministratorAccess
+credential_source = Ec2InstanceMetadata
+
+[profile org-prod-readonly]
+role_arn = arn:aws:iam::222222222222:role/ReadOnlyAccess
+credential_source = Ec2InstanceMetadata
+```
+
+### Usage
+
+```bash
+# Use specific profile
+aws --profile org-dev-readonly s3 ls
+aws --profile org-prod-admin ec2 describe-instances
+
+# Set default profile
+export AWS_PROFILE=org-dev-readonly
+aws s3 ls
+```
+
+No authentication flows, no token expiry, just works.
+
 ## Repository Structure
 
 **Important:** Local repo clones are separate from running scripts/skills.

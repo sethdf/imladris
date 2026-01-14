@@ -182,6 +182,22 @@ resource "aws_iam_role_policy" "imladris_bedrock" {
   })
 }
 
+resource "aws_iam_role_policy" "imladris_assume_role" {
+  name = "imladris-assume-role"
+  role = aws_iam_role.imladris_instance.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = "sts:AssumeRole"
+        Resource = "*"
+      }
+    ]
+  })
+}
+
 resource "aws_iam_instance_profile" "imladris" {
   name = "imladris-instance-profile"
   role = aws_iam_role.imladris_instance.name
