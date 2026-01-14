@@ -66,7 +66,7 @@ setup_system() {
     apt-get install -y unattended-upgrades apt-listchanges
     cat > /etc/apt/apt.conf.d/50unattended-upgrades <<'EOF'
 Unattended-Upgrade::Allowed-Origins {
-    "${distro_id}:${distro_codename}-security";
+    "Ubuntu:${distro_codename}-security";
 };
 Unattended-Upgrade::AutoFixInterruptedDpkg "true";
 Unattended-Upgrade::Remove-Unused-Dependencies "true";
