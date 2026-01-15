@@ -612,6 +612,53 @@ install_curu_skills() {
 }
 
 # =============================================================================
+# Imladris Scripts Installation
+# Symlink imladris/scripts to ~/bin for easy access
+# =============================================================================
+
+install_imladris_scripts() {
+    # Look for imladris repo in standard ghq locations
+    local IMLADRIS_SRC=""
+    for repo_root in "$HOME/repos" "$HOME/work/repos" "$HOME/home/repos"; do
+        if [[ -d "$repo_root/github.com/sethdf/imladris" ]]; then
+            IMLADRIS_SRC="$repo_root/github.com/sethdf/imladris"
+            break
+        fi
+    done
+
+    if [[ ! -d "$IMLADRIS_SRC" ]]; then
+        log "Imladris repo not found - skipping script installation"
+        return 0
+    fi
+
+    log "Installing imladris scripts from $IMLADRIS_SRC..."
+
+    mkdir -p "$HOME/bin"
+
+    # Symlink scripts (remove .sh extension for cleaner commands)
+    local script_count=0
+    for script in "$IMLADRIS_SRC/scripts"/*.sh; do
+        [[ -f "$script" ]] || continue
+        local script_name
+        script_name=$(basename "$script" .sh)
+
+        # Skip template/service files
+        [[ "$script_name" == *"@"* ]] && continue
+        [[ "$script_name" == *".service"* ]] && continue
+        [[ "$script_name" == *".timer"* ]] && continue
+
+        ln -sf "$script" "$HOME/bin/$script_name"
+        ((script_count++))
+    done
+
+    if [[ $script_count -gt 0 ]]; then
+        log_success "Imladris scripts installed: $script_count scripts (symlinked to ~/bin)"
+    else
+        log "No imladris scripts found"
+    fi
+}
+
+# =============================================================================
 # Anthropic Official Skills Installation
 # https://github.com/anthropics/skills
 # =============================================================================
@@ -917,6 +964,9 @@ setup_pai
 
 # Install Curu skills (to ~/.claude, persisted on /data)
 install_curu_skills
+
+# Install imladris scripts (symlinked to ~/bin)
+install_imladris_scripts
 
 # Install Anthropic official skills
 install_anthropic_skills
