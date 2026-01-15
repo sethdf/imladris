@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tmux context-based color theming
+# Tmux context-based color theming (works with catppuccin)
 # Called by shell hook when CONTEXT changes (via direnv)
 
 # Get context from environment or argument
@@ -12,8 +12,7 @@ CONTEXT="${1:-$CONTEXT}"
 GREEN="#a6e3a1"    # home context
 BLUE="#89b4fa"     # work context
 RED="#f38ba8"      # prod/admin context
-PURPLE="#cba6f7"   # other context
-PEACH="#fab387"    # warning accent
+PURPLE="#cba6f7"   # other/default context
 
 # Determine color based on context
 case "$CONTEXT" in
@@ -31,14 +30,15 @@ case "$CONTEXT" in
     ;;
 esac
 
-# Apply colors to tmux
-tmux set-option -g status-style "bg=default,fg=$COLOR"
+# Update catppuccin theme accent color (session indicator)
+tmux set-option -g @catppuccin_session_color "$COLOR"
+
+# Update the session status module to use our color
+tmux set-option -g @catppuccin_status_session "#[fg=$COLOR]#[fg=#11111b,bg=$COLOR] #[fg=#cdd6f4,bg=#313244]#{E:@catppuccin_session_text}#[fg=#313244] "
+
+# Update window current number color to match context
+tmux set-option -g @catppuccin_window_current_number_color "$COLOR"
+
+# Update pane borders
 tmux set-option -g pane-active-border-style "fg=$COLOR"
 tmux set-option -g pane-border-style "fg=#45475a"
-tmux set-option -g message-style "bg=$COLOR,fg=#1e1e2e"
-
-# Window status colors - current window prominent with background
-tmux set-option -g window-status-current-style "fg=#1e1e2e,bg=$COLOR,bold"
-tmux set-option -g window-status-current-format " #I:#W "
-tmux set-option -g window-status-style "fg=#585b70"
-tmux set-option -g window-status-format " #I:#W "

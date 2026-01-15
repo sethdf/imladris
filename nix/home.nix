@@ -56,6 +56,9 @@
       inotify-tools
       mosh
 
+      # Media & transcripts
+      yt-dlp
+
       # Version management
       mise
 
@@ -96,6 +99,9 @@
       ld = "lazydocker";
       g = "git";
       tf = "terraform";
+
+      # Fabric - AI content extraction
+      yt = "fabric -y";  # fabric -y "URL" gets YouTube transcript
 
       # DevBox scripts
       init = "imladris-init";
@@ -150,9 +156,26 @@
           ${pkgs.ghq}/bin/ghq get danielmiessler/Personal_AI_Infrastructure || true
         fi
 
+        # Fabric - AI content extraction patterns (Daniel Miessler)
+        if [ ! -d "$GHQ_ROOT/github.com/danielmiessler/fabric" ]; then
+          ${pkgs.ghq}/bin/ghq get danielmiessler/fabric || true
+        fi
+
         # Anthropic official skills
         if [ ! -d "$GHQ_ROOT/github.com/anthropics/skills" ]; then
           ${pkgs.ghq}/bin/ghq get anthropics/skills || true
+        fi
+      '';
+
+      # Install Fabric CLI via go install (not in nixpkgs)
+      installFabric = lib.hm.dag.entryAfter [ "writeBoundary" "cloneRepos" ] ''
+        export PATH="${pkgs.go}/bin:$PATH"
+        export GOPATH="${homeDirectory}/go"
+        export GOBIN="${homeDirectory}/.local/bin"
+        mkdir -p "$GOBIN"
+        # Install fabric if not present or update it
+        if [ ! -f "$GOBIN/fabric" ]; then
+          ${pkgs.go}/bin/go install github.com/danielmiessler/fabric/cmd/fabric@latest || true
         fi
       '';
 
@@ -337,6 +360,19 @@
         plugin = catppuccin;
         extraConfig = ''
           set -g @catppuccin_flavor 'mocha'
+
+          # Status bar modules
+          set -g @catppuccin_status_modules_left "session"
+          set -g @catppuccin_status_modules_right "directory date_time"
+          set -g @catppuccin_status_left_separator ""
+          set -g @catppuccin_status_right_separator ""
+          set -g @catppuccin_status_fill "icon"
+          set -g @catppuccin_status_connect_separator "no"
+
+          # Window styling
+          set -g @catppuccin_window_status_style "rounded"
+          set -g @catppuccin_window_default_text "#W"
+          set -g @catppuccin_window_current_text "#W"
         '';
       }
     ];
