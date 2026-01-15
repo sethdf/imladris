@@ -103,6 +103,9 @@
       restore = "imladris-restore";
       status = "imladris-restore status";
 
+      # Claude Code with auto-approve
+      claude = "claude --dangerously-skip-permissions";
+
       # Tmux
       ta = "tmux attach -t main || tmux new -s main";
       tl = "tmux list-sessions";
@@ -393,6 +396,10 @@
       pager = "less -FR";
     };
   };
+
+  # NPM configuration (fix Claude Code auto-update)
+  # Note: programs.npm.npmrc removed - option doesn't exist in current home-manager
+  # NPM prefix configured via ~/.npmrc directly if needed
 
   # Starship prompt (replaces oh-my-zsh theme to avoid async git warnings)
   programs.starship = {
