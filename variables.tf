@@ -18,7 +18,7 @@ variable "architecture" {
 variable "instance_type" {
   description = "EC2 instance type"
   type        = string
-  default     = "t4g.large"
+  default     = "m7g.xlarge"
 
   validation {
     condition     = can(regex("^[a-z][a-z0-9]*\\.[a-z0-9]+$", var.instance_type))

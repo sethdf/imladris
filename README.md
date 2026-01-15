@@ -1,292 +1,474 @@
-# AWS DevBox
+# Imladris
 
-Terraform configuration for a reliable AWS cloud development workstation with spot pricing and Tailscale access.
+Terraform-managed AWS development workstation with LUKS encryption, Tailscale access, and Claude Code integration.
 
-## Why This Configuration?
+## Overview
 
-**Instance: m7a.xlarge (AMD EPYC Gen 4)**
-- 4 vCPUs, 16 GB RAM
-- **~$0.06/hour spot** (vs $0.20 on-demand) = ~70% savings
-- No CPU throttling (unlike t3 burstable instances)
+Imladris is a cloud development environment designed for security, reliability, and AI-assisted development. It provides:
 
-**OS: Ubuntu Server 24.04 LTS**
-- Native VS Code Remote support
-- 5+ years of support
-- Best package availability
+- **Secure Access:** Tailscale VPN only (zero public ports)
+- **Encrypted Storage:** LUKS-encrypted persistent data volume
+- **Declarative Config:** Nix + home-manager for reproducible environment
+- **AI Integration:** Claude Code via AWS Bedrock (auto-refreshing credentials)
+- **Cost Optimized:** ARM64 Graviton instances with spot pricing support
 
-**Storage: gp3 with upgraded throughput**
-- 100 GB, 3000 IOPS, 250 MiB/s throughput
-- Faster `npm install`, `git clone`, etc.
-- Daily snapshots via DLM (7-day retention)
+## Architecture
 
-**Security: Tailscale (no public IP)**
-- Zero exposed ports - no SSH to the internet
-- Access from anywhere via encrypted mesh VPN
-- Tailscale SSH for authentication (no keys to manage)
-
-**Spot + Hibernation**
-- Auto-hibernates on spot interruption (saves RAM state)
-- Auto-restarts when capacity returns
-- CLI warnings before shutdown
+```
+┌─────────────────────────────────────────────────────────────┐
+│  VPC (10.0.0.0/16)                                          │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │  Public Subnet (10.0.1.0/24)                           │ │
+│  │  ┌──────────────────┐    ┌──────────────────────────┐  │ │
+│  │  │ EC2 Instance     │    │ EBS Data Volume          │  │ │
+│  │  │ (imladris)       │────│ (hall-of-fire)           │  │ │
+│  │  │ m7g.xlarge       │    │ LUKS encrypted           │  │ │
+│  │  │ Ubuntu 24.04     │    │ Hourly DLM snapshots     │  │ │
+│  │  └──────────────────┘    └──────────────────────────────┘  │ │
+│  └────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
+              │
+              │ Tailscale VPN (encrypted mesh)
+              │
+         ┌────┴────┐
+         │ Client  │
+         └─────────┘
+```
 
 ## Quick Start
 
 ### Prerequisites
 
-Install these tools:
-```bash
-# macOS
-brew install git-crypt sops age terraform tailscale
+- AWS credentials configured
+- [Tailscale account](https://tailscale.com/) with auth key
+- [Bitwarden Secrets Manager](https://bitwarden.com/products/secrets-manager/) access token
+- Terraform installed
 
-# Or see: https://github.com/getsops/sops, https://github.com/FiloSottile/age
-```
-
-You'll also need:
-1. [Tailscale account](https://tailscale.com/) (free for personal use)
-2. [Tailscale auth key](https://login.tailscale.com/admin/settings/keys) - create a reusable key
-3. Tailscale installed on your local machine
-4. AWS credentials configured
-
-### First-Time Setup
+### Deploy
 
 ```bash
-# 1. Fork this repo, then clone your fork
-git clone https://github.com/YOUR_USERNAME/aws-devbox.git
-cd aws-devbox
-make setup
+# Clone repository
+git clone git@github.com:sethdf/imladris.git
+cd imladris
 
-# 2. Add your Tailscale auth key
-sops secrets.yaml
-# Edit: replace "tskey-auth-REPLACE-ME" with your key
+# Initialize Terraform
+terraform init
 
-# 3. IMPORTANT: Backup encryption keys to password manager
-make backup-keys
-
-# 4. Deploy
-make apply
-
-# 5. Connect (via Tailscale)
-ssh devbox
+# Deploy (requires tfvars or BWS for secrets)
+source scripts/bws-init.sh
+terraform apply \
+  -var="github_username=sethdf" \
+  -var="tailscale_auth_key=$(bws_get tailscale-auth-key)" \
+  -var="tailscale_api_key=$(bws_get tailscale-api-key)"
 ```
 
-### Recovering on a New Machine
+### First Connection
 
 ```bash
-# 1. Clone your fork
-git clone https://github.com/YOUR_USERNAME/aws-devbox.git
-cd aws-devbox
+# Connect via Tailscale
+ssh imladris
 
-# 2. Restore keys from password manager
-# Git-crypt key (decode base64 and unlock):
-echo "YOUR_BASE64_KEY" | base64 -d > /tmp/gc-key
-git-crypt unlock /tmp/gc-key && rm /tmp/gc-key
+# Initialize LUKS and setup environment
+imladris-init
+# Prompts for: BWS token, LUKS passphrase
 
-# Age key (for sops):
-mkdir -p ~/.config/sops/age
-cat > ~/.config/sops/age/keys.txt << 'EOF'
-# paste your age key here
-EOF
-
-# 3. Now you can work normally
-make plan
-make apply
+# Start Claude Code
+claude
 ```
 
-## Variables
+### After Reboot
+
+```bash
+ssh imladris
+imladris-init    # Unlock LUKS only (BWS token cached)
+```
+
+## Infrastructure
+
+### AWS Resources
+
+| Resource | Configuration |
+|----------|---------------|
+| **VPC** | `10.0.0.0/16` with public subnet |
+| **EC2** | `m7g.xlarge` ARM64 (4 vCPU, 16GB RAM) |
+| **Root Volume** | 50GB gp3 (3000 IOPS, 250 MiB/s) |
+| **Data Volume** | 100GB gp3 LUKS-encrypted ("hall-of-fire") |
+| **Security Group** | Zero ingress (Tailscale only) |
+| **DLM** | Hourly snapshots, 24-hour retention |
+
+### IAM Permissions
+
+The instance profile (`imladris-instance-role`) has minimal permissions:
+
+- **EBS:** Attach/detach own volume (conditional on Project tag)
+- **Bedrock:** Invoke Anthropic models
+- **STS:** AssumeRole for cross-account access
+
+### Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `bitwarden_email` | (required) | Email for Bitwarden account |
-| `github_username` | (required) | Your GitHub username (for script downloads) |
-| `aws_region` | us-east-1 | AWS region |
-| `instance_type` | m7a.xlarge | EC2 instance type |
-| `volume_size` | 100 | Root volume size (GB) |
-| `volume_iops` | 3000 | gp3 IOPS |
-| `volume_throughput` | 250 | gp3 throughput (MiB/s) |
-| `tailscale_auth_key` | (required) | Tailscale auth key |
-| `tailscale_hostname` | devbox | Hostname in Tailscale |
-| `use_spot` | true | Use spot instances (~70% savings) |
-| `spot_max_price` | "" | Max spot price (empty = on-demand cap) |
-| `notification_emails` | [] | Emails for spot interruption alerts |
-| `spot_restart_attempts` | 5 | Retry attempts before giving up |
-| `enable_schedule` | true | Enable auto start/stop schedule |
-| `schedule_start` | 0 5 * * ? * | Cron for auto-start (5am) |
-| `schedule_stop` | 0 23 * * ? * | Cron for auto-stop (11pm) |
-| `schedule_timezone` | America/Denver | Timezone for schedule (Mountain) |
+| `aws_region` | `us-east-1` | AWS region |
+| `architecture` | `arm64` | CPU architecture |
+| `instance_type` | `m7g.xlarge` | Instance size |
+| `volume_size` | `50` | Root volume GB |
+| `data_volume_size` | `100` | Data volume GB |
+| `hostname` | `imladris` | Instance hostname |
+| `github_username` | (required) | For script downloads |
+| `tailscale_auth_key` | (required) | Tailscale auth |
+| `tailscale_api_key` | (required) | Tailscale API |
 
-## Tailscale Access
+## Scripts
 
-Once deployed, access your devbox via Tailscale:
+### Core Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `imladris-init` | Full initialization: LUKS setup, BWS, skills, shell |
+| `imladris-unlock` | Quick unlock for reboots (LUKS only) |
+| `imladris-check` | Health check (LUKS, network, BWS, directories) |
+| `imladris-restore` | Restore from snapshots/backups |
+
+### Authentication & Cloud Access
+
+| Script | Purpose |
+|--------|---------|
+| `auth-keeper` | Lazy token refresh for AWS/Azure/GCP |
+| `cloud-assume` | Unified cloud access control with audit logging |
+| `bws-init` | Bitwarden Secrets Manager CLI helpers |
+| `claude-backend` | Switch Claude Code payment backends |
+
+### Backup & Sync
+
+| Script | Purpose |
+|--------|---------|
+| `backup-stateful` | Backup ~/.claude, repos, config to /data |
+| `session-sync` | Real-time git sync for session files |
+
+## Context Separation
+
+Work and personal contexts are separated via direnv:
+
+```
+/data/
+├── work/                    # Work context
+│   ├── .envrc               # CONTEXT=work, SDP_*, work GHQ_ROOT
+│   ├── repos/               # Work repositories
+│   ├── tickets/             # ServiceDesk Plus workspaces
+│   │   └── SDP-12345/
+│   │       ├── .ticket.json
+│   │       └── notes.md
+│   └── notes/
+│
+└── home/                    # Personal context
+    ├── .envrc               # CONTEXT=home, home GHQ_ROOT
+    ├── repos/               # Personal repositories
+    └── projects/
+```
+
+### Switching Contexts
 
 ```bash
-# SSH (uses Tailscale SSH - no keys needed)
-ssh devbox
-
-# Or with explicit user
-ssh ubuntu@devbox
+cd ~/work     # Sets CONTEXT=work automatically
+cd ~/home     # Sets CONTEXT=home automatically
+ctx work      # Quick switch alias
+ctx home      # Quick switch alias
 ```
 
-### VS Code Remote
+### Context Variables
 
-Add to `~/.ssh/config`:
-```
-Host devbox
-    HostName devbox
-```
+| Variable | Work Value | Home Value |
+|----------|------------|------------|
+| `CONTEXT` | `work` | `home` |
+| `GHQ_ROOT` | `/data/work/repos` | `/data/home/repos` |
+| `SDP_TICKETS_DIR` | `/data/work/tickets` | - |
 
-Then in VS Code: `Remote-SSH: Connect to Host...` → `devbox`
+## Claude Code Integration
 
-### Using as Exit Node (VPN)
+### Bedrock Backend
 
-You can route all your traffic through the devbox:
+Claude Code uses AWS Bedrock with instance profile credentials:
 
 ```bash
-# On devbox: enable exit node
-sudo tailscale up --advertise-exit-node
+# Environment (set in shell config)
+export CLAUDE_CODE_USE_BEDROCK=1
+export AWS_REGION=us-east-1
 
-# On your machine: use devbox as exit node
-tailscale up --exit-node=devbox
+# Start Claude
+claude
 ```
 
-## Spot Instance Behavior
+No API keys to manage - credentials auto-refresh via IMDSv2.
 
-**How it works:**
-1. Instance runs on spot pricing (~$0.06/hr)
-2. If AWS reclaims capacity, you get 2-minute warning
-3. Instance auto-hibernates (RAM saved to EBS)
-4. Lambda auto-restarts when capacity returns
-5. Instance resumes exactly where you left off
-
-**Interruption frequency:** m7a.xlarge typically <5% monthly
-
-**CLI Warnings:**
-- Spot interruption: Wall broadcast + tmux notification
-- Scheduled shutdown: 15-min and 5-min warnings
-
-**To disable spot and use on-demand:**
-```hcl
-use_spot = false
-```
-
-## Scheduled Start/Stop
-
-By default, the instance:
-- **Hibernates at 11pm** Mountain Time (saves RAM state)
-- **Starts at 5am** Mountain Time (resumes from hibernation)
-
-This runs 18 hours/day instead of 24, saving ~25% more on top of spot savings.
-
-**To customize the schedule:**
-```hcl
-schedule_start    = "0 6 * * ? *"   # 6am
-schedule_stop     = "0 22 * * ? *"  # 10pm
-schedule_timezone = "America/New_York"  # Eastern
-```
-
-**To disable scheduling:**
-```hcl
-enable_schedule = false
-```
-
-**Working late?** Just keep working. It'll hibernate at 11pm, you manually start it if needed.
-
-## What's Installed
-
-### Core Development
-- Docker + Docker Compose
-- Node.js LTS
-- Python 3 + pip + venv
-- Zsh + Oh My Zsh
-- git, curl, jq, htop, tmux
-
-### Productivity Tools
-| Tool | Description | Alias |
-|------|-------------|-------|
-| `fzf` | Fuzzy finder (Ctrl-r for history) | - |
-| `zoxide` | Smarter cd that learns your dirs | `z` |
-| `direnv` | Auto-load .envrc per directory | - |
-| `lazygit` | Git TUI | `lg` |
-| `lazydocker` | Docker TUI | `ld` |
-| `delta` | Better git diffs (auto-configured) | - |
-| `mise` | Version manager (node/python/go) | - |
-| `eza` | Modern ls with git status | `ls`, `ll`, `lt` |
-| `bat` | Cat with syntax highlighting | `cat` |
-| `ripgrep` | Fast grep | `rg` |
-| `fd` | Fast find | `fd` |
-| `ncdu` | Interactive disk usage | `ncdu` |
-| `tldr` | Simplified man pages | `tldr` |
-
-### Cloud Provider CLIs
-| Tool | Description | Alias |
-|------|-------------|-------|
-| AWS CLI v2 | Amazon Web Services | `aws-whoami` |
-| AWS SSM Plugin | Session Manager support | - |
-| Azure CLI | Microsoft Azure | `az-whoami` |
-| Google Cloud CLI | GCP | `gcp-whoami` |
-
-### Windows / Microsoft 365 Admin
-| Tool | Description |
-|------|-------------|
-| PowerShell Core | Cross-platform PowerShell (`pwsh`) |
-| CLI for Microsoft 365 | M365 administration (`m365`) |
-| Microsoft.Graph | PowerShell module for Graph API |
-| Az | PowerShell module for Azure |
-| ExchangeOnlineManagement | Exchange Online admin |
-| MicrosoftTeams | Teams admin |
-
-## Cloud Authentication
+### Backend Switching
 
 ```bash
-# AWS
-aws configure
-# or
-aws sso login --profile your-profile
-
-# Azure
-az login
-
-# GCP
-gcloud auth login
-gcloud config set project YOUR_PROJECT
-
-# Microsoft 365
-m365 login
-
-# PowerShell (Graph/Exchange/Teams)
-pwsh
-Connect-MgGraph -Scopes "User.Read.All"
-Connect-ExchangeOnline
-Connect-MicrosoftTeams
+claude-backend bedrock              # AWS Bedrock (default)
+claude-backend bedrock --account dev # Via role assumption
+claude-backend team                 # Claude Team plan
+claude-backend personal             # Claude Personal plan
+claude-backend status               # Show current config
 ```
 
-## Manual Controls
+### Cross-Account Access
+
+The instance role can assume roles in other AWS accounts:
 
 ```bash
-# Stop instance (compute charges stop, EBS continues)
+# Configure in target account trust policy
+# Then use cloud-assume for authorization
+cloud-assume aws dev              # Readonly access
+cloud-assume aws prod --admin     # Admin access (logged)
+cloud-assume status               # Show current access
+cloud-assume clear                # Revoke all access
+```
+
+## Security
+
+### LUKS Encryption
+
+The data volume (`/data`) is LUKS-encrypted with two factors:
+
+1. **Keyfile** - Stored in Bitwarden Secrets Manager
+2. **Passphrase** - Entered interactively
+
+```bash
+# Unlock flow
+imladris-init
+# → Retrieves keyfile from BWS
+# → Prompts for passphrase
+# → Mounts /data
+```
+
+### Bitwarden Secrets Manager
+
+Secrets are stored in BWS, retrieved on-demand:
+
+```bash
+# Helper functions (from bws-init)
+bws_get "secret-name"     # Get secret value
+bws_exists "secret-name"  # Check if exists
+bws_list                  # List all secrets
+```
+
+**Required Secrets:**
+- `luks-keyfile` - LUKS encryption key
+- `tailscale-auth-key` - Tailscale authentication
+- `tailscale-api-key` - Tailscale API access
+
+**Optional Secrets:**
+- `sdp-base-url`, `sdp-api-key`, `sdp-technician-id` - ServiceDesk Plus
+- `github-token` - GitHub CLI authentication
+- AWS account mappings for cross-account access
+
+### Network Security
+
+- **No public SSH** - Security group has zero ingress rules
+- **IMDSv2 enforced** - Prevents SSRF attacks on metadata
+- **Tailscale SSH** - End-to-end encrypted, identity-based access
+
+## Nix Configuration
+
+### Packages (via home-manager)
+
+The environment is declaratively managed in `nix/home.nix`:
+
+**Development:**
+- git, gh, lazygit, delta
+- Node.js 20, Python 3.11, Go, Bun
+- gcc, make
+
+**CLI Tools:**
+- ripgrep, fd, bat, eza, fzf
+- jq, yq, htop, ncdu
+
+**Cloud CLIs:**
+- awscli2, azure-cli, google-cloud-sdk
+
+**Shell:**
+- zsh with starship prompt
+- tmux with plugins (resurrect, continuum, catppuccin)
+- direnv, zoxide, mise
+
+### Shell Aliases
+
+```bash
+ls → eza              # Modern ls
+cat → bat             # Syntax highlighting
+lg → lazygit          # Git TUI
+ld → lazydocker       # Docker TUI
+init → imladris-init  # Quick init
+check → imladris-check
+```
+
+### Applying Changes
+
+```bash
+# After editing nix/home.nix
+home-manager switch --flake .#ubuntu
+```
+
+## Backup Strategy
+
+### Three-Tier Approach
+
+1. **DLM Snapshots** - Hourly, 24-hour retention (fast recovery)
+2. **Stateful Backups** - Daily to /data, 7-day retention
+3. **S3 Offsite** - Optional encrypted backup to S3
+
+### What's Backed Up
+
+- `~/.claude` - Session history, skills, hooks
+- `~/repos` - All repositories
+- `~/.config` - Application config
+- `~/.ssh` - SSH keys
+- `~/.aws` - AWS configuration
+
+### Recovery
+
+```bash
+# From snapshot
+imladris-restore
+
+# From backup
+ls /data/backups/latest/
+cp -r /data/backups/latest/claude ~/.claude
+```
+
+## Development Workflow
+
+### Repository Structure
+
+```
+~/repos/github.com/
+├── sethdf/
+│   ├── imladris/        # This repo
+│   └── curu-skills/     # Custom skills
+├── anthropics/
+│   └── skills/          # Official skills
+└── danielmiessler/
+    └── Personal_AI_Infrastructure/  # PAI framework
+```
+
+### Working with Scripts
+
+```bash
+# Edit script in repo
+cd ~/repos/github.com/sethdf/imladris
+vim scripts/imladris-init.sh
+
+# Deploy to live location
+cp scripts/imladris-init.sh ~/bin/
+
+# Commit changes
+git add . && git commit && git push
+```
+
+### Working with Skills
+
+```bash
+# Edit skill
+cd ~/repos/github.com/sethdf/curu-skills
+vim MySkill/SKILL.md
+
+# Sync to Claude
+cp -r MySkill ~/.claude/skills/
+
+# Or use sync helpers
+curu-sync     # Copy skills to repo
+curu-commit   # Sync + commit
+curu-watch    # Auto-sync daemon
+```
+
+## ServiceDesk Plus Integration
+
+Work tickets are managed via the SDP skill:
+
+```bash
+# List assigned tickets
+/sdp-list
+
+# Full ticket operations
+/servicedesk-plus
+
+# Ticket workspace
+cd ~/work/tickets/SDP-12345
+# → Auto-loads ticket context via SessionStart hook
+```
+
+### Workspace Structure
+
+```
+~/work/tickets/SDP-12345/
+├── .ticket.json     # Cached metadata
+├── notes.md         # Working notes → synced as private notes
+└── replies/         # Public replies to requester
+```
+
+## Commands Reference
+
+### Terraform
+
+```bash
+terraform init           # Initialize
+terraform plan           # Preview changes
+terraform apply          # Deploy
+terraform output         # Show outputs
+```
+
+### Instance Management
+
+```bash
+# Via Terraform outputs
+ssh imladris             # Connect via Tailscale
+imladris-init            # Initialize/unlock
+imladris-check           # Health check
+
+# Manual controls
 aws ec2 stop-instances --instance-ids $(terraform output -raw instance_id)
-
-# Hibernate instance (saves RAM to disk)
-aws ec2 stop-instances --instance-ids $(terraform output -raw instance_id) --hibernate
-
-# Start instance
 aws ec2 start-instances --instance-ids $(terraform output -raw instance_id)
 ```
 
-## Cost Comparison
+### Claude Code
+
+```bash
+claude                   # Start Claude Code
+claude-backend status    # Check backend
+cloud-assume status      # Check cloud access
+```
+
+## Cost Optimization
 
 | Configuration | Monthly Cost |
 |---------------|--------------|
 | On-demand 24/7 | ~$150 |
-| On-demand 50hr/week | ~$43 |
 | Spot 24/7 | ~$45 |
 | Spot + schedule (18hr/day) | ~$33 |
-| **Spot + schedule (actual ~10hr/day use)** | **~$18** |
+| Actual use (~10hr/day) | ~$18 |
 | Stopped (storage only) | ~$10 |
 
-## Destroy
+## File Reference
 
-```bash
-terraform destroy
-```
+| Path | Purpose |
+|------|---------|
+| `main.tf` | Core infrastructure |
+| `variables.tf` | Input variables |
+| `outputs.tf` | Output values |
+| `nix/home.nix` | User environment config |
+| `nix/flake.nix` | Nix flake inputs |
+| `scripts/` | Operational scripts |
+| `skills/` | Claude skills (SDP) |
+| `CLAUDE.md` | AI assistant guide |
 
-Note: Root volume has `delete_on_termination = false` for safety. Delete manually if needed.
+## Conventions
+
+- **Instance hostname:** `imladris`
+- **Data volume name:** `hall-of-fire`
+- **Default region:** `us-east-1`
+- **Package management:** Nix (not apt)
+- **Shell:** zsh with starship
+- **Skills format:** PAI (`SkillName/SKILL.md`)
+
+## License
+
+Private repository for personal use.
