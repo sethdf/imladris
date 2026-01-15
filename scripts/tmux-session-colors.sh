@@ -37,6 +37,8 @@ tmux set-option -g pane-active-border-style "fg=$COLOR"
 tmux set-option -g pane-border-style "fg=#45475a"
 tmux set-option -g message-style "bg=$COLOR,fg=#1e1e2e"
 
-# Window status colors
-tmux set-option -g window-status-current-style "fg=$COLOR,bold"
-tmux set-option -g window-status-style "fg=#6c7086"
+# Window status colors - current window prominent with background
+tmux set-option -g window-status-current-style "fg=#1e1e2e,bg=$COLOR,bold"
+tmux set-option -g window-status-current-format " #I:#W "
+tmux set-option -g window-status-style "fg=#585b70"
+tmux set-option -g window-status-format " #I:#W "
