@@ -219,6 +219,13 @@
       eval "$(zoxide init zsh)"
       eval "$(direnv hook zsh)"
 
+      # Update tmux colors when CONTEXT changes (after direnv)
+      _update_tmux_context() {
+        [[ -n "$TMUX" ]] && ~/.config/tmux/session-colors.sh 2>/dev/null
+      }
+      autoload -U add-zsh-hook
+      add-zsh-hook chpwd _update_tmux_context
+
       # Auth-keeper: lazy token refresh (authentication)
       [[ -f "$HOME/repos/github.com/sethdf/imladris/scripts/auth-keeper.sh" ]] && \
         source "$HOME/repos/github.com/sethdf/imladris/scripts/auth-keeper.sh"
@@ -338,10 +345,8 @@
       # Enable RGB color support
       set -ga terminal-overrides ",*256col*:Tc"
 
-      # Session-based color theming
-      # Colors: main=green, work=blue, prod/admin=red, other=purple
-      set-hook -g client-session-changed 'run-shell "~/.config/tmux/session-colors.sh"'
-      set-hook -g session-created 'run-shell "~/.config/tmux/session-colors.sh"'
+      # Context-based color theming triggered by shell hook (see zsh initExtra)
+      # Colors: home=green, work=blue, prod=red, other=purple
 
       # Pane splitting with | and -
       bind | split-window -h -c "#{pane_current_path}"
@@ -440,13 +445,28 @@
         format = "[$output ]($style)";
       };
 
-      # Tmux session indicator (different colors per session)
-      custom.tmux = {
-        when = ''test -n "$TMUX"'';
-        command = ''tmux display-message -p "#S"'';
+      # Context indicators (work/home) - set by direnv, different colors each
+      custom.context_work = {
+        when = ''test "$CONTEXT" = "work"'';
+        command = ''echo "work"'';
         symbol = " ";
-        # Color determined by session name via style
+        style = "bold blue";
+        format = "[$symbol$output ]($style)";
+      };
+
+      custom.context_home = {
+        when = ''test "$CONTEXT" = "home"'';
+        command = ''echo "home"'';
+        symbol = " ";
         style = "bold green";
+        format = "[$symbol$output ]($style)";
+      };
+
+      custom.context_other = {
+        when = ''test -n "$CONTEXT" && test "$CONTEXT" != "work" && test "$CONTEXT" != "home"'';
+        command = ''echo "$CONTEXT"'';
+        symbol = " ";
+        style = "bold purple";
         format = "[$symbol$output ]($style)";
       };
 
@@ -454,7 +474,9 @@
       format = lib.concatStrings [
         "$username"
         "$hostname"
-        "\${custom.tmux}"
+        "\${custom.context_work}"
+        "\${custom.context_home}"
+        "\${custom.context_other}"
         "$directory"
         "$git_branch"
         "$git_status"

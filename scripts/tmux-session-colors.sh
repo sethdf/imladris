@@ -1,25 +1,29 @@
 #!/usr/bin/env bash
-# Tmux session-based color theming
-# Called by tmux hooks on session-created and client-session-changed
+# Tmux context-based color theming
+# Called by shell hook when CONTEXT changes (via direnv)
 
-SESSION_NAME=$(tmux display-message -p '#S')
+# Get context from environment or argument
+CONTEXT="${1:-$CONTEXT}"
+
+# Skip if not in tmux
+[ -z "$TMUX" ] && exit 0
 
 # Catppuccin Mocha colors
-GREEN="#a6e3a1"    # main/home sessions
-BLUE="#89b4fa"     # work sessions
-RED="#f38ba8"      # prod/admin sessions
-PURPLE="#cba6f7"   # other sessions
+GREEN="#a6e3a1"    # home context
+BLUE="#89b4fa"     # work context
+RED="#f38ba8"      # prod/admin context
+PURPLE="#cba6f7"   # other context
 PEACH="#fab387"    # warning accent
 
-# Determine color based on session name
-case "$SESSION_NAME" in
-  main|home|default)
+# Determine color based on context
+case "$CONTEXT" in
+  home)
     COLOR="$GREEN"
     ;;
-  work|dev|project*)
+  work)
     COLOR="$BLUE"
     ;;
-  prod*|admin*|root*)
+  prod*|admin*)
     COLOR="$RED"
     ;;
   *)
