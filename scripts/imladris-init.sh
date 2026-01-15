@@ -562,42 +562,50 @@ install_curu_skills() {
     local HOOKS_DST="$HOME/.claude/hooks"
     mkdir -p "$SKILLS_DST" "$HOOKS_DST" "$HOME/bin"
 
-    # Install skills (PAI format: SkillName/SKILL.md)
+    # Symlink skills (PAI format: SkillName/SKILL.md)
+    # Using symlinks so changes in curu-skills are immediately discoverable
     local skill_count=0
     for skill_dir in "$SKILLS_SRC"/*/; do
         [[ -d "$skill_dir" ]] || continue
         local name
         name=$(basename "$skill_dir")
         [[ "$name" == .* ]] && continue
+        [[ "$name" == "hooks" ]] && continue  # Skip hooks directory
 
-        # Copy entire skill directory (preserves PAI structure)
+        # Symlink skill directory (preserves PAI structure, enables live updates)
         if [[ -f "$skill_dir/SKILL.md" ]]; then
-            cp -r "$skill_dir" "$SKILLS_DST/"
+            # Remove existing (copy or broken symlink) and create fresh symlink
+            rm -rf "$SKILLS_DST/$name"
+            ln -sfn "$skill_dir" "$SKILLS_DST/$name"
             ((skill_count++))
         fi
     done
 
-    # Install helper scripts to ~/bin
+    # Symlink helper scripts to ~/bin
     local script_count=0
-    for script in "$SKILLS_SRC"/*/src/*.sh; do
+    for script in "$SKILLS_SRC"/*/Tools/*.sh; do
         [[ -f "$script" ]] || continue
         local script_name
         script_name=$(basename "$script")
-        cp "$script" "$HOME/bin/${script_name%.sh}"
-        chmod +x "$HOME/bin/${script_name%.sh}"
+        ln -sf "$script" "$HOME/bin/${script_name%.sh}"
+        chmod +x "$script"
         ((script_count++))
     done
 
-    # Install hooks
+    # Symlink hooks from hooks/ directory
     local hook_count=0
-    for hook in "$SKILLS_SRC"/*/src/*-hook.ts; do
-        [[ -f "$hook" ]] || continue
-        cp "$hook" "$HOOKS_DST/"
-        ((hook_count++))
-    done
+    if [[ -d "$SKILLS_SRC/hooks" ]]; then
+        for hook in "$SKILLS_SRC/hooks"/*; do
+            [[ -f "$hook" ]] || continue
+            local hook_name
+            hook_name=$(basename "$hook")
+            ln -sf "$hook" "$HOOKS_DST/$hook_name"
+            ((hook_count++))
+        done
+    fi
 
     if [[ $skill_count -gt 0 ]] || [[ $script_count -gt 0 ]] || [[ $hook_count -gt 0 ]]; then
-        log_success "Curu awakened: $skill_count skills, $script_count scripts, $hook_count hooks"
+        log_success "Curu awakened: $skill_count skills, $script_count scripts, $hook_count hooks (symlinked)"
     else
         log "No skills found in curu-skills repo"
     fi
