@@ -774,173 +774,70 @@ EOF
 }
 
 # =============================================================================
-# Curu Development Tools
-# Auto-sync skills to git repo for version control
+# Repo Watch (gitwatch)
+# Auto-commit sethdf repos on file changes using gitwatch
 # =============================================================================
 
-setup_curu_tools() {
-    log "Setting up Curu development tools..."
+setup_repo_watch() {
+    log "Setting up repo-watch (gitwatch for sethdf repos)..."
 
-    local CURU_REPO="$HOME/repos/github.com/sethdf/curu-skills"
+    local GITWATCH_REPO="$HOME/repos/github.com/gitwatch/gitwatch"
+    local SETHDF_REPOS="$HOME/repos/github.com/sethdf"
 
-    # Create curu-sync script
-    cat > "$HOME/bin/curu-sync" << 'CURUSYNC'
-#!/bin/bash
-# curu-sync: Sync skills and hooks from ~/.claude back to curu-skills repo
-set -euo pipefail
-
-CURU_REPO="$HOME/repos/github.com/sethdf/curu-skills"
-CLAUDE_SKILLS="$HOME/.claude/skills"
-CLAUDE_HOOKS="$HOME/.claude/hooks"
-
-if [[ ! -d "$CURU_REPO" ]]; then
-    echo "Error: curu-skills repo not found at $CURU_REPO"
-    echo "Run: ghq get -p sethdf/curu-skills"
-    exit 1
-fi
-
-echo "Syncing skills to curu-skills repo..."
-
-# Sync skill directories (only those that exist in repo or are new)
-for skill_dir in "$CLAUDE_SKILLS"/*/; do
-    [[ -d "$skill_dir" ]] || continue
-    skill_name=$(basename "$skill_dir")
-
-    # Skip symlinks (they're already linked to repo or other sources)
-    [[ -L "$skill_dir" ]] && continue
-
-    # Skip PAI core skills (CORE, CreateSkill, etc.)
-    [[ "$skill_name" == "CORE" ]] && continue
-    [[ "$skill_name" == "CreateSkill" ]] && continue
-    [[ "$skill_name" == *.bak ]] && continue
-
-    # Skip work-specific skills
-    [[ "$skill_name" == "sdp-list" ]] && continue
-    [[ "$skill_name" == "servicedesk-plus" ]] && continue
-
-    # Check if it has SKILL.md (proper PAI skill)
-    if [[ -f "$skill_dir/SKILL.md" ]]; then
-        echo "  Syncing: $skill_name"
-        cp -r "$skill_dir" "$CURU_REPO/"
+    # Clone gitwatch if not present
+    if [[ ! -d "$GITWATCH_REPO" ]]; then
+        log "  Cloning gitwatch..."
+        ghq get gitwatch/gitwatch || true
     fi
-done
 
-# Sync hooks back (match to skill src directories if possible)
-if [[ -d "$CLAUDE_HOOKS" ]]; then
-    for hook in "$CLAUDE_HOOKS"/*-hook.ts; do
-        [[ -f "$hook" ]] || continue
-        hook_name=$(basename "$hook")
-        echo "  Hook: $hook_name (kept in ~/.claude/hooks)"
-    done
-fi
-
-cd "$CURU_REPO"
-echo ""
-echo "Repository status:"
-git status --short
-
-echo ""
-echo "To commit: cd $CURU_REPO && git add -A && git commit -m 'Update skills' && git push"
-CURUSYNC
-    chmod +x "$HOME/bin/curu-sync"
-
-    # Create curu-watch script (auto-commit daemon)
-    cat > "$HOME/bin/curu-watch" << 'CURUWATCH'
-#!/bin/bash
-# curu-watch: Watch for skill changes and auto-commit to git
-set -euo pipefail
-
-CURU_REPO="$HOME/repos/github.com/sethdf/curu-skills"
-CLAUDE_SKILLS="$HOME/.claude/skills"
-CLAUDE_HOOKS="$HOME/.claude/hooks"
-DEBOUNCE_SECONDS=5
-
-if ! command -v inotifywait &>/dev/null; then
-    echo "Error: inotifywait not found. Install inotify-tools."
-    exit 1
-fi
-
-if [[ ! -d "$CURU_REPO" ]]; then
-    echo "Error: curu-skills repo not found at $CURU_REPO"
-    exit 1
-fi
-
-echo "Curu Watch: Monitoring for skill changes..."
-echo "  Skills: $CLAUDE_SKILLS"
-echo "  Hooks:  $CLAUDE_HOOKS"
-echo "  Repo:   $CURU_REPO"
-echo ""
-echo "Press Ctrl+C to stop."
-echo ""
-
-last_sync=0
-
-inotifywait -m -r "$CLAUDE_SKILLS" "$CLAUDE_HOOKS" \
-    -e modify -e create -e delete -e moved_to \
-    --exclude '\.git|\.swp|~$' \
-    2>/dev/null | while read -r directory event filename; do
-
-    # Debounce: skip if synced recently
-    now=$(date +%s)
-    if (( now - last_sync < DEBOUNCE_SECONDS )); then
-        continue
+    # Symlink gitwatch to PATH
+    if [[ -f "$GITWATCH_REPO/gitwatch.sh" ]]; then
+        ln -sf "$GITWATCH_REPO/gitwatch.sh" "$HOME/.local/bin/gitwatch"
+        log "  Linked gitwatch to ~/.local/bin/gitwatch"
     fi
-    last_sync=$now
 
-    echo "[$(date '+%H:%M:%S')] $event: $filename"
+    # Create systemd user service directory
+    mkdir -p "$HOME/.config/systemd/user"
 
-    # Run sync
-    curu-sync >/dev/null 2>&1 || true
+    # Create gitwatch service template
+    cat > "$HOME/.config/systemd/user/gitwatch@.service" << 'GITWATCH_SERVICE'
+[Unit]
+Description=gitwatch for %I
+After=network.target
 
-    # Auto-commit if there are changes
-    cd "$CURU_REPO"
-    if [[ -n $(git status --porcelain) ]]; then
-        git add -A
-        git commit -m "Auto: $event $filename" --quiet
-        git push --quiet 2>/dev/null && echo "  Pushed to GitHub" || echo "  Committed locally (push manually)"
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/gitwatch -r origin -b main -s 10 %h/repos/github.com/sethdf/%i
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
+GITWATCH_SERVICE
+
+    # Reload systemd
+    systemctl --user daemon-reload
+
+    # Enable and start services for each sethdf repo
+    if [[ -d "$SETHDF_REPOS" ]]; then
+        for repo_dir in "$SETHDF_REPOS"/*/; do
+            [[ -d "$repo_dir/.git" ]] || continue
+            repo_name=$(basename "$repo_dir")
+
+            log "  Enabling gitwatch for: $repo_name"
+            systemctl --user enable "gitwatch@${repo_name}.service" 2>/dev/null || true
+            systemctl --user start "gitwatch@${repo_name}.service" 2>/dev/null || true
+        done
     fi
-done
-CURUWATCH
-    chmod +x "$HOME/bin/curu-watch"
 
-    # Create curu-commit script (manual commit helper)
-    cat > "$HOME/bin/curu-commit" << 'CURUCOMMIT'
-#!/bin/bash
-# curu-commit: Sync and commit skills with a message
-set -euo pipefail
-
-CURU_REPO="$HOME/repos/github.com/sethdf/curu-skills"
-
-# Sync first
-curu-sync
-
-cd "$CURU_REPO"
-
-if [[ -z $(git status --porcelain) ]]; then
-    echo "No changes to commit."
-    exit 0
-fi
-
-# Get commit message
-if [[ $# -gt 0 ]]; then
-    msg="$*"
-else
-    echo "Enter commit message (or Ctrl+C to cancel):"
-    read -r msg
-fi
-
-git add -A
-git commit -m "$msg"
-git push
-
-echo "Changes committed and pushed."
-CURUCOMMIT
-    chmod +x "$HOME/bin/curu-commit"
-
-    log_success "Curu tools installed"
-    log "  curu-sync   - Sync skills from ~/.claude to repo"
-    log "  curu-watch  - Auto-commit daemon (run in background)"
-    log "  curu-commit - Sync and commit with message"
+    log_success "repo-watch installed"
+    log "  gitwatch@<repo>.service - Auto-commit daemon per repo"
+    log "  Watching: $(ls -1 "$SETHDF_REPOS" 2>/dev/null | tr '\n' ' ')"
+    log ""
+    log "  Commands:"
+    log "    systemctl --user status 'gitwatch@*'     - Check status"
+    log "    systemctl --user restart gitwatch@imladris  - Restart watcher"
+    log "    journalctl --user -u gitwatch@imladris -f   - View logs"
 }
 
 # =============================================================================
@@ -1017,7 +914,7 @@ install_curu_skills
 install_anthropic_skills
 
 # Curu development tools (sync, watch, commit)
-setup_curu_tools
+setup_repo_watch
 
 # Configure SDP credentials (work context)
 setup_sdp_credentials
@@ -1053,11 +950,11 @@ log "     cd ~/work && direnv allow"
 log "     cd ~/home && direnv allow"
 log ""
 log "╔════════════════════════════════════════════════════════════════╗"
-log "║                    Curu Skill Tools                            ║"
+log "║                    Repo Watch (gitwatch)                       ║"
 log "╚════════════════════════════════════════════════════════════════╝"
-log "  curu-sync   - Sync skills from ~/.claude to git repo"
-log "  curu-watch  - Auto-commit daemon (run in tmux)"
-log "  curu-commit - Manual sync + commit with message"
+log "  Auto-commits all sethdf repos on file changes"
+log "  systemctl --user status 'gitwatch@*'  - Check status"
+log "  journalctl --user -u gitwatch@imladris -f  - View logs"
 log ""
 log "╔════════════════════════════════════════════════════════════════╗"
 log "║                    On Next Reboot                              ║"
