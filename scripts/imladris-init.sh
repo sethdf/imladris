@@ -427,7 +427,7 @@ setup_directories() {
 
     # Create directory structure on encrypted volume
     # Work directories
-    mkdir -p "$DATA_MOUNT/work"/{repos,tickets,notes}
+    mkdir -p "$DATA_MOUNT/work"/{repos,tickets,notes,adhoc}
 
     # Home directories
     mkdir -p "$DATA_MOUNT/home"/{repos,projects,notes}
@@ -1034,7 +1034,7 @@ log ""
 log "╔════════════════════════════════════════════════════════════════╗"
 log "║                    Directory Structure                         ║"
 log "╚════════════════════════════════════════════════════════════════╝"
-log "  ~/work     → Work files (repos, tickets, notes)"
+log "  ~/work     → Work files (repos, tickets, notes, adhoc)"
 log "  ~/home     → Personal files (repos, projects, notes)"
 log "  ~/.claude  → Curu AI (skills, hooks, history) → /data/.claude"
 log ""

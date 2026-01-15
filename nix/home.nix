@@ -163,6 +163,15 @@
         mkdir -p "${homeDirectory}/.cache/imladris"
         mkdir -p "${homeDirectory}/.config"
         mkdir -p "${homeDirectory}/.config/bws"
+        mkdir -p "${homeDirectory}/.config/tmux"
+      '';
+
+      # Symlink tmux session colors script
+      installTmuxColors = lib.hm.dag.entryAfter [ "writeBoundary" "cloneRepos" ] ''
+        SCRIPT_DIR="${homeDirectory}/repos/github.com/sethdf/imladris/scripts"
+        if [ -f "$SCRIPT_DIR/tmux-session-colors.sh" ]; then
+          ln -sf "$SCRIPT_DIR/tmux-session-colors.sh" "${homeDirectory}/.config/tmux/session-colors.sh"
+        fi
       '';
 
       # Install Signal interface systemd service
@@ -329,6 +338,11 @@
       # Enable RGB color support
       set -ga terminal-overrides ",*256col*:Tc"
 
+      # Session-based color theming
+      # Colors: main=green, work=blue, prod/admin=red, other=purple
+      set-hook -g client-session-changed 'run-shell "~/.config/tmux/session-colors.sh"'
+      set-hook -g session-created 'run-shell "~/.config/tmux/session-colors.sh"'
+
       # Pane splitting with | and -
       bind | split-window -h -c "#{pane_current_path}"
       bind - split-window -v -c "#{pane_current_path}"
@@ -426,10 +440,21 @@
         format = "[$output ]($style)";
       };
 
+      # Tmux session indicator (different colors per session)
+      custom.tmux = {
+        when = ''test -n "$TMUX"'';
+        command = ''tmux display-message -p "#S"'';
+        symbol = " ";
+        # Color determined by session name via style
+        style = "bold green";
+        format = "[$symbol$output ]($style)";
+      };
+
       # Format order - explicitly list custom modules
       format = lib.concatStrings [
         "$username"
         "$hostname"
+        "\${custom.tmux}"
         "$directory"
         "$git_branch"
         "$git_status"
