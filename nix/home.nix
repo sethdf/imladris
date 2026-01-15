@@ -44,6 +44,7 @@
       awscli2
       azure-cli
       google-cloud-sdk
+      powershell  # Microsoft Graph SDK for M365 integration
 
       # Container tools
       lazydocker
