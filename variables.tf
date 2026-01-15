@@ -51,7 +51,7 @@ variable "data_volume_size" {
 variable "volume_iops" {
   description = "EBS gp3 IOPS"
   type        = number
-  default     = 3000
+  default     = 6000
 
   validation {
     condition     = var.volume_iops >= 3000 && var.volume_iops <= 16000
@@ -62,7 +62,7 @@ variable "volume_iops" {
 variable "volume_throughput" {
   description = "EBS gp3 throughput in MiB/s"
   type        = number
-  default     = 250
+  default     = 500
 
   validation {
     condition     = var.volume_throughput >= 125 && var.volume_throughput <= 1000
