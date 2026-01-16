@@ -277,6 +277,82 @@ _ak_ensure_claude() {
 # }
 
 # ============================================================================
+# MS365 Graph (Calendar, Mail via delegated auth)
+# ============================================================================
+
+_ak_graph_client_id="a7e5374a-7e56-452b-b9da-655c78bc4121"
+_ak_graph_tenant_id="99cc3795-3b94-4c8f-a292-8c4c153771a5"
+
+_ak_graph_get_expiry() {
+    secret-tool lookup service imladris-graph type expiry 2>/dev/null || echo "0"
+}
+
+_ak_graph_get_refresh_token() {
+    secret-tool lookup service imladris-graph type refresh-token 2>/dev/null
+}
+
+_ak_graph_token_valid() {
+    local now buffer expiry
+    now=$(date +%s)
+    buffer=$AUTH_KEEPER_REFRESH_BUFFER
+    expiry=$(_ak_graph_get_expiry)
+
+    [[ -n "$expiry" ]] && (( expiry - buffer > now ))
+}
+
+_ak_graph_has_refresh() {
+    local rt
+    rt=$(_ak_graph_get_refresh_token)
+    [[ -n "$rt" ]]
+}
+
+_ak_graph_refresh() {
+    local refresh_token
+    refresh_token=$(_ak_graph_get_refresh_token)
+
+    if [[ -z "$refresh_token" ]]; then
+        _ak_notify "MS365 Graph" "No refresh token - run 'ocal --auth'"
+        return 1
+    fi
+
+    local response
+    response=$(curl -s -X POST "https://login.microsoftonline.com/$_ak_graph_tenant_id/oauth2/v2.0/token" \
+        -d "client_id=$_ak_graph_client_id" \
+        -d "grant_type=refresh_token" \
+        -d "refresh_token=$refresh_token" \
+        -d "scope=https://graph.microsoft.com/Calendars.Read https://graph.microsoft.com/Calendars.ReadWrite offline_access")
+
+    if echo "$response" | jq -e '.access_token' &>/dev/null; then
+        local access_token expires_in new_refresh_token expiry_time
+        access_token=$(echo "$response" | jq -r '.access_token')
+        expires_in=$(echo "$response" | jq -r '.expires_in')
+        new_refresh_token=$(echo "$response" | jq -r '.refresh_token // empty')
+        expiry_time=$(($(date +%s) + expires_in))
+
+        # Use new refresh token if provided
+        [[ -z "$new_refresh_token" ]] && new_refresh_token="$refresh_token"
+
+        # Store tokens in keyring
+        echo -n "$access_token" | secret-tool store --label="graph-calendar-access-token" service imladris-graph type access-token
+        echo -n "$new_refresh_token" | secret-tool store --label="graph-calendar-refresh-token" service imladris-graph type refresh-token
+        echo -n "$expiry_time" | secret-tool store --label="graph-calendar-expiry" service imladris-graph type expiry
+
+        echo "[auth-keeper] MS365 Graph token refreshed" >&2
+        return 0
+    else
+        _ak_notify "MS365 Graph" "Refresh failed: $(echo "$response" | jq -r '.error_description // .error')"
+        return 1
+    fi
+}
+
+_ak_ensure_graph() {
+    if ! _ak_graph_token_valid; then
+        echo "[auth-keeper] MS365 Graph token expired, refreshing..." >&2
+        _ak_graph_refresh
+    fi
+}
+
+# ============================================================================
 # Tailscale
 # ============================================================================
 
@@ -335,6 +411,20 @@ auth-keeper() {
                 echo "claude-code: using bedrock or not configured"
             fi
 
+            # MS365 Graph
+            if _ak_graph_token_valid; then
+                local exp_time remaining hours mins
+                exp_time=$(_ak_graph_get_expiry)
+                remaining=$((exp_time - $(date +%s)))
+                hours=$((remaining / 3600))
+                mins=$(((remaining % 3600) / 60))
+                echo "ms365-graph: valid (expires in ${hours}h ${mins}m)"
+            elif _ak_graph_has_refresh; then
+                echo "ms365-graph: expired (has refresh token)"
+            else
+                echo "ms365-graph: not configured (run 'ocal --auth')"
+            fi
+
             # Tailscale
             if command -v tailscale &>/dev/null; then
                 if _ak_tailscale_connected; then
@@ -357,12 +447,16 @@ auth-keeper() {
                 azure|az)
                     _ak_azure_refresh
                     ;;
+                ms365|graph)
+                    _ak_graph_refresh
+                    ;;
                 all)
                     _ak_aws_refresh
                     _ak_azure_refresh
+                    _ak_graph_refresh
                     ;;
                 *)
-                    echo "Usage: auth-keeper refresh [aws|azure|all]"
+                    echo "Usage: auth-keeper refresh [aws|azure|ms365|all]"
                     ;;
             esac
             ;;

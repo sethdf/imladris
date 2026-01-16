@@ -110,6 +110,9 @@
       # Fabric - AI content extraction
       yt = "fabric -y";  # fabric -y "URL" gets YouTube transcript
 
+      # MS365 Calendar
+      ocal = "ocal.sh";  # Outlook calendar: ocal today, ocal week
+
       # DevBox scripts
       init = "imladris-init";
       check = "imladris-check";
