@@ -192,25 +192,85 @@ az() {
 }
 
 # ============================================================================
-# Google OAuth (for PAI skills)
+# Google OAuth (home context - Gmail, Calendar)
 # ============================================================================
 
-_ak_google_token_file="${GMAIL_TOKEN:-$HOME/.config/gmail-cli/token.json}"
+_ak_google_client_id=""  # Loaded from keyring on demand
+_ak_google_client_secret=""  # Loaded from keyring on demand
+
+_ak_google_load_credentials() {
+    if [[ -z "$_ak_google_client_id" ]]; then
+        _ak_google_client_id=$(secret-tool lookup service imladris-google type client-id 2>/dev/null || echo "")
+        _ak_google_client_secret=$(secret-tool lookup service imladris-google type client-secret 2>/dev/null || echo "")
+    fi
+}
+
+_ak_google_get_expiry() {
+    secret-tool lookup service imladris-google type expiry 2>/dev/null || echo "0"
+}
+
+_ak_google_get_refresh_token() {
+    secret-tool lookup service imladris-google type refresh-token 2>/dev/null
+}
 
 _ak_google_token_valid() {
-    [[ -f "$_ak_google_token_file" ]] || return 1
-
     local now buffer expiry
     now=$(date +%s)
     buffer=$AUTH_KEEPER_REFRESH_BUFFER
-    expiry=$(jq -r '.expiry_date // 0' "$_ak_google_token_file" 2>/dev/null)
+    expiry=$(_ak_google_get_expiry)
 
-    # expiry_date is in milliseconds
-    (( expiry / 1000 - buffer > now ))
+    [[ -n "$expiry" ]] && (( expiry - buffer > now ))
 }
 
 _ak_google_has_refresh() {
-    [[ -f "$_ak_google_token_file" ]] && jq -e '.refresh_token' "$_ak_google_token_file" &>/dev/null
+    local rt
+    rt=$(_ak_google_get_refresh_token)
+    [[ -n "$rt" ]]
+}
+
+_ak_google_refresh() {
+    _ak_google_load_credentials
+
+    if [[ -z "$_ak_google_client_id" || -z "$_ak_google_client_secret" ]]; then
+        _ak_notify "Google" "OAuth credentials not configured - run 'gcal --setup'"
+        return 1
+    fi
+
+    local refresh_token
+    refresh_token=$(_ak_google_get_refresh_token)
+
+    if [[ -z "$refresh_token" ]]; then
+        _ak_notify "Google" "No refresh token - run 'gcal --auth'"
+        return 1
+    fi
+
+    local response
+    response=$(curl -s -X POST "https://oauth2.googleapis.com/token" \
+        -d "client_id=$_ak_google_client_id" \
+        -d "client_secret=$_ak_google_client_secret" \
+        -d "grant_type=refresh_token" \
+        -d "refresh_token=$refresh_token")
+
+    if echo "$response" | jq -e '.access_token' &>/dev/null; then
+        local access_token expires_in expiry_time
+        access_token=$(echo "$response" | jq -r '.access_token')
+        expires_in=$(echo "$response" | jq -r '.expires_in')
+        expiry_time=$(($(date +%s) + expires_in))
+
+        echo -n "$access_token" | secret-tool store --label="google-calendar-access-token" service imladris-google type access-token
+        echo -n "$expiry_time" | secret-tool store --label="google-calendar-expiry" service imladris-google type expiry
+
+        echo "[auth-keeper] Google token refreshed" >&2
+        return 0
+    else
+        _ak_notify "Google" "Refresh failed: $(echo "$response" | jq -r '.error_description // .error')"
+        return 1
+    fi
+}
+
+_ak_google_configured() {
+    _ak_google_load_credentials
+    [[ -n "$_ak_google_client_id" ]]
 }
 
 # ============================================================================
@@ -394,15 +454,22 @@ auth-keeper() {
                 echo "azure: expired (needs login)"
             fi
 
-            # Google
-            if _ak_google_token_valid; then
-                echo "google: valid"
-            elif _ak_google_has_refresh; then
-                echo "google: expired (has refresh token)"
-            elif [[ -f "$_ak_google_token_file" ]]; then
-                echo "google: expired"
+            # Google (home context)
+            if _ak_google_configured; then
+                if _ak_google_token_valid; then
+                    local exp_time remaining hours mins
+                    exp_time=$(_ak_google_get_expiry)
+                    remaining=$((exp_time - $(date +%s)))
+                    hours=$((remaining / 3600))
+                    mins=$(((remaining % 3600) / 60))
+                    echo "google: valid (expires in ${hours}h ${mins}m)"
+                elif _ak_google_has_refresh; then
+                    echo "google: expired (has refresh token)"
+                else
+                    echo "google: configured but no tokens (run 'gcal --auth')"
+                fi
             else
-                echo "google: not configured"
+                echo "google: not configured (run 'gcal --setup')"
             fi
 
             # Claude Code
@@ -455,13 +522,17 @@ auth-keeper() {
                 ms365|graph)
                     _ak_graph_refresh
                     ;;
+                google)
+                    _ak_google_refresh
+                    ;;
                 all)
                     _ak_aws_refresh
                     _ak_azure_refresh
                     _ak_graph_refresh
+                    _ak_google_refresh
                     ;;
                 *)
-                    echo "Usage: auth-keeper refresh [aws|azure|ms365|all]"
+                    echo "Usage: auth-keeper refresh [aws|azure|ms365|google|all]"
                     ;;
             esac
             ;;
