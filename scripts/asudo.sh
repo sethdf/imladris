@@ -323,25 +323,49 @@ _asudo_m365_assume() {
     scope_array=$(echo "$scopes" | tr ' ' ',')
 
     echo "Authenticating to Microsoft Graph ($level)..."
-    echo "Follow the device code instructions below."
-    echo ""
 
-    # Run PowerShell interactively to show device code
-    # -ContextScope Process disables token caching (no secrets service on headless server)
-    if pwsh -Command "Connect-MgGraph -ClientId '$M365_CLIENT_ID' -TenantId '$M365_TENANT_ID' -Scopes '$scope_array' -UseDeviceCode -ContextScope Process -NoWelcome"; then
-        # Get context after successful auth
-        local account
-        account=$(pwsh -Command "(Get-MgContext).Account" 2>/dev/null)
+    local auth_result
+    if [[ -n "$M365_CLIENT_SECRET" ]]; then
+        # App-only auth with client secret (bypasses user CA policies)
+        echo "Using app-only authentication..."
+        auth_result=$(pwsh -Command "
+            \$secureSecret = ConvertTo-SecureString '$M365_CLIENT_SECRET' -AsPlainText -Force
+            \$credential = New-Object System.Management.Automation.PSCredential('$M365_CLIENT_ID', \$secureSecret)
+            try {
+                Connect-MgGraph -TenantId '$M365_TENANT_ID' -ClientSecretCredential \$credential -NoWelcome
+                \$ctx = Get-MgContext
+                Write-Output \"SUCCESS|\$(\$ctx.AppName)|\$(\$ctx.TenantId)|\"
+            } catch {
+                Write-Output \"ERROR|\$_\"
+            }
+        " 2>&1)
+    else
+        # Delegated auth with device code (requires user sign-in)
+        echo "Follow the device code instructions below."
+        echo ""
+        if pwsh -Command "Connect-MgGraph -ClientId '$M365_CLIENT_ID' -TenantId '$M365_TENANT_ID' -Scopes '$scope_array' -UseDeviceCode -ContextScope Process -NoWelcome"; then
+            local account
+            account=$(pwsh -Command "(Get-MgContext).Account" 2>/dev/null)
+            auth_result="SUCCESS|$account||"
+        else
+            auth_result="ERROR|Device code authentication failed"
+        fi
+    fi
+
+    if [[ "$auth_result" == SUCCESS* ]]; then
+        local account_info
+        account_info=$(echo "$auth_result" | cut -d'|' -f2)
 
         ASUDO_CURRENT_PROVIDER="m365"
-        ASUDO_CURRENT_ENV="$account"
+        ASUDO_CURRENT_ENV="${account_info:-app-only}"
         ASUDO_CURRENT_LEVEL="$level"
         export ASUDO_CURRENT_PROVIDER ASUDO_CURRENT_ENV ASUDO_CURRENT_LEVEL
 
         echo ""
-        echo "M365 $level - account: $account"
+        echo "M365 $level - ${account_info:-app-only auth}"
     else
-        echo "Failed to connect to Microsoft Graph" >&2
+        echo "Failed to connect to Microsoft Graph:" >&2
+        echo "$auth_result" | cut -d'|' -f2 >&2
         return 1
     fi
 }
