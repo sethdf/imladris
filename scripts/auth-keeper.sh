@@ -4,7 +4,7 @@
 # Requires: jq, bws (for secrets), pwsh (for ms365)
 
 # Configuration
-AUTH_KEEPER_NOTIFY="${AUTH_KEEPER_NOTIFY:-signal}"  # signal, telegram, bell, none
+AUTH_KEEPER_NOTIFY="${AUTH_KEEPER_NOTIFY:-signal}"  # signal (default), telegram, bell, none
 AUTH_KEEPER_REFRESH_BUFFER=300  # Refresh 5 min before expiry
 
 # ============================================================================
@@ -1183,3 +1183,43 @@ elif [[ -n "${BASH_VERSION:-}" ]]; then
     }
     complete -F _auth_keeper_comp auth-keeper
 fi
+
+# ============================================================================
+# Quick Inbox (Signal as primary)
+# ============================================================================
+
+# Quick capture to Signal inbox
+inbox() {
+    local message="$*"
+
+    # If no args, read from stdin (for piping)
+    if [[ -z "$message" ]]; then
+        if [[ ! -t 0 ]]; then
+            message=$(cat)
+        else
+            echo "Usage: inbox <message>" >&2
+            echo "       echo 'text' | inbox" >&2
+            return 1
+        fi
+    fi
+
+    auth-keeper signal send "$message"
+}
+
+# Alias for even quicker access
+i() { inbox "$@"; }
+
+# Send command output to inbox
+# Usage: inbox-run ls -la
+inbox-run() {
+    local output
+    output=$("$@" 2>&1)
+    local status=$?
+    inbox "$ $*
+---
+$output
+---
+Exit: $status"
+    return $status
+}
+
