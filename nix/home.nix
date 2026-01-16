@@ -264,6 +264,12 @@
       eval "$(zoxide init zsh)"
       eval "$(direnv hook zsh)"
 
+      # Unlock gnome-keyring for secret storage (himalaya OAuth tokens, etc)
+      # Uses empty password for headless server operation
+      if command -v gnome-keyring-daemon &>/dev/null; then
+        echo "" | gnome-keyring-daemon --unlock &>/dev/null
+      fi
+
       # Update tmux colors when CONTEXT changes (after direnv)
       _update_tmux_context() {
         [[ -n "$TMUX" ]] && ~/.config/tmux/session-colors.sh 2>/dev/null
