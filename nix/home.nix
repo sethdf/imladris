@@ -46,7 +46,7 @@
       google-cloud-sdk
       powershell  # Microsoft Graph SDK for M365 integration
       libsecret   # Required for PowerShell Graph token caching
-      gnome-keyring  # Secret service for OAuth2 token storage (himalaya, etc)
+      gnome-keyring  # Secret service for OAuth2 token caching (auth-keeper)
 
       # Container tools
       lazydocker
@@ -62,9 +62,9 @@
       # Media & transcripts
       yt-dlp
 
-      # Email (local sync + search)
-      himalaya      # CLI email client with maildir sync
-      notmuch       # Fast local email search/indexing
+      # Email (optional - auth-keeper is primary)
+      # himalaya      # CLI email client (optional, use auth-keeper ms365/google instead)
+      # notmuch       # Fast local email search/indexing
 
       # Version management
       mise
@@ -110,11 +110,10 @@
       # Fabric - AI content extraction
       yt = "fabric -y";  # fabric -y "URL" gets YouTube transcript
 
-      # MS365 Calendar (work context)
-      ocal = "ocal.sh";  # Outlook calendar: ocal today, ocal week
-
-      # Google Calendar (home context)
-      gcal = "gcal.sh";  # Google calendar: gcal today, gcal week
+      # auth-keeper shortcuts (unified service access)
+      ms365 = "auth-keeper ms365";    # MS365 PowerShell (service principal)
+      gmail = "auth-keeper google mail";      # Gmail list
+      gcal = "auth-keeper google calendar";   # Google Calendar
 
       # DevBox scripts
       init = "imladris-init";
@@ -270,7 +269,7 @@
       eval "$(zoxide init zsh)"
       eval "$(direnv hook zsh)"
 
-      # Unlock gnome-keyring for secret storage (himalaya OAuth tokens, etc)
+      # Unlock gnome-keyring for secret storage (auth-keeper Google OAuth cache)
       # Uses empty password for headless server operation
       if command -v gnome-keyring-daemon &>/dev/null; then
         echo "" | gnome-keyring-daemon --unlock &>/dev/null
@@ -307,34 +306,6 @@
       if type _cb_apply_backend &>/dev/null; then
         _cb_apply_backend 2>/dev/null
       fi
-
-      # Context-aware wrappers for email/calendar tools
-      # himalaya: work context -> MS365, home context -> Gmail
-      # Note: -a flag must come after subcommand (e.g., himalaya envelope list -a work)
-      himalaya() {
-        local account
-        case "''${CONTEXT:-}" in
-          work)
-            account="work"
-            ;;
-          home)
-            account="personal"
-            ;;
-          *)
-            echo -e "\033[0;31mError: himalaya requires work or home context\033[0m" >&2
-            echo "Set CONTEXT=work or CONTEXT=home via direnv" >&2
-            return 1
-            ;;
-        esac
-        # Insert -a <account> after the subcommand
-        if [[ $# -ge 1 ]]; then
-          local cmd="$1"
-          shift
-          command himalaya "$cmd" -a "$account" "$@"
-        else
-          command himalaya -a "$account"
-        fi
-      }
 
       # Imladris shell helpers (created by imladris-init)
       [[ -f "$HOME/.config/imladris/shell-helpers.sh" ]] && \

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# auth-keeper - Lazy authentication refresh for CLI tools
+# auth-keeper - Unified authentication and service access
 # Source this file in your shell: source ~/bin/auth-keeper
-# Requires: jq, bws (for secrets)
+# Requires: jq, bws (for secrets), pwsh (for ms365)
 
 # Configuration
 AUTH_KEEPER_NOTIFY="${AUTH_KEEPER_NOTIFY:-signal}"  # signal, telegram, bell, none
@@ -56,6 +56,15 @@ _ak_telegram_send() {
 }
 
 # ============================================================================
+# BWS Helper
+# ============================================================================
+
+_ak_bws_get() {
+    local key="$1"
+    bws secret list 2>/dev/null | jq -r --arg k "$key" '.[] | select(.key == $k) | .value'
+}
+
+# ============================================================================
 # AWS SSO
 # ============================================================================
 
@@ -95,7 +104,6 @@ _ak_aws_refresh() {
 
     echo "[auth-keeper] AWS SSO login required" >&2
 
-    # Use --no-browser to get device code
     local output
     if [[ -n "$profile" ]]; then
         output=$(command aws sso login --profile "$profile" --no-browser 2>&1)
@@ -103,7 +111,6 @@ _ak_aws_refresh() {
         output=$(command aws sso login --no-browser 2>&1)
     fi
 
-    # Extract verification URL and code for notification
     local url code
     url=$(echo "$output" | grep -oP 'https://device\.sso\.[^[:space:]]+' | head -1)
     code=$(echo "$output" | grep -oP 'code:\s*\K[A-Z0-9-]+' | head -1)
@@ -112,7 +119,6 @@ _ak_aws_refresh() {
         _ak_notify "AWS SSO" "Approve: $url (code: $code)"
     fi
 
-    # Wait for approval (aws sso login --no-browser blocks until approved)
     echo "$output"
 }
 
@@ -192,55 +198,118 @@ az() {
 }
 
 # ============================================================================
-# Google OAuth (home context - Gmail, Calendar)
+# MS365 - Service Principal (mail, calendar, teams, sharepoint, etc.)
 # ============================================================================
 
-_ak_google_client_id=""  # Loaded from keyring on demand
-_ak_google_client_secret=""  # Loaded from keyring on demand
+_ak_ms365_tenant_id="99cc3795-3b94-4c8f-a292-8c4c153771a5"
+_ak_ms365_user="sfoley@buxtonco.com"
 
-_ak_google_load_credentials() {
-    if [[ -z "$_ak_google_client_id" ]]; then
-        _ak_google_client_id=$(secret-tool lookup service imladris-google type client-id 2>/dev/null || echo "")
-        _ak_google_client_secret=$(secret-tool lookup service imladris-google type client-secret 2>/dev/null || echo "")
+_ak_ms365_get_creds() {
+    local secrets
+    secrets=$(bws secret list 2>/dev/null) || {
+        echo "Error: BWS not available. Run: bws login" >&2
+        return 1
+    }
+
+    _ak_ms365_client_id=$(echo "$secrets" | jq -r '.[] | select(.key == "m365-client-id") | .value')
+    _ak_ms365_client_secret=$(echo "$secrets" | jq -r '.[] | select(.key == "m365-client-secret") | .value')
+
+    if [[ -z "$_ak_ms365_client_id" || -z "$_ak_ms365_client_secret" ]]; then
+        echo "Error: m365-client-id or m365-client-secret not found in BWS" >&2
+        return 1
     fi
 }
 
-_ak_google_get_expiry() {
-    secret-tool lookup service imladris-google type expiry 2>/dev/null || echo "0"
+_ak_ms365_preamble() {
+    cat <<PREAMBLE
+\$ErrorActionPreference = 'Stop'
+\$clientSecret = ConvertTo-SecureString '$_ak_ms365_client_secret' -AsPlainText -Force
+\$credential = New-Object System.Management.Automation.PSCredential('$_ak_ms365_client_id', \$clientSecret)
+Connect-MgGraph -TenantId '$_ak_ms365_tenant_id' -ClientSecretCredential \$credential -NoWelcome
+PREAMBLE
 }
 
-_ak_google_get_refresh_token() {
-    secret-tool lookup service imladris-google type refresh-token 2>/dev/null
+_ak_ms365_cmd() {
+    _ak_ms365_get_creds || return 1
+    local cmd="$1"
+
+    pwsh -Command "$(_ak_ms365_preamble)
+$cmd"
+}
+
+_ak_ms365_interactive() {
+    _ak_ms365_get_creds || return 1
+
+    local profile
+    profile=$(mktemp --suffix=.ps1)
+    cat > "$profile" <<EOF
+$(_ak_ms365_preamble)
+Write-Host "Connected to MS365 as service principal" -ForegroundColor Green
+Write-Host "User: $_ak_ms365_user | Tenant: $_ak_ms365_tenant_id" -ForegroundColor DarkGray
+Write-Host ""
+Write-Host "Quick reference:" -ForegroundColor Yellow
+Write-Host "  Get-MgUserMessage -UserId '$_ak_ms365_user' -Top 10"
+Write-Host "  Get-MgUserMessage -UserId '$_ak_ms365_user' -Filter 'isRead eq false' -CountVariable c -Top 1; \\\$c"
+Write-Host "  Get-MgUserCalendarEvent -UserId '$_ak_ms365_user'"
+Write-Host "  Get-MgUser -UserId '$_ak_ms365_user'"
+Write-Host ""
+EOF
+
+    pwsh -NoLogo -NoProfile -Command ". '$profile'; Remove-Item '$profile'; \$host.UI.RawUI.WindowTitle = 'MS365 PowerShell'"
+}
+
+_ak_ms365_configured() {
+    bws secret list 2>/dev/null | jq -e '.[] | select(.key == "m365-client-id")' &>/dev/null
+}
+
+# ============================================================================
+# Google - OAuth2 Delegated (gmail, calendar)
+# ============================================================================
+
+_ak_google_get_creds() {
+    local secrets
+    secrets=$(bws secret list 2>/dev/null) || {
+        echo "Error: BWS not available. Run: bws login" >&2
+        return 1
+    }
+
+    local client_json
+    client_json=$(echo "$secrets" | jq -r '.[] | select(.key == "gcp-oauth-client-json") | .value')
+
+    if [[ -z "$client_json" ]]; then
+        echo "Error: gcp-oauth-client-json not found in BWS" >&2
+        return 1
+    fi
+
+    _ak_google_client_id=$(echo "$client_json" | jq -r '.installed.client_id // .web.client_id')
+    _ak_google_client_secret=$(echo "$client_json" | jq -r '.installed.client_secret // .web.client_secret')
+    _ak_google_refresh_token=$(echo "$secrets" | jq -r '.[] | select(.key == "gcp-oauth-refresh-token") | .value')
 }
 
 _ak_google_token_valid() {
-    local now buffer expiry
+    # Check keyring for cached token
+    local expiry
+    expiry=$(secret-tool lookup service imladris-google type expiry 2>/dev/null || echo "0")
+
+    local now buffer
     now=$(date +%s)
     buffer=$AUTH_KEEPER_REFRESH_BUFFER
-    expiry=$(_ak_google_get_expiry)
 
     [[ -n "$expiry" ]] && (( expiry - buffer > now ))
 }
 
-_ak_google_has_refresh() {
-    local rt
-    rt=$(_ak_google_get_refresh_token)
-    [[ -n "$rt" ]]
-}
-
-_ak_google_refresh() {
-    _ak_google_load_credentials
-
-    if [[ -z "$_ak_google_client_id" || -z "$_ak_google_client_secret" ]]; then
-        _ak_notify "Google" "OAuth credentials not configured - run 'gcal --setup'"
-        return 1
+_ak_google_get_access_token() {
+    # Return cached token if valid
+    if _ak_google_token_valid; then
+        secret-tool lookup service imladris-google type access-token 2>/dev/null
+        return 0
     fi
 
-    local refresh_token
-    refresh_token=$(_ak_google_get_refresh_token)
+    # Refresh token
+    _ak_google_get_creds || return 1
 
-    if [[ -z "$refresh_token" ]]; then
-        _ak_notify "Google" "No refresh token - run 'gcal --auth'"
+    if [[ -z "$_ak_google_refresh_token" ]]; then
+        echo "Error: No refresh token. Run: auth-keeper google --auth" >&2
         return 1
     fi
 
@@ -249,7 +318,7 @@ _ak_google_refresh() {
         -d "client_id=$_ak_google_client_id" \
         -d "client_secret=$_ak_google_client_secret" \
         -d "grant_type=refresh_token" \
-        -d "refresh_token=$refresh_token")
+        -d "refresh_token=$_ak_google_refresh_token")
 
     if echo "$response" | jq -e '.access_token' &>/dev/null; then
         local access_token expires_in expiry_time
@@ -257,164 +326,85 @@ _ak_google_refresh() {
         expires_in=$(echo "$response" | jq -r '.expires_in')
         expiry_time=$(($(date +%s) + expires_in))
 
-        echo -n "$access_token" | secret-tool store --label="google-calendar-access-token" service imladris-google type access-token
-        echo -n "$expiry_time" | secret-tool store --label="google-calendar-expiry" service imladris-google type expiry
+        # Cache in keyring
+        echo -n "$access_token" | secret-tool store --label="google-access-token" service imladris-google type access-token
+        echo -n "$expiry_time" | secret-tool store --label="google-expiry" service imladris-google type expiry
 
-        echo "[auth-keeper] Google token refreshed" >&2
+        echo "$access_token"
         return 0
     else
-        _ak_notify "Google" "Refresh failed: $(echo "$response" | jq -r '.error_description // .error')"
+        echo "Error: Token refresh failed: $(echo "$response" | jq -r '.error_description // .error')" >&2
+        return 1
+    fi
+}
+
+_ak_google_auth() {
+    _ak_google_get_creds || return 1
+
+    local scopes="https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar"
+    local auth_url="https://accounts.google.com/o/oauth2/v2/auth?client_id=$_ak_google_client_id&redirect_uri=urn:ietf:wg:oauth:2.0:oob&response_type=code&scope=$(echo "$scopes" | sed 's/ /%20/g')&access_type=offline&prompt=consent"
+
+    echo "Open this URL in your browser:"
+    echo ""
+    echo "$auth_url"
+    echo ""
+    read -rp "Enter the authorization code: " auth_code
+
+    local response
+    response=$(curl -s -X POST "https://oauth2.googleapis.com/token" \
+        -d "client_id=$_ak_google_client_id" \
+        -d "client_secret=$_ak_google_client_secret" \
+        -d "code=$auth_code" \
+        -d "grant_type=authorization_code" \
+        -d "redirect_uri=urn:ietf:wg:oauth:2.0:oob")
+
+    if echo "$response" | jq -e '.refresh_token' &>/dev/null; then
+        local refresh_token access_token expires_in expiry_time
+        refresh_token=$(echo "$response" | jq -r '.refresh_token')
+        access_token=$(echo "$response" | jq -r '.access_token')
+        expires_in=$(echo "$response" | jq -r '.expires_in')
+        expiry_time=$(($(date +%s) + expires_in))
+
+        # Store refresh token in BWS
+        echo "Storing refresh token in BWS..."
+        bws secret edit gcp-oauth-refresh-token --value "$refresh_token" 2>/dev/null || \
+            bws secret create gcp-oauth-refresh-token "$refresh_token" 2>/dev/null
+
+        # Cache access token in keyring
+        echo -n "$access_token" | secret-tool store --label="google-access-token" service imladris-google type access-token
+        echo -n "$expiry_time" | secret-tool store --label="google-expiry" service imladris-google type expiry
+
+        echo "Google OAuth configured successfully!"
+        return 0
+    else
+        echo "Error: Auth failed: $(echo "$response" | jq -r '.error_description // .error')" >&2
         return 1
     fi
 }
 
 _ak_google_configured() {
-    _ak_google_load_credentials
-    [[ -n "$_ak_google_client_id" ]]
+    bws secret list 2>/dev/null | jq -e '.[] | select(.key == "gcp-oauth-client-json")' &>/dev/null
 }
 
-# ============================================================================
-# Claude Code OAuth
-# ============================================================================
-
-_ak_claude_auth_file="${CLAUDE_AUTH_FILE:-$HOME/.config/claude/auth.json}"
-
-_ak_claude_token_valid() {
-    [[ -f "$_ak_claude_auth_file" ]] || return 1
-
-    local now buffer expiry
-    now=$(date +%s)
-    buffer=$AUTH_KEEPER_REFRESH_BUFFER
-
-    # Check for expiry field (formats may vary: expiresAt, expires_at, expiry)
-    expiry=$(jq -r '.expiresAt // .expires_at // .expiry // 0' "$_ak_claude_auth_file" 2>/dev/null)
-
-    # Handle both epoch seconds and ISO 8601 formats
-    if [[ "$expiry" =~ ^[0-9]+$ ]]; then
-        # Epoch timestamp - check if milliseconds or seconds
-        if (( expiry > 9999999999 )); then
-            # Milliseconds
-            (( expiry / 1000 - buffer > now ))
-        else
-            # Seconds
-            (( expiry - buffer > now ))
-        fi
-    elif [[ -n "$expiry" ]] && [[ "$expiry" != "0" ]]; then
-        # ISO 8601 format
-        local exp_epoch
-        exp_epoch=$(date -d "$expiry" +%s 2>/dev/null)
-        [[ -n "$exp_epoch" ]] && (( exp_epoch - buffer > now ))
-    else
-        # No expiry found, assume valid (will be checked on next API call)
-        return 0
-    fi
-}
-
-_ak_claude_has_refresh() {
-    [[ -f "$_ak_claude_auth_file" ]] && jq -e '.refreshToken // .refresh_token' "$_ak_claude_auth_file" &>/dev/null
-}
-
-_ak_claude_refresh() {
-    if ! _ak_claude_has_refresh; then
-        _ak_notify "Claude Code" "No refresh token - interactive login required"
-        echo "[auth-keeper] Claude Code: No refresh token available" >&2
-        echo "[auth-keeper] You'll need to re-authenticate when you start Claude" >&2
-        return 1
-    fi
-
-    # Claude Code should automatically refresh tokens on startup if refresh token exists
-    # We don't manually refresh here - just validate that refresh token exists
-    echo "[auth-keeper] Claude Code: Refresh token present, will auto-refresh on startup" >&2
-    return 0
-}
-
-_ak_ensure_claude() {
-    if ! _ak_claude_token_valid; then
-        echo "[auth-keeper] Claude Code token expired or missing" >&2
-        _ak_claude_refresh
-    fi
-}
-
-# Optional: Wrapper for claude command (uncomment to enable)
-# claude() {
-#     _ak_ensure_claude || echo "[auth-keeper] Warning: Claude tokens may be expired" >&2
-#     command claude "$@"
-# }
-
-# ============================================================================
-# MS365 Graph (Calendar, Mail via delegated auth)
-# ============================================================================
-
-_ak_graph_client_id="a7e5374a-7e56-452b-b9da-655c78bc4121"
-_ak_graph_tenant_id="99cc3795-3b94-4c8f-a292-8c4c153771a5"
-
-_ak_graph_get_expiry() {
-    secret-tool lookup service imladris-graph type expiry 2>/dev/null || echo "0"
-}
-
-_ak_graph_get_refresh_token() {
-    secret-tool lookup service imladris-graph type refresh-token 2>/dev/null
-}
-
-_ak_graph_token_valid() {
-    local now buffer expiry
-    now=$(date +%s)
-    buffer=$AUTH_KEEPER_REFRESH_BUFFER
-    expiry=$(_ak_graph_get_expiry)
-
-    [[ -n "$expiry" ]] && (( expiry - buffer > now ))
-}
-
-_ak_graph_has_refresh() {
+_ak_google_has_refresh() {
     local rt
-    rt=$(_ak_graph_get_refresh_token)
+    rt=$(_ak_bws_get "gcp-oauth-refresh-token")
     [[ -n "$rt" ]]
 }
 
-_ak_graph_refresh() {
-    local refresh_token
-    refresh_token=$(_ak_graph_get_refresh_token)
+# Google API helper
+_ak_google_api() {
+    local method="$1"
+    local endpoint="$2"
+    shift 2
 
-    if [[ -z "$refresh_token" ]]; then
-        _ak_notify "MS365 Graph" "No refresh token - run 'ocal --auth'"
-        return 1
-    fi
+    local token
+    token=$(_ak_google_get_access_token) || return 1
 
-    local response
-    response=$(curl -s -X POST "https://login.microsoftonline.com/$_ak_graph_tenant_id/oauth2/v2.0/token" \
-        -d "client_id=$_ak_graph_client_id" \
-        -d "grant_type=refresh_token" \
-        -d "refresh_token=$refresh_token" \
-        -d "scope=https://graph.microsoft.com/Calendars.Read https://graph.microsoft.com/Calendars.ReadWrite offline_access")
-
-    if echo "$response" | jq -e '.access_token' &>/dev/null; then
-        local access_token expires_in new_refresh_token expiry_time
-        access_token=$(echo "$response" | jq -r '.access_token')
-        expires_in=$(echo "$response" | jq -r '.expires_in')
-        new_refresh_token=$(echo "$response" | jq -r '.refresh_token // empty')
-        expiry_time=$(($(date +%s) + expires_in))
-
-        # Use new refresh token if provided
-        [[ -z "$new_refresh_token" ]] && new_refresh_token="$refresh_token"
-
-        # Store tokens in keyring
-        echo -n "$access_token" | secret-tool store --label="graph-calendar-access-token" service imladris-graph type access-token
-        echo -n "$new_refresh_token" | secret-tool store --label="graph-calendar-refresh-token" service imladris-graph type refresh-token
-        echo -n "$expiry_time" | secret-tool store --label="graph-calendar-expiry" service imladris-graph type expiry
-
-        echo "[auth-keeper] MS365 Graph token refreshed" >&2
-        return 0
-    else
-        _ak_notify "MS365 Graph" "Refresh failed: $(echo "$response" | jq -r '.error_description // .error')"
-        return 1
-    fi
-}
-
-_ak_ensure_graph() {
-    if ! _ak_graph_token_valid; then
-        echo "[auth-keeper] MS365 Graph token expired, refreshing..." >&2
-        _ak_graph_refresh
-    fi
+    curl -s -X "$method" "https://www.googleapis.com/$endpoint" \
+        -H "Authorization: Bearer $token" \
+        -H "Content-Type: application/json" \
+        "$@"
 }
 
 # ============================================================================
@@ -454,47 +444,29 @@ auth-keeper() {
                 echo "azure: expired (needs login)"
             fi
 
-            # Google (home context)
+            # MS365 (service principal)
+            if _ak_ms365_configured; then
+                echo "ms365: configured (service principal - always valid)"
+            else
+                echo "ms365: not configured (need m365-client-id in BWS)"
+            fi
+
+            # Google
             if _ak_google_configured; then
                 if _ak_google_token_valid; then
                     local exp_time remaining hours mins
-                    exp_time=$(_ak_google_get_expiry)
+                    exp_time=$(secret-tool lookup service imladris-google type expiry 2>/dev/null || echo "0")
                     remaining=$((exp_time - $(date +%s)))
                     hours=$((remaining / 3600))
                     mins=$(((remaining % 3600) / 60))
                     echo "google: valid (expires in ${hours}h ${mins}m)"
                 elif _ak_google_has_refresh; then
-                    echo "google: expired (has refresh token)"
+                    echo "google: expired (has refresh token - will auto-refresh)"
                 else
-                    echo "google: configured but no tokens (run 'gcal --auth')"
+                    echo "google: configured but no tokens (run 'auth-keeper google --auth')"
                 fi
             else
-                echo "google: not configured (run 'gcal --setup')"
-            fi
-
-            # Claude Code
-            if _ak_claude_token_valid; then
-                echo "claude-code: valid"
-            elif _ak_claude_has_refresh; then
-                echo "claude-code: expired (has refresh token)"
-            elif [[ -f "$_ak_claude_auth_file" ]]; then
-                echo "claude-code: expired (no refresh token)"
-            else
-                echo "claude-code: using bedrock or not configured"
-            fi
-
-            # MS365 Graph
-            if _ak_graph_token_valid; then
-                local exp_time remaining hours mins
-                exp_time=$(_ak_graph_get_expiry)
-                remaining=$((exp_time - $(date +%s)))
-                hours=$((remaining / 3600))
-                mins=$(((remaining % 3600) / 60))
-                echo "ms365-graph: valid (expires in ${hours}h ${mins}m)"
-            elif _ak_graph_has_refresh; then
-                echo "ms365-graph: expired (has refresh token)"
-            else
-                echo "ms365-graph: not configured (run 'ocal --auth')"
+                echo "google: not configured (need gcp-oauth-client-json in BWS)"
             fi
 
             # Tailscale
@@ -511,6 +483,107 @@ auth-keeper() {
             fi
             ;;
 
+        ms365|m365)
+            shift
+            case "${1:-}" in
+                ""|"-i"|"--interactive")
+                    _ak_ms365_interactive
+                    ;;
+                "-h"|"--help")
+                    cat <<'EOF'
+auth-keeper ms365 - MS365 PowerShell access (service principal)
+
+Usage:
+  auth-keeper ms365                    Interactive PowerShell session
+  auth-keeper ms365 "command"          Run a single PowerShell command
+  auth-keeper ms365 -h                 Show this help
+
+Examples:
+  auth-keeper ms365 "Get-MgUserMessage -UserId 'sfoley@buxtonco.com' -Top 10"
+  auth-keeper ms365 "Get-MgUserMessage -UserId 'sfoley@buxtonco.com' -Filter 'isRead eq false' -CountVariable c -Top 1; \$c"
+  auth-keeper ms365 "Get-MgUserCalendarEvent -UserId 'sfoley@buxtonco.com'"
+EOF
+                    ;;
+                *)
+                    _ak_ms365_cmd "$1"
+                    ;;
+            esac
+            ;;
+
+        google|g)
+            shift
+            case "${1:-}" in
+                "--auth")
+                    _ak_google_auth
+                    ;;
+                "--token")
+                    _ak_google_get_access_token
+                    ;;
+                "-h"|"--help")
+                    cat <<'EOF'
+auth-keeper google - Google API access (OAuth2)
+
+Usage:
+  auth-keeper google --auth            Authenticate (get refresh token)
+  auth-keeper google --token           Get current access token
+  auth-keeper google mail              List recent emails
+  auth-keeper google calendar          List today's calendar events
+  auth-keeper google -h                Show this help
+
+Examples:
+  auth-keeper google mail
+  auth-keeper google calendar
+EOF
+                    ;;
+                "mail"|"gmail")
+                    local response
+                    response=$(_ak_google_api GET "gmail/v1/users/me/messages?maxResults=10&q=is:unread")
+
+                    if echo "$response" | jq -e '.messages' &>/dev/null; then
+                        local count
+                        count=$(echo "$response" | jq -r '.resultSizeEstimate // 0')
+                        echo "Unread emails: ~$count"
+                        echo ""
+
+                        # Get details for each message
+                        echo "$response" | jq -r '.messages[]?.id' | head -5 | while read -r msg_id; do
+                            local msg
+                            msg=$(_ak_google_api GET "gmail/v1/users/me/messages/$msg_id?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date")
+
+                            local subject from date
+                            subject=$(echo "$msg" | jq -r '.payload.headers[] | select(.name == "Subject") | .value' | head -c 60)
+                            from=$(echo "$msg" | jq -r '.payload.headers[] | select(.name == "From") | .value' | head -c 30)
+                            date=$(echo "$msg" | jq -r '.payload.headers[] | select(.name == "Date") | .value' | head -c 25)
+
+                            printf "%-25s | %-30s | %s\n" "$date" "$from" "$subject"
+                        done
+                    else
+                        echo "Error: $(echo "$response" | jq -r '.error.message // "Unknown error"')" >&2
+                    fi
+                    ;;
+                "calendar"|"cal")
+                    local now tomorrow
+                    now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+                    tomorrow=$(date -u -d "+1 day" +%Y-%m-%dT%H:%M:%SZ)
+
+                    local response
+                    response=$(_ak_google_api GET "calendar/v3/calendars/primary/events?timeMin=$now&timeMax=$tomorrow&singleEvents=true&orderBy=startTime")
+
+                    if echo "$response" | jq -e '.items' &>/dev/null; then
+                        echo "Today's events:"
+                        echo ""
+                        echo "$response" | jq -r '.items[] | "\(.start.dateTime // .start.date | .[11:16] // "All day") | \(.summary)"'
+                    else
+                        echo "Error: $(echo "$response" | jq -r '.error.message // "Unknown error"')" >&2
+                    fi
+                    ;;
+                *)
+                    echo "Unknown google command: $1 (try: auth-keeper google -h)"
+                    return 1
+                    ;;
+            esac
+            ;;
+
         refresh|r)
             case "${2:-}" in
                 aws|aws-sso)
@@ -519,34 +592,38 @@ auth-keeper() {
                 azure|az)
                     _ak_azure_refresh
                     ;;
-                ms365|graph)
-                    _ak_graph_refresh
-                    ;;
                 google)
-                    _ak_google_refresh
+                    _ak_google_get_access_token >/dev/null && echo "Google token refreshed"
                     ;;
                 all)
                     _ak_aws_refresh
                     _ak_azure_refresh
-                    _ak_graph_refresh
-                    _ak_google_refresh
+                    _ak_google_get_access_token >/dev/null && echo "Google token refreshed"
                     ;;
                 *)
-                    echo "Usage: auth-keeper refresh [aws|azure|ms365|google|all]"
+                    echo "Usage: auth-keeper refresh [aws|azure|google|all]"
                     ;;
             esac
             ;;
 
         help|h|--help|-h)
             cat <<'EOF'
-auth-keeper - Lazy authentication management
+auth-keeper - Unified authentication and service access
 
 Usage: auth-keeper [command]
 
 Commands:
-  status    Show status of all services
-  refresh   Force refresh (aws, azure, all)
-  help      Show this help
+  status              Show status of all services
+  ms365 [cmd]         MS365 PowerShell access (service principal)
+  google [cmd]        Google API access (OAuth2)
+  refresh [service]   Force token refresh
+  help                Show this help
+
+Service Access:
+  auth-keeper ms365                    Interactive MS365 PowerShell
+  auth-keeper ms365 "Get-MgUser..."    Run MS365 command
+  auth-keeper google mail              List Gmail
+  auth-keeper google calendar          List Google Calendar
 
 Environment:
   AUTH_KEEPER_NOTIFY         signal, telegram, bell, none (default: signal)
@@ -566,14 +643,27 @@ EOF
 }
 
 # Completion
-if [[ -n "${ZSH_VERSION:-}" ]]; then
-    compdef '_arguments "1:command:(status refresh help)" "2:service:(aws azure all)"' auth-keeper
+if [[ -n "${ZSH_VERSION:-}" ]] && command -v compdef &>/dev/null; then
+    _auth_keeper_zsh() {
+        local -a commands
+        commands=(
+            'status:Show status of all services'
+            'ms365:MS365 PowerShell access'
+            'google:Google API access'
+            'refresh:Force token refresh'
+            'help:Show help'
+        )
+        _describe 'command' commands
+    }
+    compdef _auth_keeper_zsh auth-keeper 2>/dev/null
 elif [[ -n "${BASH_VERSION:-}" ]]; then
     _auth_keeper_comp() {
         local cur="${COMP_WORDS[COMP_CWORD]}"
         case "${COMP_WORDS[1]:-}" in
-            refresh) mapfile -t COMPREPLY < <(compgen -W "aws azure all" -- "$cur") ;;
-            *) mapfile -t COMPREPLY < <(compgen -W "status refresh help" -- "$cur") ;;
+            refresh) mapfile -t COMPREPLY < <(compgen -W "aws azure google all" -- "$cur") ;;
+            google) mapfile -t COMPREPLY < <(compgen -W "mail calendar --auth --token --help" -- "$cur") ;;
+            ms365) mapfile -t COMPREPLY < <(compgen -W "--interactive --help" -- "$cur") ;;
+            *) mapfile -t COMPREPLY < <(compgen -W "status ms365 google refresh help" -- "$cur") ;;
         esac
     }
     complete -F _auth_keeper_comp auth-keeper
