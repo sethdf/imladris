@@ -152,12 +152,22 @@ _ocal_format_event() {
         start_time="All day"
         end_time=""
     else
-        # Parse ISO datetime and format nicely
-        local start_iso end_iso
+        # Parse ISO datetime (API returns UTC) and convert to local timezone
+        local start_iso end_iso start_tz end_tz
         start_iso=$(echo "$event" | jq -r '.start.dateTime')
         end_iso=$(echo "$event" | jq -r '.end.dateTime')
-        start_time=$(date -d "$start_iso" "+%H:%M" 2>/dev/null || echo "$start_iso")
-        end_time=$(date -d "$end_iso" "+%H:%M" 2>/dev/null || echo "$end_iso")
+        start_tz=$(echo "$event" | jq -r '.start.timeZone // "UTC"')
+        end_tz=$(echo "$event" | jq -r '.end.timeZone // "UTC"')
+
+        # Append timezone for proper conversion (handles both UTC and named timezones)
+        if [[ "$start_tz" == "UTC" ]]; then
+            start_time=$(TZ=America/Denver date -d "${start_iso}Z" "+%H:%M" 2>/dev/null || echo "$start_iso")
+            end_time=$(TZ=America/Denver date -d "${end_iso}Z" "+%H:%M" 2>/dev/null || echo "$end_iso")
+        else
+            # If timezone is already specified (e.g., Mountain Standard Time), use as-is
+            start_time=$(date -d "$start_iso" "+%H:%M" 2>/dev/null || echo "$start_iso")
+            end_time=$(date -d "$end_iso" "+%H:%M" 2>/dev/null || echo "$end_iso")
+        fi
     fi
 
     # Format output
