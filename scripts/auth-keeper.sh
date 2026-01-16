@@ -976,6 +976,8 @@ if [[ -n "${ZSH_VERSION:-}" ]] && command -v compdef &>/dev/null; then
             'status:Show status of all services'
             'ms365:MS365 PowerShell access'
             'google:Google API access'
+            'slack:Slack API access'
+            'telegram:Telegram Bot API access'
             'refresh:Force token refresh'
             'help:Show help'
         )
@@ -989,7 +991,9 @@ elif [[ -n "${BASH_VERSION:-}" ]]; then
             refresh) mapfile -t COMPREPLY < <(compgen -W "aws azure google all" -- "$cur") ;;
             google) mapfile -t COMPREPLY < <(compgen -W "mail calendar --auth --token --help" -- "$cur") ;;
             ms365) mapfile -t COMPREPLY < <(compgen -W "--interactive --help" -- "$cur") ;;
-            *) mapfile -t COMPREPLY < <(compgen -W "status ms365 google refresh help" -- "$cur") ;;
+            slack) mapfile -t COMPREPLY < <(compgen -W "channels read send auth --help" -- "$cur") ;;
+            telegram) mapfile -t COMPREPLY < <(compgen -W "updates send auth --help" -- "$cur") ;;
+            *) mapfile -t COMPREPLY < <(compgen -W "status ms365 google slack telegram refresh help" -- "$cur") ;;
         esac
     }
     complete -F _auth_keeper_comp auth-keeper
