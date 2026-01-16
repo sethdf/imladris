@@ -61,11 +61,16 @@ _ak_telegram_send() {
 
 _ak_aws_token_valid() {
     local cache_dir="$HOME/.aws/sso/cache"
+    [[ -d "$cache_dir" ]] || return 1
+
     local now buffer
     now=$(date +%s)
     buffer=$AUTH_KEEPER_REFRESH_BUFFER
 
-    for f in "$cache_dir"/*.json; do
+    local files=("$cache_dir"/*.json)
+    [[ -e "${files[0]}" ]] || return 1
+
+    for f in "${files[@]}"; do
         [[ -f "$f" ]] || continue
 
         if jq -e '.accessToken' "$f" &>/dev/null; then
