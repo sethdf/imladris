@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ocal - MS365 Outlook Calendar CLI
+# ocal - MS365 Outlook Calendar CLI (work context only)
 # Usage: ocal [today|tomorrow|week|N] [--json]
 #
 # Examples:
@@ -9,8 +9,17 @@
 #   ocal week      # Next 7 days
 #   ocal 3         # Next 3 days
 #   ocal --json    # Output as JSON
+#
+# Requires: CONTEXT=work (set via direnv)
 
 set -euo pipefail
+
+# Context check - MS365 is work only
+if [[ "${CONTEXT:-}" != "work" && "${1:-}" != "--auth" && "${1:-}" != "-a" && "${1:-}" != "--help" && "${1:-}" != "-h" ]]; then
+    echo -e "\033[0;31mError: ocal requires work context\033[0m" >&2
+    echo "Set CONTEXT=work or cd to a work directory" >&2
+    exit 1
+fi
 
 # Config
 CLIENT_ID="a7e5374a-7e56-452b-b9da-655c78bc4121"
