@@ -951,6 +951,138 @@ EOF
             esac
             ;;
 
+        signal|sig)
+            shift
+            case "${1:-}" in
+                ""|"receive"|"messages")
+                    local phone
+                    phone=$(_ak_signal_get_phone) || return 1
+
+                    local response
+                    response=$(_ak_signal_api "/v1/receive/$phone")
+
+                    if [[ -n "$response" && "$response" != "null" ]]; then
+                        local count
+                        count=$(echo "$response" | jq 'length' 2>/dev/null || echo "0")
+
+                        if [[ "$count" == "0" || -z "$count" ]]; then
+                            echo "No new messages."
+                        else
+                            echo "Messages ($count):"
+                            echo ""
+                            echo "$response" | jq -r '.[] | select(.envelope.dataMessage) |
+                                "[\(.envelope.timestamp / 1000 | strftime("%m-%d %H:%M"))] \(.envelope.sourceName // .envelope.sourceNumber // "Unknown")\n  \(.envelope.dataMessage.message // "[attachment]")\n"' 2>/dev/null
+                        fi
+                    else
+                        echo "No new messages."
+                    fi
+                    ;;
+                "send"|"s")
+                    local recipient="${2:-}"
+                    shift 2 2>/dev/null || true
+                    local message="$*"
+
+                    local phone
+                    phone=$(_ak_signal_get_phone) || return 1
+
+                    # If no recipient specified, send to self
+                    if [[ -z "$recipient" || "$recipient" == "me" ]]; then
+                        recipient="$phone"
+                    fi
+
+                    if [[ -z "$message" ]]; then
+                        echo "Usage: auth-keeper signal send [recipient] <message>" >&2
+                        return 1
+                    fi
+
+                    local response
+                    response=$(_ak_signal_api "/v1/send" -X POST \
+                        -H "Content-Type: application/json" \
+                        -d "$(jq -n --arg msg "$message" --arg num "$phone" --arg rec "$recipient" \
+                            '{message:$msg,number:$num,recipients:[$rec]}')")
+
+                    if echo "$response" | jq -e '.timestamp' &>/dev/null; then
+                        echo "Message sent!"
+                        echo "  To: $recipient"
+                        echo "  Timestamp: $(echo "$response" | jq -r '.timestamp')"
+                    else
+                        echo "Error: $(echo "$response" | jq -r '.error // "Unknown error"')" >&2
+                    fi
+                    ;;
+                "link")
+                    echo "Generating QR code for device linking..."
+                    echo ""
+                    echo "1. Open Signal on your phone"
+                    echo "2. Go to Settings > Linked Devices"
+                    echo "3. Tap 'Link New Device'"
+                    echo "4. Scan the QR code"
+                    echo ""
+
+                    # Get QR code URI and display as ASCII
+                    _ak_signal_api "/v1/qrcodelink?device_name=curu-cli" -o /tmp/signal-qr.png
+                    if command -v zbarimg &>/dev/null; then
+                        local uri
+                        uri=$(zbarimg -q /tmp/signal-qr.png 2>/dev/null | sed 's/QR-Code://')
+                        if command -v qrencode &>/dev/null; then
+                            qrencode -t UTF8 -m 0 "$uri"
+                        else
+                            echo "QR saved to /tmp/signal-qr.png"
+                            echo "Install qrencode for terminal display: nix-shell -p qrencode"
+                        fi
+                    else
+                        echo "QR saved to /tmp/signal-qr.png"
+                        echo "Install zbar for terminal display: nix-shell -p zbar"
+                    fi
+                    ;;
+                "auth"|"status")
+                    if ! _ak_signal_api_running; then
+                        echo "Signal API not running. Start with:"
+                        echo "  docker start signal-cli-rest-api"
+                        return 1
+                    fi
+
+                    local about accounts
+                    about=$(_ak_signal_api "/v1/about")
+                    accounts=$(_ak_signal_api "/v1/accounts")
+
+                    echo "Signal REST API:"
+                    echo "  Version: $(echo "$about" | jq -r '.version // "unknown"')"
+                    echo "  Mode: $(echo "$about" | jq -r '.mode // "unknown"')"
+                    echo ""
+                    echo "Linked accounts:"
+                    if [[ "$accounts" == "[]" ]]; then
+                        echo "  None (run: auth-keeper signal link)"
+                    else
+                        echo "$accounts" | jq -r '.[] | "  \(.)"'
+                    fi
+                    ;;
+                "-h"|"--help")
+                    cat <<'EOF'
+auth-keeper signal - Signal REST API access (via Docker)
+
+Usage:
+  auth-keeper signal                   Receive messages
+  auth-keeper signal send [to] <msg>   Send message (default: self)
+  auth-keeper signal link              Link device via QR code
+  auth-keeper signal auth              Check API status
+  auth-keeper signal -h                Show this help
+
+Recipient formats: +1234567890, or "me" for self
+
+Examples:
+  auth-keeper signal
+  auth-keeper signal send "Note to self"
+  auth-keeper signal send +15551234567 "Hello!"
+  auth-keeper signal link
+EOF
+                    ;;
+                *)
+                    echo "Unknown signal command: $1 (try: auth-keeper signal -h)" >&2
+                    return 1
+                    ;;
+            esac
+            ;;
+
         refresh|r)
             case "${2:-}" in
                 aws|aws-sso)
