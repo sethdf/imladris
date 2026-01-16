@@ -75,11 +75,12 @@ M365_SCOPES_PERSONAL="User.Read Mail.ReadWrite Mail.Send Calendars.ReadWrite Con
 M365_SCOPES_READONLY="User.Read User.Read.All Directory.Read.All AuditLog.Read.All Reports.Read.All Group.Read.All Sites.Read.All"
 M365_SCOPES_ADMIN="User.Read User.ReadWrite.All Directory.ReadWrite.All Group.ReadWrite.All Sites.ReadWrite.All RoleManagement.ReadWrite.Directory Application.ReadWrite.All Mail.ReadWrite Mail.Send Calendars.ReadWrite"
 
-# M365 Client ID (loaded from BWS)
+# M365 config (loaded from BWS - never echo these values)
 M365_CLIENT_ID=""
+M365_TENANT_ID=""
 
 _asudo_load_m365_config() {
-    [[ -n "$M365_CLIENT_ID" ]] && return 0
+    [[ -n "$M365_CLIENT_ID" && -n "$M365_TENANT_ID" ]] && return 0
 
     if ! type bws_get &>/dev/null; then
         echo "[asudo] Warning: bws_get not available, M365 config not loaded" >&2
@@ -87,7 +88,10 @@ _asudo_load_m365_config() {
     fi
 
     M365_CLIENT_ID=$(bws_get m365-client-id 2>/dev/null) || true
+    M365_TENANT_ID=$(bws_get m365-tenant-id 2>/dev/null) || true
+
     [[ -z "$M365_CLIENT_ID" ]] && echo "[asudo] Warning: m365-client-id not found in BWS" >&2
+    [[ -z "$M365_TENANT_ID" ]] && echo "[asudo] Warning: m365-tenant-id not found in BWS" >&2
     return 0
 }
 
@@ -282,8 +286,8 @@ _asudo_m365_assume() {
     local level="${1:-personal}"
 
     _asudo_load_m365_config
-    if [[ -z "$M365_CLIENT_ID" ]]; then
-        echo "M365 Client ID not configured. Add m365-client-id to BWS." >&2
+    if [[ -z "$M365_CLIENT_ID" || -z "$M365_TENANT_ID" ]]; then
+        echo "M365 config incomplete. Add m365-client-id and m365-tenant-id to BWS." >&2
         return 1
     fi
 
@@ -321,7 +325,7 @@ _asudo_m365_assume() {
 
     # Run PowerShell interactively to show device code
     # -ContextScope Process disables token caching (no secrets service on headless server)
-    if pwsh -Command "Connect-MgGraph -ClientId '$M365_CLIENT_ID' -Scopes '$scope_array' -UseDeviceCode -ContextScope Process -NoWelcome"; then
+    if pwsh -Command "Connect-MgGraph -ClientId '$M365_CLIENT_ID' -TenantId '$M365_TENANT_ID' -Scopes '$scope_array' -UseDeviceCode -ContextScope Process -NoWelcome"; then
         # Get context after successful auth
         local account
         account=$(pwsh -Command "(Get-MgContext).Account" 2>/dev/null)
