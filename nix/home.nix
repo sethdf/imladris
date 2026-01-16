@@ -308,15 +308,22 @@
         _cb_apply_backend 2>/dev/null
       fi
 
-      # Context-aware wrappers for work-only tools
-      # MS365 tools (himalaya, ocal) require CONTEXT=work
+      # Context-aware wrappers for email/calendar tools
+      # himalaya: work context -> MS365, home context -> Gmail
       himalaya() {
-        if [[ "''${CONTEXT:-}" != "work" ]]; then
-          echo -e "\033[0;31mError: himalaya requires work context\033[0m" >&2
-          echo "Set CONTEXT=work or cd to a work directory" >&2
-          return 1
-        fi
-        command himalaya "$@"
+        case "''${CONTEXT:-}" in
+          work)
+            command himalaya -a work "$@"
+            ;;
+          home)
+            command himalaya -a personal "$@"
+            ;;
+          *)
+            echo -e "\033[0;31mError: himalaya requires work or home context\033[0m" >&2
+            echo "Set CONTEXT=work or CONTEXT=home via direnv" >&2
+            return 1
+            ;;
+        esac
       }
 
       # Imladris shell helpers (created by imladris-init)
