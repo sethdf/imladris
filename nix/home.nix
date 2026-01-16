@@ -46,6 +46,7 @@
       google-cloud-sdk
       powershell  # Microsoft Graph SDK for M365 integration
       libsecret   # Required for PowerShell Graph token caching
+      gnome-keyring  # Secret service for OAuth2 token storage (himalaya, etc)
 
       # Container tools
       lazydocker
@@ -215,6 +216,40 @@
 
       # Note: Claude Code and MCP servers are installed by user-data bootstrap
       # They're not in nixpkgs, so user-data installs them via bun globally
+
+      # Install gnome-keyring systemd user service
+      installKeyringService = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+        mkdir -p "${homeDirectory}/.config/systemd/user"
+        cat > "${homeDirectory}/.config/systemd/user/gnome-keyring.service" << 'EOF'
+[Unit]
+Description=GNOME Keyring daemon (secrets only)
+Documentation=man:gnome-keyring-daemon(1)
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=${pkgs.gnome-keyring}/bin/gnome-keyring-daemon --start --foreground --components=secrets
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+EOF
+      '';
+    };
+  };
+
+  # Systemd user services
+  systemd.user.services.gnome-keyring = {
+    Unit = {
+      Description = "GNOME Keyring daemon (secrets only)";
+    };
+    Service = {
+      Type = "simple";
+      ExecStart = "${pkgs.gnome-keyring}/bin/gnome-keyring-daemon --start --foreground --components=secrets";
+      Restart = "on-failure";
+    };
+    Install = {
+      WantedBy = [ "default.target" ];
     };
   };
 
