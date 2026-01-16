@@ -454,14 +454,23 @@ Providers:
   aws <env>      Assume AWS role (qat, dev, prod, buxtonorgacct)
   azure <sub>    Set Azure subscription
   gcp <project>  Set GCP project
+  m365 [level]   Microsoft Graph (personal, readonly, admin)
 
 Flags:
   --admin        Request admin/elevated access (logged, shorter session)
+
+M365 Levels:
+  personal       Your mail, calendar, files (default)
+  readonly       Tenant-wide read access
+  admin          Full admin access (logged!)
 
 Examples:
   cloud-assume aws qat           # readonly access to QAT
   cloud-assume aws prod --admin  # admin access to prod (logged!)
   cloud-assume azure dev         # switch to dev subscription
+  cloud-assume m365              # personal M365 access (mail, calendar)
+  cloud-assume m365 readonly     # tenant-wide read access
+  cloud-assume m365 admin        # full admin access (logged!)
   cloud-assume clear             # revoke all access
 
 Environment:
@@ -519,3 +528,4 @@ alias ca='cloud-assume'
 alias caa='cloud-assume aws'
 alias caz='cloud-assume azure'
 alias cag='cloud-assume gcp'
+alias cam='cloud-assume m365'
