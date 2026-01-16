@@ -316,35 +316,24 @@ _asudo_m365_assume() {
     scope_array=$(echo "$scopes" | tr ' ' ',')
 
     echo "Authenticating to Microsoft Graph ($level)..."
-    echo "A browser window will open for sign-in."
+    echo "Follow the device code instructions below."
+    echo ""
 
-    # Run PowerShell to connect - this will prompt for device code auth
-    local result
-    result=$(pwsh -Command "
-        \$ErrorActionPreference = 'Stop'
-        try {
-            Connect-MgGraph -ClientId '$M365_CLIENT_ID' -Scopes '$scope_array' -NoWelcome
-            \$ctx = Get-MgContext
-            Write-Output \"SUCCESS|\$(\$ctx.Account)|\$(\$ctx.Scopes -join ',')|\"
-        } catch {
-            Write-Output \"ERROR|\$_\"
-        }
-    " 2>&1)
-
-    if [[ "$result" == SUCCESS* ]]; then
-        local account scopes_granted
-        account=$(echo "$result" | cut -d'|' -f2)
-        scopes_granted=$(echo "$result" | cut -d'|' -f3)
+    # Run PowerShell interactively to show device code
+    if pwsh -Command "Connect-MgGraph -ClientId '$M365_CLIENT_ID' -Scopes '$scope_array' -NoWelcome"; then
+        # Get context after successful auth
+        local account
+        account=$(pwsh -Command "(Get-MgContext).Account" 2>/dev/null)
 
         ASUDO_CURRENT_PROVIDER="m365"
         ASUDO_CURRENT_ENV="$account"
         ASUDO_CURRENT_LEVEL="$level"
         export ASUDO_CURRENT_PROVIDER ASUDO_CURRENT_ENV ASUDO_CURRENT_LEVEL
 
+        echo ""
         echo "M365 $level - account: $account"
     else
-        echo "Failed to connect to Microsoft Graph:" >&2
-        echo "$result" >&2
+        echo "Failed to connect to Microsoft Graph" >&2
         return 1
     fi
 }
