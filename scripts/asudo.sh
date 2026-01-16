@@ -178,6 +178,13 @@ _asudo_aws_assume() {
     export AWS_SESSION_TOKEN=$(echo "$creds" | jq -r '.Credentials.SessionToken')
     export AWS_REGION="${AWS_REGION:-us-east-1}"
 
+    # Write to AWS profile for CLI tools / subprocesses that don't inherit env vars
+    # Profile name is just the env (e.g., "qat", "prod") - always readonly unless --admin
+    command aws configure set aws_access_key_id "$AWS_ACCESS_KEY_ID" --profile "$env"
+    command aws configure set aws_secret_access_key "$AWS_SECRET_ACCESS_KEY" --profile "$env"
+    command aws configure set aws_session_token "$AWS_SESSION_TOKEN" --profile "$env"
+    command aws configure set region "${AWS_REGION:-us-east-1}" --profile "$env"
+
     # Clear any profile setting (we're using explicit creds now)
     unset AWS_PROFILE
 
@@ -189,7 +196,7 @@ _asudo_aws_assume() {
 
     local expiry
     expiry=$(echo "$creds" | jq -r '.Credentials.Expiration')
-    echo "AWS $env ($ASUDO_CURRENT_LEVEL) - expires: $expiry"
+    echo "AWS $env ($ASUDO_CURRENT_LEVEL) - expires: $expiry [profile: $env]"
 }
 
 _asudo_aws_clear() {
