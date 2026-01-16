@@ -310,13 +310,15 @@
 
       # Context-aware wrappers for email/calendar tools
       # himalaya: work context -> MS365, home context -> Gmail
+      # Note: -a flag must come after subcommand (e.g., himalaya envelope list -a work)
       himalaya() {
+        local account
         case "''${CONTEXT:-}" in
           work)
-            command himalaya -a work "$@"
+            account="work"
             ;;
           home)
-            command himalaya -a personal "$@"
+            account="personal"
             ;;
           *)
             echo -e "\033[0;31mError: himalaya requires work or home context\033[0m" >&2
@@ -324,6 +326,14 @@
             return 1
             ;;
         esac
+        # Insert -a <account> after the subcommand
+        if [[ $# -ge 1 ]]; then
+          local cmd="$1"
+          shift
+          command himalaya "$cmd" -a "$account" "$@"
+        else
+          command himalaya -a "$account"
+        fi
       }
 
       # Imladris shell helpers (created by imladris-init)
