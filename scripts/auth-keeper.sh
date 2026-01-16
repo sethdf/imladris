@@ -17,7 +17,15 @@ _ak_notify() {
 
     case "$AUTH_KEEPER_NOTIFY" in
         signal)
-            _ak_signal_send "$title: $message"
+            # Send via Signal REST API
+            local phone
+            phone="${SIGNAL_PHONE:-$(_ak_bws_get 'signal-phone' 2>/dev/null)}"
+            if [[ -n "$phone" ]]; then
+                curl -s "${SIGNAL_API_URL:-http://127.0.0.1:8080}/v1/send" -X POST \
+                    -H "Content-Type: application/json" \
+                    -d "$(jq -n --arg msg "$title: $message" --arg num "$phone" \
+                        '{message:$msg,number:$num,recipients:[$num]}')" &>/dev/null &
+            fi
             ;;
         telegram)
             _ak_telegram_send "$title: $message"
