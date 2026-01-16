@@ -69,6 +69,27 @@ declare -A CLOUD_GCP_PROJECTS=(
 CLOUD_AWS_SESSION_DURATION="${CLOUD_AWS_SESSION_DURATION:-3600}"
 CLOUD_AWS_ADMIN_SESSION_DURATION="${CLOUD_AWS_ADMIN_SESSION_DURATION:-900}"  # 15 min for admin
 
+# M365 scope definitions (requested at auth time, not app-level)
+M365_SCOPES_PERSONAL="User.Read Mail.ReadWrite Mail.Send Calendars.ReadWrite Contacts.ReadWrite Files.ReadWrite Tasks.ReadWrite Notes.ReadWrite Chat.ReadWrite Presence.Read"
+M365_SCOPES_READONLY="User.Read User.Read.All Directory.Read.All AuditLog.Read.All Reports.Read.All Group.Read.All Sites.Read.All"
+M365_SCOPES_ADMIN="User.Read User.ReadWrite.All Directory.ReadWrite.All Group.ReadWrite.All Sites.ReadWrite.All RoleManagement.ReadWrite.Directory Application.ReadWrite.All Mail.ReadWrite Mail.Send Calendars.ReadWrite"
+
+# M365 Client ID (loaded from BWS)
+M365_CLIENT_ID=""
+
+_cloud_load_m365_config() {
+    [[ -n "$M365_CLIENT_ID" ]] && return 0
+
+    if ! type bws_get &>/dev/null; then
+        echo "[cloud-assume] Warning: bws_get not available, M365 config not loaded" >&2
+        return 1
+    fi
+
+    M365_CLIENT_ID=$(bws_get m365-client-id 2>/dev/null) || true
+    [[ -z "$M365_CLIENT_ID" ]] && echo "[cloud-assume] Warning: m365-client-id not found in BWS" >&2
+    return 0
+}
+
 # Log file for admin access
 CLOUD_ACCESS_LOG="${CLOUD_ACCESS_LOG:-$HOME/.cache/cloud-assume/access.log}"
 
@@ -253,6 +274,103 @@ _cloud_gcp_clear() {
 }
 
 # =============================================================================
+# M365 (Microsoft Graph)
+# =============================================================================
+
+_cloud_m365_assume() {
+    local level="${1:-personal}"
+
+    _cloud_load_m365_config
+    if [[ -z "$M365_CLIENT_ID" ]]; then
+        echo "M365 Client ID not configured. Add m365-client-id to BWS." >&2
+        return 1
+    fi
+
+    local scopes
+    case "$level" in
+        personal|p)
+            scopes="$M365_SCOPES_PERSONAL"
+            level="personal"
+            _cloud_log "INFO" "m365 personal access"
+            ;;
+        readonly|ro|r)
+            scopes="$M365_SCOPES_READONLY"
+            level="readonly"
+            _cloud_log "INFO" "m365 readonly access"
+            ;;
+        admin|a)
+            scopes="$M365_SCOPES_ADMIN"
+            level="admin"
+            _cloud_log "ADMIN" "m365 admin access"
+            ;;
+        *)
+            echo "Unknown M365 level: $level" >&2
+            echo "Available: personal, readonly, admin" >&2
+            return 1
+            ;;
+    esac
+
+    # Convert space-separated scopes to comma-separated for PowerShell
+    local scope_array
+    scope_array=$(echo "$scopes" | tr ' ' ',')
+
+    echo "Authenticating to Microsoft Graph ($level)..."
+    echo "A browser window will open for sign-in."
+
+    # Run PowerShell to connect - this will prompt for device code auth
+    local result
+    result=$(pwsh -Command "
+        \$ErrorActionPreference = 'Stop'
+        try {
+            Connect-MgGraph -ClientId '$M365_CLIENT_ID' -Scopes '$scope_array' -NoWelcome
+            \$ctx = Get-MgContext
+            Write-Output \"SUCCESS|\$(\$ctx.Account)|\$(\$ctx.Scopes -join ',')|\"
+        } catch {
+            Write-Output \"ERROR|\$_\"
+        }
+    " 2>&1)
+
+    if [[ "$result" == SUCCESS* ]]; then
+        local account scopes_granted
+        account=$(echo "$result" | cut -d'|' -f2)
+        scopes_granted=$(echo "$result" | cut -d'|' -f3)
+
+        CLOUD_CURRENT_PROVIDER="m365"
+        CLOUD_CURRENT_ENV="$account"
+        CLOUD_CURRENT_LEVEL="$level"
+        export CLOUD_CURRENT_PROVIDER CLOUD_CURRENT_ENV CLOUD_CURRENT_LEVEL
+
+        echo "M365 $level - account: $account"
+    else
+        echo "Failed to connect to Microsoft Graph:" >&2
+        echo "$result" >&2
+        return 1
+    fi
+}
+
+_cloud_m365_clear() {
+    pwsh -Command "Disconnect-MgGraph" 2>/dev/null || true
+    _cloud_log "INFO" "m365 disconnected"
+}
+
+_cloud_m365_status() {
+    local result
+    result=$(pwsh -Command "
+        try {
+            \$ctx = Get-MgContext
+            if (\$ctx) {
+                Write-Output \"Connected: \$(\$ctx.Account) | Scopes: \$(\$ctx.Scopes.Count) granted\"
+            } else {
+                Write-Output 'Not connected'
+            }
+        } catch {
+            Write-Output 'Not connected'
+        }
+    " 2>&1)
+    echo "M365: $result"
+}
+
+# =============================================================================
 # Main Interface
 # =============================================================================
 
@@ -284,10 +402,19 @@ cloud-assume() {
             [[ -z "$env" ]] && { echo "Usage: cloud-assume gcp <project> [--admin]"; return 1; }
             _cloud_gcp_assume "$env" "$admin"
             ;;
+        m365|microsoft|ms)
+            # M365 uses level instead of env: personal, readonly, admin
+            local level="${env:-personal}"
+            if [[ "$level" == "--admin" ]] || [[ "$admin" == "true" ]]; then
+                level="admin"
+            fi
+            _cloud_m365_assume "$level"
+            ;;
         clear|revoke)
             _cloud_aws_clear
             _cloud_azure_clear
             _cloud_gcp_clear
+            _cloud_m365_clear
             unset CLOUD_CURRENT_PROVIDER CLOUD_CURRENT_ENV CLOUD_CURRENT_LEVEL
             echo "All cloud access cleared"
             ;;
@@ -311,6 +438,8 @@ cloud-assume() {
             echo ""
             echo "GCP project:"
             command gcloud config get-value project 2>/dev/null || echo "  (not set)"
+            echo ""
+            _cloud_m365_status
             ;;
         help|--help|-h)
             cat <<'EOF'
