@@ -320,7 +320,8 @@ _asudo_m365_assume() {
     echo ""
 
     # Run PowerShell interactively to show device code
-    if pwsh -Command "Connect-MgGraph -ClientId '$M365_CLIENT_ID' -Scopes '$scope_array' -UseDeviceCode -NoWelcome"; then
+    # -ContextScope Process disables token caching (no secrets service on headless server)
+    if pwsh -Command "Connect-MgGraph -ClientId '$M365_CLIENT_ID' -Scopes '$scope_array' -UseDeviceCode -ContextScope Process -NoWelcome"; then
         # Get context after successful auth
         local account
         account=$(pwsh -Command "(Get-MgContext).Account" 2>/dev/null)
