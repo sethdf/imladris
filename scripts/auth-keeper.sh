@@ -978,20 +978,24 @@ EOF
                     fi
                     ;;
                 "send"|"s")
-                    local recipient="${2:-}"
-                    shift 2 2>/dev/null || true
-                    local message="$*"
-
                     local phone
                     phone=$(_ak_signal_get_phone) || return 1
 
-                    # If no recipient specified, send to self
-                    if [[ -z "$recipient" || "$recipient" == "me" ]]; then
+                    local recipient message
+                    # Check if first arg looks like a phone number
+                    if [[ "${2:-}" =~ ^\+[0-9] ]]; then
+                        recipient="$2"
+                        shift 2 2>/dev/null || true
+                        message="$*"
+                    else
+                        # No recipient, send to self
                         recipient="$phone"
+                        shift 1 2>/dev/null || true
+                        message="$*"
                     fi
 
                     if [[ -z "$message" ]]; then
-                        echo "Usage: auth-keeper signal send [recipient] <message>" >&2
+                        echo "Usage: auth-keeper signal send [+recipient] <message>" >&2
                         return 1
                     fi
 
