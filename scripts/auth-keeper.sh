@@ -484,6 +484,40 @@ _ak_telegram_configured() {
 }
 
 # ============================================================================
+# Signal - REST API (signal-cli-rest-api Docker container)
+# ============================================================================
+
+SIGNAL_API_URL="${SIGNAL_API_URL:-http://127.0.0.1:8080}"
+
+_ak_signal_get_phone() {
+    local phone
+    phone="${SIGNAL_PHONE:-$(_ak_bws_get 'signal-phone')}"
+
+    if [[ -z "$phone" ]]; then
+        echo "Error: No Signal phone. Set SIGNAL_PHONE or add signal-phone to BWS" >&2
+        return 1
+    fi
+    echo "$phone"
+}
+
+_ak_signal_api() {
+    local endpoint="$1"
+    shift
+    curl -s "${SIGNAL_API_URL}${endpoint}" "$@"
+}
+
+_ak_signal_configured() {
+    # Check if API is reachable and has accounts
+    local accounts
+    accounts=$(curl -s --max-time 2 "${SIGNAL_API_URL}/v1/accounts" 2>/dev/null)
+    [[ -n "$accounts" && "$accounts" != "[]" ]]
+}
+
+_ak_signal_api_running() {
+    curl -s --max-time 1 "${SIGNAL_API_URL}/v1/about" &>/dev/null
+}
+
+# ============================================================================
 # Tailscale
 # ============================================================================
 
@@ -563,6 +597,19 @@ auth-keeper() {
                 fi
             else
                 echo "telegram: not configured (need telegram-bot-token in BWS)"
+            fi
+
+            # Signal
+            if _ak_signal_api_running; then
+                if _ak_signal_configured; then
+                    local phone
+                    phone=$(_ak_bws_get 'signal-phone' 2>/dev/null)
+                    echo "signal: configured (phone: $phone)"
+                else
+                    echo "signal: API running but not linked (run: auth-keeper signal link)"
+                fi
+            else
+                echo "signal: API not running (docker start signal-cli-rest-api)"
             fi
 
             # Tailscale
