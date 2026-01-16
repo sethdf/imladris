@@ -78,6 +78,7 @@ M365_SCOPES_ADMIN="User.Read User.ReadWrite.All Directory.ReadWrite.All Group.Re
 # M365 config (loaded from BWS - never echo these values)
 M365_CLIENT_ID=""
 M365_TENANT_ID=""
+M365_CLIENT_SECRET=""
 
 _asudo_load_m365_config() {
     [[ -n "$M365_CLIENT_ID" && -n "$M365_TENANT_ID" ]] && return 0
@@ -89,9 +90,11 @@ _asudo_load_m365_config() {
 
     M365_CLIENT_ID=$(bws_get m365-client-id 2>/dev/null) || true
     M365_TENANT_ID=$(bws_get m365-tenant-id 2>/dev/null) || true
+    M365_CLIENT_SECRET=$(bws_get m365-client-secret 2>/dev/null) || true
 
     [[ -z "$M365_CLIENT_ID" ]] && echo "[asudo] Warning: m365-client-id not found in BWS" >&2
     [[ -z "$M365_TENANT_ID" ]] && echo "[asudo] Warning: m365-tenant-id not found in BWS" >&2
+    # Client secret is optional - only needed for app-only auth
     return 0
 }
 
