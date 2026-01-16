@@ -1117,6 +1117,7 @@ Commands:
   google [cmd]        Google API access (OAuth2)
   slack [cmd]         Slack API access (bot token)
   telegram [cmd]      Telegram Bot API access
+  signal [cmd]        Signal REST API access (Docker)
   refresh [service]   Force token refresh
   help                Show this help
 
@@ -1126,6 +1127,7 @@ Service Access:
   auth-keeper google mail              List Gmail
   auth-keeper google calendar          List Google Calendar
   auth-keeper slack channels           List Slack channels
+  auth-keeper signal send "msg"        Send Signal message
   auth-keeper slack send #ch "msg"     Send Slack message
   auth-keeper telegram updates         Get Telegram updates
   auth-keeper telegram send "msg"      Send Telegram message
