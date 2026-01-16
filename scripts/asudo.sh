@@ -320,7 +320,7 @@ _asudo_m365_assume() {
     echo ""
 
     # Run PowerShell interactively to show device code
-    if pwsh -Command "Connect-MgGraph -ClientId '$M365_CLIENT_ID' -Scopes '$scope_array' -NoWelcome"; then
+    if pwsh -Command "Connect-MgGraph -ClientId '$M365_CLIENT_ID' -Scopes '$scope_array' -UseDeviceCode -NoWelcome"; then
         # Get context after successful auth
         local account
         account=$(pwsh -Command "(Get-MgContext).Account" 2>/dev/null)
