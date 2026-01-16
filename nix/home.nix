@@ -61,6 +61,10 @@
       # Media & transcripts
       yt-dlp
 
+      # Email (local sync + search)
+      himalaya      # CLI email client with maildir sync
+      notmuch       # Fast local email search/indexing
+
       # Version management
       mise
 
