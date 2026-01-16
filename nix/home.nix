@@ -305,6 +305,17 @@
         _cb_apply_backend 2>/dev/null
       fi
 
+      # Context-aware wrappers for work-only tools
+      # MS365 tools (himalaya, ocal) require CONTEXT=work
+      himalaya() {
+        if [[ "''${CONTEXT:-}" != "work" ]]; then
+          echo -e "\033[0;31mError: himalaya requires work context\033[0m" >&2
+          echo "Set CONTEXT=work or cd to a work directory" >&2
+          return 1
+        fi
+        command himalaya "$@"
+      }
+
       # Imladris shell helpers (created by imladris-init)
       [[ -f "$HOME/.config/imladris/shell-helpers.sh" ]] && \
         source "$HOME/.config/imladris/shell-helpers.sh"
