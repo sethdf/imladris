@@ -79,5 +79,29 @@ bws_list() {
     bws secret list 2>/dev/null | jq -r '.[].key' | sort
 }
 
+# Set/create a secret value by name
+# Usage: bws_set "secret-name" "value"
+bws_set() {
+    local secret_name="$1"
+    local secret_value="$2"
+    local project_id="eb9c4741-f9d9-4b7f-a532-b3cb00fe8e1a"  # imladris project
+
+    if [[ -z "${BWS_ACCESS_TOKEN:-}" ]]; then
+        _bws_init true || return 1
+    fi
+
+    # Check if secret exists
+    local secret_id
+    secret_id=$(bws secret list 2>/dev/null | jq -r --arg name "$secret_name" '.[] | select(.key == $name) | .id' 2>/dev/null)
+
+    if [[ -n "$secret_id" ]]; then
+        # Update existing secret
+        bws secret edit "$secret_id" --value "$secret_value" >/dev/null 2>&1
+    else
+        # Create new secret
+        bws secret create "$secret_name" "$secret_value" "$project_id" >/dev/null 2>&1
+    fi
+}
+
 # Initialize on source
 _bws_init
