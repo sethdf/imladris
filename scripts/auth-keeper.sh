@@ -936,6 +936,8 @@ Commands:
   status              Show status of all services
   ms365 [cmd]         MS365 PowerShell access (service principal)
   google [cmd]        Google API access (OAuth2)
+  slack [cmd]         Slack API access (bot token)
+  telegram [cmd]      Telegram Bot API access
   refresh [service]   Force token refresh
   help                Show this help
 
@@ -944,6 +946,10 @@ Service Access:
   auth-keeper ms365 "Get-MgUser..."    Run MS365 command
   auth-keeper google mail              List Gmail
   auth-keeper google calendar          List Google Calendar
+  auth-keeper slack channels           List Slack channels
+  auth-keeper slack send #ch "msg"     Send Slack message
+  auth-keeper telegram updates         Get Telegram updates
+  auth-keeper telegram send "msg"      Send Telegram message
 
 Environment:
   AUTH_KEEPER_NOTIFY         signal, telegram, bell, none (default: signal)
