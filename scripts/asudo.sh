@@ -417,7 +417,7 @@ asudo() {
             _asudo_gcp_clear
             _asudo_m365_clear
             unset ASUDO_CURRENT_PROVIDER ASUDO_CURRENT_ENV ASUDO_CURRENT_LEVEL
-            echo "All cloud access cleared"
+            echo "All service access cleared"
             ;;
         status|s)
             echo "=== asudo status ==="
@@ -444,7 +444,7 @@ asudo() {
             ;;
         help|--help|-h)
             cat <<'EOF'
-asudo - Unified cloud access control
+asudo - Unified service access control (like sudo for services)
 
 Usage:
   asudo <provider> <environment> [--admin]
@@ -525,8 +525,8 @@ if [[ -n "${ZSH_VERSION:-}" ]]; then
 fi
 
 # Aliases for convenience
-alias ca='asudo'
-alias caa='asudo aws'
-alias caz='asudo azure'
-alias cag='asudo gcp'
-alias cam='asudo m365'
+alias as='asudo'
+alias asa='asudo aws'
+alias asaz='asudo azure'
+alias asg='asudo gcp'
+alias asm='asudo m365'

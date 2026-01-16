@@ -261,10 +261,10 @@
         GH_TOKEN=$(bws_get github-token 2>/dev/null) && export GH_TOKEN
       fi
 
-      # Cloud-assume: access level control (authorization)
-      # Must explicitly assume a role before cloud CLIs work
-      [[ -f "$HOME/repos/github.com/sethdf/imladris/scripts/cloud-assume.sh" ]] && \
-        source "$HOME/repos/github.com/sethdf/imladris/scripts/cloud-assume.sh"
+      # asudo: service access level control (authorization)
+      # Must explicitly assume a role before service CLIs work
+      [[ -f "$HOME/repos/github.com/sethdf/imladris/scripts/asudo.sh" ]] && \
+        source "$HOME/repos/github.com/sethdf/imladris/scripts/asudo.sh"
 
       # Claude-backend: switch between Bedrock/Team/Personal plans
       [[ -f "$HOME/repos/github.com/sethdf/imladris/scripts/claude-backend.sh" ]] && \
@@ -462,13 +462,13 @@
     enable = true;
     enableZshIntegration = true;
     settings = {
-      # Disable default AWS module - we use custom cloud-assume display
+      # Disable default AWS module - we use custom asudo display
       aws.disabled = true;
 
-      # Cloud access indicator (set by cloud-assume)
+      # Service access indicator (set by asudo)
       custom.cloud = {
-        when = ''test -n "$CLOUD_CURRENT_PROVIDER"'';
-        command = ''echo "$CLOUD_CURRENT_PROVIDER:$CLOUD_CURRENT_ENV"'';
+        when = ''test -n "$ASUDO_CURRENT_PROVIDER"'';
+        command = ''echo "$ASUDO_CURRENT_PROVIDER:$ASUDO_CURRENT_ENV"'';
         symbol = "☁️ ";
         style = "bold yellow";
         format = "[$symbol$output ]($style)";
@@ -476,7 +476,7 @@
 
       # Admin warning (red, prominent)
       custom.cloud_admin = {
-        when = ''test "$CLOUD_CURRENT_LEVEL" = "admin"'';
+        when = ''test "$ASUDO_CURRENT_LEVEL" = "admin"'';
         command = ''echo "⚠️ ADMIN"'';
         style = "bold red";
         format = "[$output ]($style)";
