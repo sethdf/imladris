@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
-# cloud-assume - Unified cloud access control
-# Source this file: source ~/bin/cloud-assume
+# asudo - Unified service access control (like sudo for services)
+# Source this file: source ~/bin/asudo
 #
 # Works WITH auth-keeper (authentication) to provide authorization control.
-# auth-keeper keeps you logged in; cloud-assume controls access level.
+# auth-keeper keeps you logged in; asudo controls access level.
 #
 # Usage:
-#   cloud-assume aws <env>           # readonly access
-#   cloud-assume aws <env> --admin   # admin access (logged)
-#   cloud-assume azure <sub>         # readonly subscription
-#   cloud-assume azure <sub> --admin # admin subscription
-#   cloud-assume gcp <project>       # readonly project
-#   cloud-assume clear               # revoke all cloud access
-#   cloud-assume status              # show current access
+#   asudo aws <env>           # readonly access
+#   asudo aws <env> --admin   # admin access (logged)
+#   asudo azure <sub>         # readonly subscription
+#   asudo azure <sub> --admin # admin subscription
+#   asudo gcp <project>       # readonly project
+#   asudo m365 [level]        # M365 access (personal, readonly, admin)
+#   asudo clear               # revoke all access
+#   asudo status              # show current access
 
 set -uo pipefail
 
@@ -22,15 +23,15 @@ set -uo pipefail
 
 # AWS account mapping: env -> account_id
 # Loaded from BWS (Bitwarden Secrets Manager) to avoid hardcoding
-declare -A CLOUD_AWS_ACCOUNTS
+declare -A ASUDO_AWS_ACCOUNTS
 
-_cloud_load_aws_accounts() {
+_asudo_load_aws_accounts() {
     # Only load once
-    [[ ${#CLOUD_AWS_ACCOUNTS[@]} -gt 0 ]] && return 0
+    [[ ${#ASUDO_AWS_ACCOUNTS[@]} -gt 0 ]] && return 0
 
     # Check if bws_get is available
     if ! type bws_get &>/dev/null; then
-        echo "[cloud-assume] Warning: bws_get not available, AWS accounts not loaded" >&2
+        echo "[asudo] Warning: bws_get not available, AWS accounts not loaded" >&2
         return 1
     fi
 
@@ -41,33 +42,33 @@ _cloud_load_aws_accounts() {
     prod=$(bws_get aws-account-prod 2>/dev/null) || true
     buxtonorgacct=$(bws_get aws-account-buxtonorgacct 2>/dev/null) || true
 
-    [[ -n "$qat" ]] && CLOUD_AWS_ACCOUNTS[qat]="$qat"
-    [[ -n "$dev" ]] && CLOUD_AWS_ACCOUNTS[dev]="$dev"
-    [[ -n "$prod" ]] && CLOUD_AWS_ACCOUNTS[prod]="$prod"
-    [[ -n "$buxtonorgacct" ]] && CLOUD_AWS_ACCOUNTS[buxtonorgacct]="$buxtonorgacct"
+    [[ -n "$qat" ]] && ASUDO_AWS_ACCOUNTS[qat]="$qat"
+    [[ -n "$dev" ]] && ASUDO_AWS_ACCOUNTS[dev]="$dev"
+    [[ -n "$prod" ]] && ASUDO_AWS_ACCOUNTS[prod]="$prod"
+    [[ -n "$buxtonorgacct" ]] && ASUDO_AWS_ACCOUNTS[buxtonorgacct]="$buxtonorgacct"
 
     return 0
 }
 
 # AWS role names
-CLOUD_AWS_READONLY_ROLE="ImladrisReadOnly"
-CLOUD_AWS_ADMIN_ROLE="ImladrisAdmin"
+ASUDO_AWS_READONLY_ROLE="ImladrisReadOnly"
+ASUDO_AWS_ADMIN_ROLE="ImladrisAdmin"
 
 # Azure subscription mapping: env -> subscription_id (configure as needed)
-declare -A CLOUD_AZURE_SUBS=(
+declare -A ASUDO_AZURE_SUBS=(
     # [dev]="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
     # [prod]="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 )
 
 # GCP project mapping: env -> project_id (configure as needed)
-declare -A CLOUD_GCP_PROJECTS=(
+declare -A ASUDO_GCP_PROJECTS=(
     # [dev]="my-dev-project"
     # [prod]="my-prod-project"
 )
 
 # Session duration (seconds)
-CLOUD_AWS_SESSION_DURATION="${CLOUD_AWS_SESSION_DURATION:-3600}"
-CLOUD_AWS_ADMIN_SESSION_DURATION="${CLOUD_AWS_ADMIN_SESSION_DURATION:-900}"  # 15 min for admin
+ASUDO_AWS_SESSION_DURATION="${ASUDO_AWS_SESSION_DURATION:-3600}"
+ASUDO_AWS_ADMIN_SESSION_DURATION="${ASUDO_AWS_ADMIN_SESSION_DURATION:-900}"  # 15 min for admin
 
 # M365 scope definitions (requested at auth time, not app-level)
 M365_SCOPES_PERSONAL="User.Read Mail.ReadWrite Mail.Send Calendars.ReadWrite Contacts.ReadWrite Files.ReadWrite Tasks.ReadWrite Notes.ReadWrite Chat.ReadWrite Presence.Read"
@@ -77,45 +78,45 @@ M365_SCOPES_ADMIN="User.Read User.ReadWrite.All Directory.ReadWrite.All Group.Re
 # M365 Client ID (loaded from BWS)
 M365_CLIENT_ID=""
 
-_cloud_load_m365_config() {
+_asudo_load_m365_config() {
     [[ -n "$M365_CLIENT_ID" ]] && return 0
 
     if ! type bws_get &>/dev/null; then
-        echo "[cloud-assume] Warning: bws_get not available, M365 config not loaded" >&2
+        echo "[asudo] Warning: bws_get not available, M365 config not loaded" >&2
         return 1
     fi
 
     M365_CLIENT_ID=$(bws_get m365-client-id 2>/dev/null) || true
-    [[ -z "$M365_CLIENT_ID" ]] && echo "[cloud-assume] Warning: m365-client-id not found in BWS" >&2
+    [[ -z "$M365_CLIENT_ID" ]] && echo "[asudo] Warning: m365-client-id not found in BWS" >&2
     return 0
 }
 
 # Log file for admin access
-CLOUD_ACCESS_LOG="${CLOUD_ACCESS_LOG:-$HOME/.cache/cloud-assume/access.log}"
+ASUDO_ACCESS_LOG="${ASUDO_ACCESS_LOG:-$HOME/.cache/asudo/access.log}"
 
 # Current access level tracking
-CLOUD_CURRENT_PROVIDER=""
-CLOUD_CURRENT_ENV=""
-CLOUD_CURRENT_LEVEL=""
+ASUDO_CURRENT_PROVIDER=""
+ASUDO_CURRENT_ENV=""
+ASUDO_CURRENT_LEVEL=""
 
 # =============================================================================
 # Logging
 # =============================================================================
 
-_cloud_log() {
+_asudo_log() {
     local level="$1"
     shift
     local msg="$*"
     local timestamp
     timestamp=$(date -Iseconds)
 
-    mkdir -p "$(dirname "$CLOUD_ACCESS_LOG")"
-    echo "[$timestamp] [$level] $msg" >> "$CLOUD_ACCESS_LOG"
+    mkdir -p "$(dirname "$ASUDO_ACCESS_LOG")"
+    echo "[$timestamp] [$level] $msg" >> "$ASUDO_ACCESS_LOG"
 
     if [[ "$level" == "ADMIN" ]]; then
-        echo -e "\033[1;31m[cloud-assume] ADMIN ACCESS: $msg\033[0m" >&2
+        echo -e "\033[1;31m[asudo] ADMIN ACCESS: $msg\033[0m" >&2
     else
-        echo "[cloud-assume] $msg" >&2
+        echo "[asudo] $msg" >&2
     fi
 }
 
@@ -123,33 +124,33 @@ _cloud_log() {
 # AWS
 # =============================================================================
 
-_cloud_aws_assume() {
+_asudo_aws_assume() {
     local env="$1"
     local admin="${2:-false}"
 
     # Load accounts from BWS if not already loaded
-    _cloud_load_aws_accounts
+    _asudo_load_aws_accounts
 
-    local account_id="${CLOUD_AWS_ACCOUNTS[$env]:-}"
+    local account_id="${ASUDO_AWS_ACCOUNTS[$env]:-}"
     if [[ -z "$account_id" ]]; then
         echo "Unknown AWS environment: $env" >&2
-        echo "Available: ${!CLOUD_AWS_ACCOUNTS[*]}" >&2
+        echo "Available: ${!ASUDO_AWS_ACCOUNTS[*]}" >&2
         return 1
     fi
 
     local role_name duration
     if [[ "$admin" == "true" ]]; then
-        role_name="$CLOUD_AWS_ADMIN_ROLE"
-        duration="$CLOUD_AWS_ADMIN_SESSION_DURATION"
-        _cloud_log "ADMIN" "aws $env ($account_id) role=$role_name"
+        role_name="$ASUDO_AWS_ADMIN_ROLE"
+        duration="$ASUDO_AWS_ADMIN_SESSION_DURATION"
+        _asudo_log "ADMIN" "aws $env ($account_id) role=$role_name"
     else
-        role_name="$CLOUD_AWS_READONLY_ROLE"
-        duration="$CLOUD_AWS_SESSION_DURATION"
-        _cloud_log "INFO" "aws $env ($account_id) role=$role_name"
+        role_name="$ASUDO_AWS_READONLY_ROLE"
+        duration="$ASUDO_AWS_SESSION_DURATION"
+        _asudo_log "INFO" "aws $env ($account_id) role=$role_name"
     fi
 
     local role_arn="arn:aws:iam::${account_id}:role/${role_name}"
-    local session_name="cloud-assume-$(date +%s)"
+    local session_name="asudo-$(date +%s)"
 
     # Use 'command aws' to bypass any wrapper functions
     local creds
@@ -174,61 +175,61 @@ _cloud_aws_assume() {
     unset AWS_PROFILE
 
     # Track current access
-    CLOUD_CURRENT_PROVIDER="aws"
-    CLOUD_CURRENT_ENV="$env"
-    CLOUD_CURRENT_LEVEL="$([[ "$admin" == "true" ]] && echo "admin" || echo "readonly")"
-    export CLOUD_CURRENT_PROVIDER CLOUD_CURRENT_ENV CLOUD_CURRENT_LEVEL
+    ASUDO_CURRENT_PROVIDER="aws"
+    ASUDO_CURRENT_ENV="$env"
+    ASUDO_CURRENT_LEVEL="$([[ "$admin" == "true" ]] && echo "admin" || echo "readonly")"
+    export ASUDO_CURRENT_PROVIDER ASUDO_CURRENT_ENV ASUDO_CURRENT_LEVEL
 
     local expiry
     expiry=$(echo "$creds" | jq -r '.Credentials.Expiration')
-    echo "AWS $env ($CLOUD_CURRENT_LEVEL) - expires: $expiry"
+    echo "AWS $env ($ASUDO_CURRENT_LEVEL) - expires: $expiry"
 }
 
-_cloud_aws_clear() {
+_asudo_aws_clear() {
     unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE
-    _cloud_log "INFO" "aws credentials cleared"
+    _asudo_log "INFO" "aws credentials cleared"
 }
 
 # =============================================================================
 # Azure
 # =============================================================================
 
-_cloud_azure_assume() {
+_asudo_azure_assume() {
     local env="$1"
     local admin="${2:-false}"
 
-    local sub_id="${CLOUD_AZURE_SUBS[$env]:-}"
+    local sub_id="${ASUDO_AZURE_SUBS[$env]:-}"
     if [[ -z "$sub_id" ]]; then
         # If no mapping, try using env as subscription name directly
         echo "No Azure subscription mapping for '$env', attempting to use as subscription name..." >&2
         if [[ "$admin" == "true" ]]; then
-            _cloud_log "ADMIN" "azure $env (subscription name)"
+            _asudo_log "ADMIN" "azure $env (subscription name)"
         else
-            _cloud_log "INFO" "azure $env (subscription name)"
+            _asudo_log "INFO" "azure $env (subscription name)"
         fi
         command az account set --subscription "$env"
     else
         if [[ "$admin" == "true" ]]; then
-            _cloud_log "ADMIN" "azure $env ($sub_id)"
+            _asudo_log "ADMIN" "azure $env ($sub_id)"
         else
-            _cloud_log "INFO" "azure $env ($sub_id)"
+            _asudo_log "INFO" "azure $env ($sub_id)"
         fi
         command az account set --subscription "$sub_id"
     fi
 
     if [[ $? -eq 0 ]]; then
-        CLOUD_CURRENT_PROVIDER="azure"
-        CLOUD_CURRENT_ENV="$env"
-        CLOUD_CURRENT_LEVEL="$([[ "$admin" == "true" ]] && echo "admin" || echo "readonly")"
-        export CLOUD_CURRENT_PROVIDER CLOUD_CURRENT_ENV CLOUD_CURRENT_LEVEL
+        ASUDO_CURRENT_PROVIDER="azure"
+        ASUDO_CURRENT_ENV="$env"
+        ASUDO_CURRENT_LEVEL="$([[ "$admin" == "true" ]] && echo "admin" || echo "readonly")"
+        export ASUDO_CURRENT_PROVIDER ASUDO_CURRENT_ENV ASUDO_CURRENT_LEVEL
 
         local current
         current=$(command az account show --query '{name:name, id:id}' -o tsv 2>/dev/null)
-        echo "Azure: $current ($CLOUD_CURRENT_LEVEL)"
+        echo "Azure: $current ($ASUDO_CURRENT_LEVEL)"
     fi
 }
 
-_cloud_azure_clear() {
+_asudo_azure_clear() {
     # Azure doesn't have a "clear" concept - you're always in some subscription
     # Best we can do is show warning
     echo "Azure: subscription context cannot be fully cleared" >&2
@@ -239,11 +240,11 @@ _cloud_azure_clear() {
 # GCP
 # =============================================================================
 
-_cloud_gcp_assume() {
+_asudo_gcp_assume() {
     local env="$1"
     local admin="${2:-false}"
 
-    local project_id="${CLOUD_GCP_PROJECTS[$env]:-}"
+    local project_id="${ASUDO_GCP_PROJECTS[$env]:-}"
     if [[ -z "$project_id" ]]; then
         # If no mapping, try using env as project directly
         echo "No GCP project mapping for '$env', attempting to use as project ID..." >&2
@@ -251,36 +252,36 @@ _cloud_gcp_assume() {
     fi
 
     if [[ "$admin" == "true" ]]; then
-        _cloud_log "ADMIN" "gcp $env ($project_id)"
+        _asudo_log "ADMIN" "gcp $env ($project_id)"
     else
-        _cloud_log "INFO" "gcp $env ($project_id)"
+        _asudo_log "INFO" "gcp $env ($project_id)"
     fi
 
     command gcloud config set project "$project_id" 2>/dev/null
 
     if [[ $? -eq 0 ]]; then
-        CLOUD_CURRENT_PROVIDER="gcp"
-        CLOUD_CURRENT_ENV="$env"
-        CLOUD_CURRENT_LEVEL="$([[ "$admin" == "true" ]] && echo "admin" || echo "readonly")"
-        export CLOUD_CURRENT_PROVIDER CLOUD_CURRENT_ENV CLOUD_CURRENT_LEVEL
+        ASUDO_CURRENT_PROVIDER="gcp"
+        ASUDO_CURRENT_ENV="$env"
+        ASUDO_CURRENT_LEVEL="$([[ "$admin" == "true" ]] && echo "admin" || echo "readonly")"
+        export ASUDO_CURRENT_PROVIDER ASUDO_CURRENT_ENV ASUDO_CURRENT_LEVEL
 
-        echo "GCP: $project_id ($CLOUD_CURRENT_LEVEL)"
+        echo "GCP: $project_id ($ASUDO_CURRENT_LEVEL)"
     fi
 }
 
-_cloud_gcp_clear() {
+_asudo_gcp_clear() {
     command gcloud config unset project 2>/dev/null
-    _cloud_log "INFO" "gcp project cleared"
+    _asudo_log "INFO" "gcp project cleared"
 }
 
 # =============================================================================
 # M365 (Microsoft Graph)
 # =============================================================================
 
-_cloud_m365_assume() {
+_asudo_m365_assume() {
     local level="${1:-personal}"
 
-    _cloud_load_m365_config
+    _asudo_load_m365_config
     if [[ -z "$M365_CLIENT_ID" ]]; then
         echo "M365 Client ID not configured. Add m365-client-id to BWS." >&2
         return 1
@@ -291,17 +292,17 @@ _cloud_m365_assume() {
         personal|p)
             scopes="$M365_SCOPES_PERSONAL"
             level="personal"
-            _cloud_log "INFO" "m365 personal access"
+            _asudo_log "INFO" "m365 personal access"
             ;;
         readonly|ro|r)
             scopes="$M365_SCOPES_READONLY"
             level="readonly"
-            _cloud_log "INFO" "m365 readonly access"
+            _asudo_log "INFO" "m365 readonly access"
             ;;
         admin|a)
             scopes="$M365_SCOPES_ADMIN"
             level="admin"
-            _cloud_log "ADMIN" "m365 admin access"
+            _asudo_log "ADMIN" "m365 admin access"
             ;;
         *)
             echo "Unknown M365 level: $level" >&2
@@ -335,10 +336,10 @@ _cloud_m365_assume() {
         account=$(echo "$result" | cut -d'|' -f2)
         scopes_granted=$(echo "$result" | cut -d'|' -f3)
 
-        CLOUD_CURRENT_PROVIDER="m365"
-        CLOUD_CURRENT_ENV="$account"
-        CLOUD_CURRENT_LEVEL="$level"
-        export CLOUD_CURRENT_PROVIDER CLOUD_CURRENT_ENV CLOUD_CURRENT_LEVEL
+        ASUDO_CURRENT_PROVIDER="m365"
+        ASUDO_CURRENT_ENV="$account"
+        ASUDO_CURRENT_LEVEL="$level"
+        export ASUDO_CURRENT_PROVIDER ASUDO_CURRENT_ENV ASUDO_CURRENT_LEVEL
 
         echo "M365 $level - account: $account"
     else
@@ -348,12 +349,12 @@ _cloud_m365_assume() {
     fi
 }
 
-_cloud_m365_clear() {
+_asudo_m365_clear() {
     pwsh -Command "Disconnect-MgGraph" 2>/dev/null || true
-    _cloud_log "INFO" "m365 disconnected"
+    _asudo_log "INFO" "m365 disconnected"
 }
 
-_cloud_m365_status() {
+_asudo_m365_status() {
     local result
     result=$(pwsh -Command "
         try {
@@ -374,7 +375,7 @@ _cloud_m365_status() {
 # Main Interface
 # =============================================================================
 
-cloud-assume() {
+asudo() {
     local provider="${1:-}"
     local env="${2:-}"
     local flag="${3:-}"
@@ -391,16 +392,16 @@ cloud-assume() {
 
     case "$provider" in
         aws)
-            [[ -z "$env" ]] && { echo "Usage: cloud-assume aws <env> [--admin]"; return 1; }
-            _cloud_aws_assume "$env" "$admin"
+            [[ -z "$env" ]] && { echo "Usage: asudo aws <env> [--admin]"; return 1; }
+            _asudo_aws_assume "$env" "$admin"
             ;;
         azure|az)
-            [[ -z "$env" ]] && { echo "Usage: cloud-assume azure <subscription> [--admin]"; return 1; }
-            _cloud_azure_assume "$env" "$admin"
+            [[ -z "$env" ]] && { echo "Usage: asudo azure <subscription> [--admin]"; return 1; }
+            _asudo_azure_assume "$env" "$admin"
             ;;
         gcp|gcloud)
-            [[ -z "$env" ]] && { echo "Usage: cloud-assume gcp <project> [--admin]"; return 1; }
-            _cloud_gcp_assume "$env" "$admin"
+            [[ -z "$env" ]] && { echo "Usage: asudo gcp <project> [--admin]"; return 1; }
+            _asudo_gcp_assume "$env" "$admin"
             ;;
         m365|microsoft|ms)
             # M365 uses level instead of env: personal, readonly, admin
@@ -408,20 +409,20 @@ cloud-assume() {
             if [[ "$level" == "--admin" ]] || [[ "$admin" == "true" ]]; then
                 level="admin"
             fi
-            _cloud_m365_assume "$level"
+            _asudo_m365_assume "$level"
             ;;
         clear|revoke)
-            _cloud_aws_clear
-            _cloud_azure_clear
-            _cloud_gcp_clear
-            _cloud_m365_clear
-            unset CLOUD_CURRENT_PROVIDER CLOUD_CURRENT_ENV CLOUD_CURRENT_LEVEL
+            _asudo_aws_clear
+            _asudo_azure_clear
+            _asudo_gcp_clear
+            _asudo_m365_clear
+            unset ASUDO_CURRENT_PROVIDER ASUDO_CURRENT_ENV ASUDO_CURRENT_LEVEL
             echo "All cloud access cleared"
             ;;
         status|s)
-            echo "=== cloud-assume status ==="
-            if [[ -n "${CLOUD_CURRENT_PROVIDER:-}" ]]; then
-                echo "Active: $CLOUD_CURRENT_PROVIDER / $CLOUD_CURRENT_ENV ($CLOUD_CURRENT_LEVEL)"
+            echo "=== asudo status ==="
+            if [[ -n "${ASUDO_CURRENT_PROVIDER:-}" ]]; then
+                echo "Active: $ASUDO_CURRENT_PROVIDER / $ASUDO_CURRENT_ENV ($ASUDO_CURRENT_LEVEL)"
             else
                 echo "Active: none"
             fi
@@ -439,16 +440,16 @@ cloud-assume() {
             echo "GCP project:"
             command gcloud config get-value project 2>/dev/null || echo "  (not set)"
             echo ""
-            _cloud_m365_status
+            _asudo_m365_status
             ;;
         help|--help|-h)
             cat <<'EOF'
-cloud-assume - Unified cloud access control
+asudo - Unified cloud access control
 
 Usage:
-  cloud-assume <provider> <environment> [--admin]
-  cloud-assume clear
-  cloud-assume status
+  asudo <provider> <environment> [--admin]
+  asudo clear
+  asudo status
 
 Providers:
   aws <env>      Assume AWS role (qat, dev, prod, buxtonorgacct)
@@ -465,24 +466,24 @@ M365 Levels:
   admin          Full admin access (logged!)
 
 Examples:
-  cloud-assume aws qat           # readonly access to QAT
-  cloud-assume aws prod --admin  # admin access to prod (logged!)
-  cloud-assume azure dev         # switch to dev subscription
-  cloud-assume m365              # personal M365 access (mail, calendar)
-  cloud-assume m365 readonly     # tenant-wide read access
-  cloud-assume m365 admin        # full admin access (logged!)
-  cloud-assume clear             # revoke all access
+  asudo aws qat           # readonly access to QAT
+  asudo aws prod --admin  # admin access to prod (logged!)
+  asudo azure dev         # switch to dev subscription
+  asudo m365              # personal M365 access (mail, calendar)
+  asudo m365 readonly     # tenant-wide read access
+  asudo m365 admin        # full admin access (logged!)
+  asudo clear             # revoke all access
 
 Environment:
-  CLOUD_AWS_SESSION_DURATION         Readonly session (default: 3600)
-  CLOUD_AWS_ADMIN_SESSION_DURATION   Admin session (default: 900)
-  CLOUD_ACCESS_LOG                   Log file path
+  ASUDO_AWS_SESSION_DURATION         Readonly session (default: 3600)
+  ASUDO_AWS_ADMIN_SESSION_DURATION   Admin session (default: 900)
+  ASUDO_ACCESS_LOG                   Log file path
 EOF
             ;;
         "")
-            echo "Usage: cloud-assume <provider> <env> [--admin]"
-            echo "       cloud-assume status"
-            echo "       cloud-assume help"
+            echo "Usage: asudo <provider> <env> [--admin]"
+            echo "       asudo status"
+            echo "       asudo help"
             ;;
         *)
             echo "Unknown provider: $provider"
@@ -494,24 +495,24 @@ EOF
 
 # Completion
 if [[ -n "${ZSH_VERSION:-}" ]]; then
-    _cloud_assume_complete() {
+    _asudo_assume_complete() {
         local -a providers envs flags
         providers=(aws azure gcp clear status help)
         flags=(--admin)
 
         case "${words[2]:-}" in
             aws)
-                envs=(${(k)CLOUD_AWS_ACCOUNTS})
+                envs=(${(k)ASUDO_AWS_ACCOUNTS})
                 _describe 'environment' envs
                 _describe 'flags' flags
                 ;;
             azure)
-                envs=(${(k)CLOUD_AZURE_SUBS})
+                envs=(${(k)ASUDO_AZURE_SUBS})
                 _describe 'subscription' envs
                 _describe 'flags' flags
                 ;;
             gcp)
-                envs=(${(k)CLOUD_GCP_PROJECTS})
+                envs=(${(k)ASUDO_GCP_PROJECTS})
                 _describe 'project' envs
                 _describe 'flags' flags
                 ;;
@@ -520,12 +521,12 @@ if [[ -n "${ZSH_VERSION:-}" ]]; then
                 ;;
         esac
     }
-    compdef _cloud_assume_complete cloud-assume
+    compdef _asudo_assume_complete asudo
 fi
 
 # Aliases for convenience
-alias ca='cloud-assume'
-alias caa='cloud-assume aws'
-alias caz='cloud-assume azure'
-alias cag='cloud-assume gcp'
-alias cam='cloud-assume m365'
+alias ca='asudo'
+alias caa='asudo aws'
+alias caz='asudo azure'
+alias cag='asudo gcp'
+alias cam='asudo m365'
