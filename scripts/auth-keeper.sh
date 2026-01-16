@@ -545,6 +545,26 @@ auth-keeper() {
                 echo "google: not configured (need gcp-oauth-client-json in BWS)"
             fi
 
+            # Slack
+            if _ak_slack_configured; then
+                echo "slack: configured (bot token)"
+            else
+                echo "slack: not configured (need slack-bot-token in BWS)"
+            fi
+
+            # Telegram
+            if _ak_telegram_configured; then
+                local chat_id
+                chat_id="${TELEGRAM_CHAT_ID:-$(_ak_bws_get 'telegram-chat-id' 2>/dev/null)}"
+                if [[ -n "$chat_id" ]]; then
+                    echo "telegram: configured (chat: $chat_id)"
+                else
+                    echo "telegram: configured (no default chat)"
+                fi
+            else
+                echo "telegram: not configured (need telegram-bot-token in BWS)"
+            fi
+
             # Tailscale
             if command -v tailscale &>/dev/null; then
                 if _ak_tailscale_connected; then
@@ -655,6 +675,230 @@ EOF
                     ;;
                 *)
                     echo "Unknown google command: $1 (try: auth-keeper google -h)"
+                    return 1
+                    ;;
+            esac
+            ;;
+
+        slack|sl)
+            shift
+            case "${1:-}" in
+                ""|"triage")
+                    # Show recent activity - channels with unread, DMs, mentions
+                    echo "Checking Slack activity..."
+                    local response
+                    response=$(_ak_slack_api "conversations.list" -d '{"types":"public_channel,private_channel,im","limit":50}')
+
+                    if echo "$response" | jq -e '.ok' &>/dev/null && [[ $(echo "$response" | jq -r '.ok') == "true" ]]; then
+                        echo ""
+                        echo "Channels:"
+                        echo "$response" | jq -r '.channels[] | select(.is_member == true) | "  \(if .is_private then "🔒" else "#" end)\(.name // "DM") [\(.id)]"' | head -20
+                    else
+                        echo "Error: $(echo "$response" | jq -r '.error // "Unknown error"')" >&2
+                    fi
+                    ;;
+                "channels"|"ch")
+                    local response
+                    response=$(_ak_slack_api "conversations.list" -d '{"types":"public_channel,private_channel","limit":100}')
+
+                    if echo "$response" | jq -e '.ok' &>/dev/null && [[ $(echo "$response" | jq -r '.ok') == "true" ]]; then
+                        echo "Channels:"
+                        echo ""
+                        echo "$response" | jq -r '.channels[] | "  \(if .is_private then "🔒" else "#" end)\(.name) (\(.num_members) members) [\(.id)]"'
+                    else
+                        echo "Error: $(echo "$response" | jq -r '.error // "Unknown error"')" >&2
+                    fi
+                    ;;
+                "read"|"r")
+                    local channel="${2:?Usage: auth-keeper slack read <channel> [limit]}"
+                    local limit="${3:-20}"
+
+                    # Resolve channel name to ID if needed
+                    local channel_id="$channel"
+                    if [[ ! "$channel" =~ ^[CDG] ]]; then
+                        local ch_name="${channel#\#}"
+                        local ch_list
+                        ch_list=$(_ak_slack_api "conversations.list" -d '{"types":"public_channel,private_channel","limit":200}')
+                        channel_id=$(echo "$ch_list" | jq -r --arg n "$ch_name" '.channels[] | select(.name == $n) | .id')
+                        if [[ -z "$channel_id" ]]; then
+                            echo "Error: Channel not found: $channel" >&2
+                            return 1
+                        fi
+                    fi
+
+                    local response
+                    response=$(_ak_slack_api "conversations.history" -d "{\"channel\":\"$channel_id\",\"limit\":$limit}")
+
+                    if echo "$response" | jq -e '.ok' &>/dev/null && [[ $(echo "$response" | jq -r '.ok') == "true" ]]; then
+                        echo "Recent messages in $channel:"
+                        echo ""
+                        echo "$response" | jq -r '.messages | reverse | .[] | "[\(.ts | tonumber | strftime("%m-%d %H:%M"))] \(.user // "bot"): \(.text | .[0:100])"'
+                    else
+                        echo "Error: $(echo "$response" | jq -r '.error // "Unknown error"')" >&2
+                    fi
+                    ;;
+                "send"|"s")
+                    local channel="${2:?Usage: auth-keeper slack send <channel> <message>}"
+                    shift 2
+                    local message="$*"
+
+                    if [[ -z "$message" ]]; then
+                        echo "Usage: auth-keeper slack send <channel> <message>" >&2
+                        return 1
+                    fi
+
+                    # Resolve channel name to ID if needed
+                    local channel_id="$channel"
+                    if [[ ! "$channel" =~ ^[CDG] ]]; then
+                        local ch_name="${channel#\#}"
+                        local ch_list
+                        ch_list=$(_ak_slack_api "conversations.list" -d '{"types":"public_channel,private_channel","limit":200}')
+                        channel_id=$(echo "$ch_list" | jq -r --arg n "$ch_name" '.channels[] | select(.name == $n) | .id')
+                        if [[ -z "$channel_id" ]]; then
+                            echo "Error: Channel not found: $channel" >&2
+                            return 1
+                        fi
+                    fi
+
+                    local response
+                    response=$(_ak_slack_api "chat.postMessage" -d "$(jq -n --arg ch "$channel_id" --arg txt "$message" '{channel:$ch,text:$txt}')")
+
+                    if echo "$response" | jq -e '.ok' &>/dev/null && [[ $(echo "$response" | jq -r '.ok') == "true" ]]; then
+                        local ts
+                        ts=$(echo "$response" | jq -r '.ts')
+                        echo "Message sent to $channel"
+                        echo "  Timestamp: $ts"
+                    else
+                        echo "Error: $(echo "$response" | jq -r '.error // "Unknown error"')" >&2
+                    fi
+                    ;;
+                "auth"|"test")
+                    local response
+                    response=$(_ak_slack_api "auth.test")
+
+                    if echo "$response" | jq -e '.ok' &>/dev/null && [[ $(echo "$response" | jq -r '.ok') == "true" ]]; then
+                        echo "Slack authentication successful!"
+                        echo "  Team: $(echo "$response" | jq -r '.team')"
+                        echo "  User: $(echo "$response" | jq -r '.user')"
+                        echo "  Bot ID: $(echo "$response" | jq -r '.bot_id // "N/A"')"
+                    else
+                        echo "Error: $(echo "$response" | jq -r '.error // "Unknown error"')" >&2
+                    fi
+                    ;;
+                "-h"|"--help")
+                    cat <<'EOF'
+auth-keeper slack - Slack API access (Bot token)
+
+Usage:
+  auth-keeper slack                    Show recent activity
+  auth-keeper slack channels           List channels
+  auth-keeper slack read <ch> [n]      Read last n messages (default: 20)
+  auth-keeper slack send <ch> <msg>    Send message to channel
+  auth-keeper slack auth               Test authentication
+  auth-keeper slack -h                 Show this help
+
+Channel formats: #general, general, C0123456789
+
+Examples:
+  auth-keeper slack channels
+  auth-keeper slack read #general 10
+  auth-keeper slack send #general "Build complete!"
+EOF
+                    ;;
+                *)
+                    echo "Unknown slack command: $1 (try: auth-keeper slack -h)" >&2
+                    return 1
+                    ;;
+            esac
+            ;;
+
+        telegram|tg)
+            shift
+            case "${1:-}" in
+                ""|"updates")
+                    local limit="${2:-10}"
+                    local response
+                    response=$(_ak_telegram_api "getUpdates" -d "{\"limit\":$limit}")
+
+                    if echo "$response" | jq -e '.ok' &>/dev/null && [[ $(echo "$response" | jq -r '.ok') == "true" ]]; then
+                        local count
+                        count=$(echo "$response" | jq '.result | length')
+
+                        if [[ "$count" == "0" ]]; then
+                            echo "No recent messages to your bot."
+                            echo "Send a message to your bot to see it here."
+                        else
+                            echo "Recent updates ($count):"
+                            echo ""
+                            echo "$response" | jq -r '.result[] | .message | select(.) |
+                                "[\(.date | strftime("%m-%d %H:%M"))] \(.chat.title // .chat.first_name // .chat.id) (\(.chat.type))\n  From: \(.from.first_name // "Unknown")\n  Message: \(.text // "[non-text]" | .[0:80])\n  Chat ID: \(.chat.id)\n"'
+                        fi
+                    else
+                        echo "Error: $(echo "$response" | jq -r '.description // "Unknown error"')" >&2
+                    fi
+                    ;;
+                "send"|"s")
+                    local chat="${2:-}"
+                    shift 2 2>/dev/null || true
+                    local message="$*"
+
+                    # Use default chat if "me" or empty
+                    if [[ -z "$chat" || "$chat" == "me" ]]; then
+                        chat=$(_ak_telegram_get_chat) || return 1
+                    fi
+
+                    if [[ -z "$message" ]]; then
+                        echo "Usage: auth-keeper telegram send [chat] <message>" >&2
+                        return 1
+                    fi
+
+                    local response
+                    response=$(_ak_telegram_api "sendMessage" -d "$(jq -n --arg ch "$chat" --arg txt "$message" '{chat_id:$ch,text:$txt}')")
+
+                    if echo "$response" | jq -e '.ok' &>/dev/null && [[ $(echo "$response" | jq -r '.ok') == "true" ]]; then
+                        local msg_id
+                        msg_id=$(echo "$response" | jq -r '.result.message_id')
+                        echo "Message sent!"
+                        echo "  Chat: $chat"
+                        echo "  Message ID: $msg_id"
+                    else
+                        echo "Error: $(echo "$response" | jq -r '.description // "Unknown error"')" >&2
+                    fi
+                    ;;
+                "auth"|"me")
+                    local response
+                    response=$(_ak_telegram_api "getMe")
+
+                    if echo "$response" | jq -e '.ok' &>/dev/null && [[ $(echo "$response" | jq -r '.ok') == "true" ]]; then
+                        echo "Bot authentication successful!"
+                        echo "  Name: $(echo "$response" | jq -r '.result.first_name')"
+                        echo "  Username: @$(echo "$response" | jq -r '.result.username')"
+                        echo "  Bot ID: $(echo "$response" | jq -r '.result.id')"
+                    else
+                        echo "Error: $(echo "$response" | jq -r '.description // "Unknown error"')" >&2
+                    fi
+                    ;;
+                "-h"|"--help")
+                    cat <<'EOF'
+auth-keeper telegram - Telegram Bot API access
+
+Usage:
+  auth-keeper telegram                 Get recent updates
+  auth-keeper telegram updates [n]     Get last n updates (default: 10)
+  auth-keeper telegram send [chat] <msg>  Send message (default: your chat)
+  auth-keeper telegram auth            Test bot token
+  auth-keeper telegram -h              Show this help
+
+Chat formats: numeric chat ID, or "me" for default chat
+
+Examples:
+  auth-keeper telegram updates
+  auth-keeper telegram send "Hello from CLI!"
+  auth-keeper telegram send 123456789 "Direct message"
+EOF
+                    ;;
+                *)
+                    echo "Unknown telegram command: $1 (try: auth-keeper telegram -h)" >&2
                     return 1
                     ;;
             esac
