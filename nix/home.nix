@@ -45,6 +45,7 @@
       azure-cli
       google-cloud-sdk
       powershell  # Microsoft Graph SDK for M365 integration
+      libsecret   # Required for PowerShell Graph token caching
 
       # Container tools
       lazydocker
