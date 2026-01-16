@@ -408,6 +408,82 @@ _ak_google_api() {
 }
 
 # ============================================================================
+# Slack - Bot API
+# ============================================================================
+
+_ak_slack_get_token() {
+    local token
+    token="${SLACK_BOT_TOKEN:-$(_ak_bws_get 'slack-bot-token')}"
+
+    if [[ -z "$token" ]]; then
+        echo "Error: No Slack token. Set SLACK_BOT_TOKEN or add slack-bot-token to BWS" >&2
+        return 1
+    fi
+    echo "$token"
+}
+
+_ak_slack_api() {
+    local method="$1"
+    shift
+    local token
+    token=$(_ak_slack_get_token) || return 1
+
+    curl -s "https://slack.com/api/$method" \
+        -H "Authorization: Bearer $token" \
+        -H "Content-Type: application/json; charset=utf-8" \
+        "$@"
+}
+
+_ak_slack_configured() {
+    local token
+    token="${SLACK_BOT_TOKEN:-$(_ak_bws_get 'slack-bot-token' 2>/dev/null)}"
+    [[ -n "$token" ]]
+}
+
+# ============================================================================
+# Telegram - Bot API
+# ============================================================================
+
+_ak_telegram_get_token() {
+    local token
+    token="${TELEGRAM_BOT_TOKEN:-$(_ak_bws_get 'telegram-bot-token')}"
+
+    if [[ -z "$token" ]]; then
+        echo "Error: No Telegram token. Set TELEGRAM_BOT_TOKEN or add telegram-bot-token to BWS" >&2
+        return 1
+    fi
+    echo "$token"
+}
+
+_ak_telegram_get_chat() {
+    local chat
+    chat="${TELEGRAM_CHAT_ID:-$(_ak_bws_get 'telegram-chat-id')}"
+
+    if [[ -z "$chat" ]]; then
+        echo "Error: No default chat. Set TELEGRAM_CHAT_ID or add telegram-chat-id to BWS" >&2
+        return 1
+    fi
+    echo "$chat"
+}
+
+_ak_telegram_api() {
+    local method="$1"
+    shift
+    local token
+    token=$(_ak_telegram_get_token) || return 1
+
+    curl -s "https://api.telegram.org/bot${token}/${method}" \
+        -H "Content-Type: application/json" \
+        "$@"
+}
+
+_ak_telegram_configured() {
+    local token
+    token="${TELEGRAM_BOT_TOKEN:-$(_ak_bws_get 'telegram-bot-token' 2>/dev/null)}"
+    [[ -n "$token" ]]
+}
+
+# ============================================================================
 # Tailscale
 # ============================================================================
 
