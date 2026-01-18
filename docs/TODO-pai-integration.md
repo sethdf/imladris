@@ -19,6 +19,42 @@ PAI provides **structure and methodology**, not just code. The value is in:
 - Hook taxonomy (lifecycle events)
 - Skill format (AI-readable routing)
 
+## Key Decisions
+
+| Decision | Answer |
+|----------|--------|
+| Fast model for gating? | **No** - deterministic code (regex matching) |
+| Skill structure? | **Pointing** - same PAI format, different content |
+| Hook format? | **Both** - bash for portability, TypeScript when needed |
+| AI runtime? | **Abstract** - interface allows swapping Claude/Aider/etc |
+| curu-skills relationship to PAI? | **curu-skills ARE PAI packs** - just personal ones |
+
+## curu-skills = Personal PAI Packs
+
+curu-skills follows PAI pack structure exactly. The difference is ownership:
+
+```
+danielmiessler/Personal_AI_Infrastructure/Packs/
+├── pai-algorithm-skill/     # Upstream - generic, community
+├── pai-research-skill/      # Upstream - generic, community
+└── pai-browser-skill/       # Upstream - generic, community
+
+sethdf/curu-skills/packs/
+├── imladris/                # Personal - depends on Imladris environment
+├── servicedesk/             # Personal - could contribute if genericized
+├── zones/                   # Personal - PAI lacks this, could contribute
+└── algorithm-gate/          # Personal - fills PAI gap, could contribute
+```
+
+### When to Contribute Upstream
+
+| Pack | Contribute? | Why |
+|------|-------------|-----|
+| imladris | No | Depends on specific environment |
+| servicedesk-plus | Maybe | Could be generic if parameterized |
+| zones/context | Yes | PAI lacks this, community would benefit |
+| algorithm-gate | Yes | Fills enforcement gap in PAI |
+
 ---
 
 ## The Three Layers
@@ -288,6 +324,60 @@ curu-skills/
 2. **Memory integration** - Should Imladris operations write to PAI MEMORY or separate logs?
 3. **Skill discovery** - How does AI know about Imladris skill without explicit invocation?
 4. **Update mechanism** - How to update Imladris hooks when scripts change?
+
+---
+
+## Reproducibility Checklist
+
+Before considering implementation complete:
+
+- [ ] No hardcoded credentials (all from secrets provider)
+- [ ] No hardcoded paths (use XDG or configurable)
+- [ ] No vendor-specific commands without abstraction
+- [ ] All dependencies declared in nix/flake.nix
+- [ ] Configuration is separate from code
+- [ ] Works on fresh machine with just `nix` and `git`
+- [ ] Hooks work with both bash and TypeScript
+- [ ] AI runtime abstracted (not Claude-specific)
+- [ ] Effort classification is deterministic (no model calls)
+- [ ] PAI pack structure followed exactly in curu-skills
+
+---
+
+## Agnosticism Strategy
+
+### Secrets Interface
+
+```bash
+# Abstract - not vendor-specific
+secrets_get "secret-name"
+
+# Implementations: BWS, Vault, 1Password, Pass, env vars
+```
+
+### AI Interface
+
+```bash
+# Abstract - not Claude-specific
+ai_run "prompt"
+ai_chat
+
+# Implementations: Claude Code, Aider, Ollama
+```
+
+### Effort Classification
+
+```typescript
+// Deterministic regex matching - NO model calls
+const patterns = {
+  TRIVIAL: /^(what|how|explain|list)/i,
+  QUICK: /^(run|check|status|show)/i,
+  STANDARD: /^(fix|add|update|create)/i,
+  THOROUGH: /^(design|architect|plan)/i
+};
+```
+
+Zero latency added. Code before prompts.
 
 ---
 
