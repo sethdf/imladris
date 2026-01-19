@@ -1030,6 +1030,9 @@ install_imladris_scripts
 # Install Anthropic official skills
 install_anthropic_skills
 
+# Install Curu packs (simplex-bridge, etc.)
+install_curu_packs
+
 # Curu development tools (sync, watch, commit)
 setup_repo_watch
 
