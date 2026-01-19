@@ -177,6 +177,11 @@
         if [ ! -d "$GHQ_ROOT/github.com/anthropics/skills" ]; then
           ${pkgs.ghq}/bin/ghq get anthropics/skills || true
         fi
+
+        # Curu packs - PAI-compliant packs for curu/imladris
+        if [ ! -d "$GHQ_ROOT/github.com/sethdf/curu-packs" ]; then
+          ${pkgs.ghq}/bin/ghq get -p sethdf/curu-packs || true
+        fi
       '';
 
       # Install Fabric CLI via go install (not in nixpkgs)
@@ -199,6 +204,8 @@
         mkdir -p "${homeDirectory}/.config"
         mkdir -p "${homeDirectory}/.config/bws"
         mkdir -p "${homeDirectory}/.config/tmux"
+        mkdir -p "${homeDirectory}/.config/simplex-bridge"
+        mkdir -p "${homeDirectory}/inbox/simplex"
       '';
 
       # Symlink tmux session colors script
