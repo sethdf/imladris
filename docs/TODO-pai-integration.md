@@ -51,9 +51,40 @@ sethdf/curu-skills/packs/
 | Pack | Contribute? | Why |
 |------|-------------|-----|
 | imladris | No | Depends on specific environment |
-| servicedesk-plus | Maybe | Could be generic if parameterized |
-| zones/context | Yes | PAI lacks this, community would benefit |
+| servicedesk | Maybe | Could be generic if parameterized |
+| zones | Yes | PAI lacks this, community would benefit |
 | algorithm-gate | Yes | Fills enforcement gap in PAI |
+
+### Skill Categorization
+
+| Skill | Depends On | Pack | Upstream? |
+|-------|------------|------|-----------|
+| mail | auth-keeper (Imladris) | `imladris` | No |
+| cloud access | cloud-assume (Imladris) | `imladris` | No |
+| LUKS/storage | imladris-init (Imladris) | `imladris` | No |
+| SDP | zones + HTTP API | `servicedesk` | Maybe |
+| zones | CONTEXT env var | `zones` | Yes |
+| algorithm-gate | conversation state | `algorithm-gate` | Yes |
+
+### Dependency Graph
+
+```
+PAI core
+    │
+    ├── zones (generic)
+    │       │
+    │       ├── servicedesk (uses zones for CONTEXT=work gating)
+    │       │
+    │       └── imladris (uses zones + Imladris scripts)
+    │               │
+    │               ├── mail (via auth-keeper)
+    │               ├── cloud (via cloud-assume)
+    │               └── storage (via imladris-init)
+    │
+    └── algorithm-gate (generic)
+```
+
+**Rule:** If it depends on Imladris scripts → `imladris` pack. If it's generic → own pack.
 
 ---
 
