@@ -178,10 +178,7 @@
           ${pkgs.ghq}/bin/ghq get anthropics/skills || true
         fi
 
-        # Curu packs - PAI-compliant packs for curu/imladris
-        if [ ! -d "$GHQ_ROOT/github.com/sethdf/curu-packs" ]; then
-          ${pkgs.ghq}/bin/ghq get -p sethdf/curu-packs || true
-        fi
+        # Note: Packs are now in curu-skills/packs/ (no separate curu-packs repo)
       '';
 
       # Install Fabric CLI via go install (not in nixpkgs)
@@ -237,9 +234,9 @@
         fi
       '';
 
-      # Install SimpleX Bridge service and config from curu-packs
+      # Install SimpleX Bridge service and config from curu-skills/packs
       installSimplexBridge = lib.hm.dag.entryAfter [ "writeBoundary" "cloneRepos" "createDirs" ] ''
-        PACKS_DIR="${homeDirectory}/repos/github.com/sethdf/curu-packs"
+        PACKS_DIR="${homeDirectory}/repos/github.com/sethdf/curu-skills/packs"
         if [ -d "$PACKS_DIR/simplex-bridge-pack" ]; then
           # Copy config
           if [ -f "$PACKS_DIR/simplex-bridge-pack/src/config/simplex-bridge.yaml" ]; then

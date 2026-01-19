@@ -716,18 +716,18 @@ install_anthropic_skills() {
 # =============================================================================
 
 install_curu_packs() {
-    # Look for curu-packs repo
+    # Packs are now in curu-skills/packs/ (not a separate repo)
     local PACKS_SRC=""
     for repo_root in "$HOME/repos" "$HOME/work/repos" "$HOME/home/repos"; do
-        if [[ -d "$repo_root/github.com/sethdf/curu-packs" ]]; then
-            PACKS_SRC="$repo_root/github.com/sethdf/curu-packs"
+        if [[ -d "$repo_root/github.com/sethdf/curu-skills/packs" ]]; then
+            PACKS_SRC="$repo_root/github.com/sethdf/curu-skills/packs"
             break
         fi
     done
 
     if [[ -z "$PACKS_SRC" ]]; then
-        log "Curu packs repo not found - clone it first:"
-        log "  ghq get -p sethdf/curu-packs"
+        log "Curu skills/packs not found - clone curu-skills first:"
+        log "  ghq get -p sethdf/curu-skills"
         return 0
     fi
 
