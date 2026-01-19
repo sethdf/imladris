@@ -711,6 +711,65 @@ install_anthropic_skills() {
 }
 
 # =============================================================================
+# Curu Packs Installation
+# PAI-compliant packs for identity, auth, comms, and simplex-bridge
+# =============================================================================
+
+install_curu_packs() {
+    # Look for curu-packs repo
+    local PACKS_SRC=""
+    for repo_root in "$HOME/repos" "$HOME/work/repos" "$HOME/home/repos"; do
+        if [[ -d "$repo_root/github.com/sethdf/curu-packs" ]]; then
+            PACKS_SRC="$repo_root/github.com/sethdf/curu-packs"
+            break
+        fi
+    done
+
+    if [[ -z "$PACKS_SRC" ]]; then
+        log "Curu packs repo not found - clone it first:"
+        log "  ghq get -p sethdf/curu-packs"
+        return 0
+    fi
+
+    log "Installing curu packs from $PACKS_SRC..."
+
+    # Install simplex-bridge
+    if [[ -d "$PACKS_SRC/simplex-bridge-pack" ]]; then
+        # Config
+        mkdir -p "$HOME/.config/simplex-bridge"
+        if [[ -f "$PACKS_SRC/simplex-bridge-pack/src/config/simplex-bridge.yaml" ]]; then
+            cp "$PACKS_SRC/simplex-bridge-pack/src/config/simplex-bridge.yaml" \
+               "$HOME/.config/simplex-bridge/config.yaml"
+        fi
+
+        # Script
+        if [[ -f "$PACKS_SRC/simplex-bridge-pack/src/scripts/simplex-bridge.sh" ]]; then
+            ln -sf "$PACKS_SRC/simplex-bridge-pack/src/scripts/simplex-bridge.sh" \
+                   "$HOME/bin/simplex-bridge"
+            chmod +x "$PACKS_SRC/simplex-bridge-pack/src/scripts/simplex-bridge.sh"
+        fi
+
+        # Systemd service
+        mkdir -p "$HOME/.config/systemd/user"
+        if [[ -f "$PACKS_SRC/simplex-bridge-pack/src/systemd/simplex-bridge.service" ]]; then
+            cp "$PACKS_SRC/simplex-bridge-pack/src/systemd/simplex-bridge.service" \
+               "$HOME/.config/systemd/user/"
+        fi
+
+        log_success "Simplex bridge installed (run 'simplex-bridge status' to verify)"
+    fi
+
+    # Log directory for simplex conversations
+    mkdir -p "$HOME/inbox/simplex"
+
+    # Note about manual steps
+    log "  NOTE: To complete simplex-bridge setup:"
+    log "    1. Link SimpleX device: simplex-chat -> /connect"
+    log "    2. Scan QR with phone"
+    log "    3. Enable service: systemctl --user enable --now simplex-bridge"
+}
+
+# =============================================================================
 # Configure SDP API from BWS
 # =============================================================================
 
