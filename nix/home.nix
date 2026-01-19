@@ -226,6 +226,42 @@
         fi
       '';
 
+      # Install SimpleX Chat CLI (not in nixpkgs, manual download)
+      # simplex-chat provides E2E encrypted messaging for mobile AI interface
+      installSimplexChat = lib.hm.dag.entryAfter [ "writeBoundary" "createDirs" ] ''
+        if [ ! -f "${homeDirectory}/.local/bin/simplex-chat" ]; then
+          echo "Installing simplex-chat CLI..."
+          ${pkgs.curl}/bin/curl -L -o "${homeDirectory}/.local/bin/simplex-chat" \
+            "https://github.com/simplex-chat/simplex-chat/releases/latest/download/simplex-chat-ubuntu-22_04-x86-64" || true
+          chmod +x "${homeDirectory}/.local/bin/simplex-chat" 2>/dev/null || true
+        fi
+      '';
+
+      # Install SimpleX Bridge service and config from curu-packs
+      installSimplexBridge = lib.hm.dag.entryAfter [ "writeBoundary" "cloneRepos" "createDirs" ] ''
+        PACKS_DIR="${homeDirectory}/repos/github.com/sethdf/curu-packs"
+        if [ -d "$PACKS_DIR/simplex-bridge-pack" ]; then
+          # Copy config
+          if [ -f "$PACKS_DIR/simplex-bridge-pack/src/config/simplex-bridge.yaml" ]; then
+            cp "$PACKS_DIR/simplex-bridge-pack/src/config/simplex-bridge.yaml" \
+              "${homeDirectory}/.config/simplex-bridge/config.yaml"
+          fi
+          # Symlink script
+          if [ -f "$PACKS_DIR/simplex-bridge-pack/src/scripts/simplex-bridge.sh" ]; then
+            ln -sf "$PACKS_DIR/simplex-bridge-pack/src/scripts/simplex-bridge.sh" \
+              "${homeDirectory}/bin/simplex-bridge"
+            chmod +x "$PACKS_DIR/simplex-bridge-pack/src/scripts/simplex-bridge.sh" 2>/dev/null || true
+          fi
+          # Copy systemd service
+          mkdir -p "${homeDirectory}/.config/systemd/user"
+          if [ -f "$PACKS_DIR/simplex-bridge-pack/src/systemd/simplex-bridge.service" ]; then
+            cp "$PACKS_DIR/simplex-bridge-pack/src/systemd/simplex-bridge.service" \
+              "${homeDirectory}/.config/systemd/user/"
+            # Don't enable here - user should enable after linking SimpleX device
+          fi
+        fi
+      '';
+
       # Note: Claude Code and MCP servers are installed by user-data bootstrap
       # They're not in nixpkgs, so user-data installs them via bun globally
     };
