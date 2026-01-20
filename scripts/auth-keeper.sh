@@ -76,7 +76,15 @@ _ak_bws_get() {
 # AWS SSO
 # ============================================================================
 
-_ak_aws_token_valid() {
+# Check if AWS credentials are valid (any source: instance profile, SSO, env vars, etc.)
+_ak_aws_creds_valid() {
+    # Quick check: can we call STS? This works with any credential source.
+    # Use --no-cli-pager and timeout to avoid hanging.
+    command aws sts get-caller-identity --no-cli-pager &>/dev/null
+}
+
+# Check if SSO token cache is valid (for SSO-specific refresh logic)
+_ak_aws_sso_token_valid() {
     local cache_dir="$HOME/.aws/sso/cache"
     [[ -d "$cache_dir" ]] || return 1
 
@@ -107,6 +115,11 @@ _ak_aws_token_valid() {
     return 1
 }
 
+# Legacy alias for compatibility
+_ak_aws_token_valid() {
+    _ak_aws_sso_token_valid
+}
+
 _ak_aws_refresh() {
     local profile="${1:-${AWS_PROFILE:-}}"
 
@@ -132,9 +145,18 @@ _ak_aws_refresh() {
 
 # shellcheck disable=SC2120
 _ak_ensure_aws() {
-    if ! _ak_aws_token_valid; then
+    # First check: do we have working credentials from ANY source?
+    # (instance profile, env vars, assumed role, etc.)
+    if _ak_aws_creds_valid; then
+        return 0
+    fi
+
+    # No valid creds - try SSO refresh if we're in an SSO environment
+    # (has SSO cache dir or AWS_PROFILE points to SSO profile)
+    if [[ -d "$HOME/.aws/sso/cache" ]] || [[ -n "${AWS_PROFILE:-}" ]]; then
         _ak_aws_refresh "$@"
     fi
+    # If not SSO and no creds, let the command fail naturally with AWS's error
 }
 
 # AWS wrapper
