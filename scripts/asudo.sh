@@ -161,21 +161,31 @@ _asudo_aws_assume() {
 
     # Use 'command aws' to bypass any wrapper functions
     local creds
-    creds=$(command aws sts assume-role \
+    if ! creds=$(command aws sts assume-role \
         --role-arn "$role_arn" \
         --role-session-name "$session_name" \
         --duration-seconds "$duration" \
-        --output json 2>&1)
-
-    if [[ $? -ne 0 ]]; then
+        --output json 2>&1); then
         echo "Failed to assume role: $creds" >&2
         return 1
     fi
 
+    # Parse credentials with error handling
+    local access_key secret_key session_token
+    access_key=$(echo "$creds" | jq -r '.Credentials.AccessKeyId // empty')
+    secret_key=$(echo "$creds" | jq -r '.Credentials.SecretAccessKey // empty')
+    session_token=$(echo "$creds" | jq -r '.Credentials.SessionToken // empty')
+
+    if [[ -z "$access_key" || -z "$secret_key" || -z "$session_token" ]]; then
+        echo "Failed to parse assume-role response" >&2
+        echo "Response: $creds" >&2
+        return 1
+    fi
+
     # Export credentials
-    export AWS_ACCESS_KEY_ID=$(echo "$creds" | jq -r '.Credentials.AccessKeyId')
-    export AWS_SECRET_ACCESS_KEY=$(echo "$creds" | jq -r '.Credentials.SecretAccessKey')
-    export AWS_SESSION_TOKEN=$(echo "$creds" | jq -r '.Credentials.SessionToken')
+    export AWS_ACCESS_KEY_ID="$access_key"
+    export AWS_SECRET_ACCESS_KEY="$secret_key"
+    export AWS_SESSION_TOKEN="$session_token"
     export AWS_REGION="${AWS_REGION:-us-east-1}"
 
     # Write to AWS profile for CLI tools / subprocesses that don't inherit env vars

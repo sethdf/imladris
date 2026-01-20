@@ -106,22 +106,22 @@ echo ""
 echo "Clearing old SSH host key for $IMLADRIS_HOST..."
 ssh-keygen -f "$HOME/.ssh/known_hosts" -R "$IMLADRIS_HOST" 2>/dev/null || true
 
-# Ensure AWS config exists but is empty (cloud-assume handles access)
+# Ensure AWS config exists but is empty (asudo handles access)
 echo "Configuring AWS CLI on $IMLADRIS_HOST..."
 ssh -o StrictHostKeyChecking=accept-new "ubuntu@$IMLADRIS_HOST" bash -c "'
 mkdir -p ~/.aws
-echo \"# Cloud access managed by cloud-assume\" > ~/.aws/config
-echo \"AWS config ready (use cloud-assume for access)\"
+echo \"# Cloud access managed by asudo\" > ~/.aws/config
+echo \"AWS config ready (use asudo for access)\"
 '"
 
 echo ""
 echo "=== Setup complete ==="
 echo ""
-echo "Usage on imladris (cloud-assume controls access):"
+echo "Usage on imladris (asudo controls access):"
 echo ""
-echo "  cloud-assume aws qat           # readonly access"
-echo "  cloud-assume aws prod --admin  # admin access (logged)"
-echo "  cloud-assume status            # show current access"
-echo "  cloud-assume clear             # revoke access"
+echo "  asudo aws qat           # readonly access"
+echo "  asudo aws prod --admin  # admin access (logged)"
+echo "  asudo status            # show current access"
+echo "  asudo clear             # revoke access"
 echo ""
 echo "Available environments: qat, dev, prod, buxtonorgacct"

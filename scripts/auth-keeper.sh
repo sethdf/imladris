@@ -349,6 +349,9 @@ _ak_google_get_access_token() {
 _ak_google_auth() {
     _ak_google_get_creds || return 1
 
+    # TODO: Google is deprecating the OOB flow (urn:ietf:wg:oauth:2.0:oob) in 2025.
+    # Future fix: use localhost redirect with a temporary HTTP server.
+    # See: https://developers.google.com/identity/protocols/oauth2/native-app
     local scopes="https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar"
     local auth_url="https://accounts.google.com/o/oauth2/v2/auth?client_id=$_ak_google_client_id&redirect_uri=urn:ietf:wg:oauth:2.0:oob&response_type=code&scope=$(echo "$scopes" | sed 's/ /%20/g')&access_type=offline&prompt=consent"
 
