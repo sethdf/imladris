@@ -134,7 +134,7 @@ The instance profile (`imladris-instance-role`) has minimal permissions:
 | Script | Purpose |
 |--------|---------|
 | `auth-keeper` | Lazy token refresh for AWS/Azure/GCP |
-| `cloud-assume` | Unified cloud access control with audit logging |
+| `asudo` | Unified cloud access control with audit logging |
 | `bws-init` | Bitwarden Secrets Manager CLI helpers |
 | `claude-backend` | Switch Claude Code payment backends |
 
@@ -216,11 +216,11 @@ The instance role can assume roles in other AWS accounts:
 
 ```bash
 # Configure in target account trust policy
-# Then use cloud-assume for authorization
-cloud-assume aws dev              # Readonly access
-cloud-assume aws prod --admin     # Admin access (logged)
-cloud-assume status               # Show current access
-cloud-assume clear                # Revoke all access
+# Then use asudo for authorization
+asudo aws dev              # Readonly access
+asudo aws prod --admin     # Admin access (logged)
+asudo status               # Show current access
+asudo clear                # Revoke all access
 ```
 
 ## Security
@@ -434,7 +434,7 @@ aws ec2 start-instances --instance-ids $(terraform output -raw instance_id)
 ```bash
 claude                   # Start Claude Code
 claude-backend status    # Check backend
-cloud-assume status      # Check cloud access
+asudo status      # Check cloud access
 ```
 
 ## Cost Optimization

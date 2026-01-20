@@ -132,10 +132,10 @@ _cb_apply_backend() {
 _cb_bedrock_apply() {
     local account="${1:-}"
 
-    # If account specified, use cloud-assume to get credentials
+    # If account specified, use asudo to get credentials
     if [[ -n "$account" ]]; then
-        if type cloud-assume &>/dev/null; then
-            cloud-assume aws "$account" >/dev/null 2>&1 || true
+        if type asudo &>/dev/null; then
+            asudo aws "$account" >/dev/null 2>&1 || true
         fi
     fi
 
@@ -152,15 +152,15 @@ _cb_bedrock_switch() {
 
     _cb_log "Switching to Bedrock backend"
 
-    # If account specified, use cloud-assume to get credentials
+    # If account specified, use asudo to get credentials
     if [[ -n "$account" ]]; then
-        if ! type cloud-assume &>/dev/null; then
-            _cb_log "Error: cloud-assume not available"
+        if ! type asudo &>/dev/null; then
+            _cb_log "Error: asudo not available"
             return 1
         fi
 
         _cb_log "Assuming role in account: $account"
-        cloud-assume aws "$account" || return 1
+        asudo aws "$account" || return 1
     fi
 
     # Apply Bedrock settings
