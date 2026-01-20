@@ -569,13 +569,23 @@ auth-keeper() {
         status|s)
             echo "=== auth-keeper status ==="
 
-            # AWS SSO
-            if _ak_aws_token_valid; then
+            # AWS - check both instance profile/env creds AND SSO
+            if _ak_aws_creds_valid; then
+                local identity
+                identity=$(command aws sts get-caller-identity --no-cli-pager 2>/dev/null | jq -r '.Arn // "unknown"' | sed 's/.*\///')
+                if _ak_aws_sso_token_valid; then
+                    local exp
+                    exp=$(find "$HOME/.aws/sso/cache" -name '*.json' -exec jq -r '.expiresAt // empty' {} \; 2>/dev/null | grep -v '^$' | head -1)
+                    echo "aws: valid via SSO (expires $exp) [$identity]"
+                else
+                    echo "aws: valid via instance-profile/env [$identity]"
+                fi
+            elif _ak_aws_sso_token_valid; then
                 local exp
                 exp=$(find "$HOME/.aws/sso/cache" -name '*.json' -exec jq -r '.expiresAt // empty' {} \; 2>/dev/null | grep -v '^$' | head -1)
-                echo "aws-sso: valid (expires $exp)"
+                echo "aws: SSO token valid but STS call failed (expires $exp)"
             else
-                echo "aws-sso: expired"
+                echo "aws: no valid credentials"
             fi
 
             # Azure
