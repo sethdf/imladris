@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Tmux context-based color theming (works with catppuccin)
-# Called by shell hook when CONTEXT changes (via direnv)
+# Called by shell hook when ZONE changes (via direnv)
 
 # Get context from environment or argument
-CONTEXT="${1:-$CONTEXT}"
+ZONE="${1:-$ZONE}"
 
 # Skip if not in tmux
 [ -z "$TMUX" ] && exit 0
@@ -15,7 +15,7 @@ RED="#f38ba8"      # prod/admin context
 PURPLE="#cba6f7"   # other/default context
 
 # Determine color based on context
-case "$CONTEXT" in
+case "$ZONE" in
   home)
     COLOR="$GREEN"
     ;;

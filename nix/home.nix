@@ -330,7 +330,7 @@
         echo "" | gnome-keyring-daemon --unlock &>/dev/null
       fi
 
-      # Update tmux colors when CONTEXT changes (after direnv)
+      # Update tmux colors when ZONE changes (after direnv)
       _update_tmux_context() {
         [[ -n "$TMUX" ]] && ~/.config/tmux/session-colors.sh 2>/dev/null
       }
@@ -571,7 +571,7 @@
 
       # Context indicators (work/home) - set by direnv, different colors each
       custom.context_work = {
-        when = ''test "$CONTEXT" = "work"'';
+        when = ''test "$ZONE" = "work"'';
         command = ''echo "work"'';
         symbol = " ";
         style = "bold blue";
@@ -579,7 +579,7 @@
       };
 
       custom.context_home = {
-        when = ''test "$CONTEXT" = "home"'';
+        when = ''test "$ZONE" = "home"'';
         command = ''echo "home"'';
         symbol = " ";
         style = "bold green";
@@ -587,8 +587,8 @@
       };
 
       custom.context_other = {
-        when = ''test -n "$CONTEXT" && test "$CONTEXT" != "work" && test "$CONTEXT" != "home"'';
-        command = ''echo "$CONTEXT"'';
+        when = ''test -n "$ZONE" && test "$ZONE" != "work" && test "$ZONE" != "home"'';
+        command = ''echo "$ZONE"'';
         symbol = " ";
         style = "bold purple";
         format = "[$symbol$output ]($style)";
