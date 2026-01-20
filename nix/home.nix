@@ -449,17 +449,17 @@
         extraConfig = ''
           set -g @catppuccin_flavor 'mocha'
 
-          # Status bar modules
+          # Status bar modules - enhanced for multi-session awareness
           set -g @catppuccin_status_modules_left "session"
-          set -g @catppuccin_status_modules_right "directory date_time"
+          set -g @catppuccin_status_modules_right "application directory date_time"
           set -g @catppuccin_status_left_separator ""
           set -g @catppuccin_status_right_separator ""
           set -g @catppuccin_status_fill "icon"
           set -g @catppuccin_status_connect_separator "no"
 
-          # Window styling
+          # Window styling - show window name and any alerts
           set -g @catppuccin_window_status_style "rounded"
-          set -g @catppuccin_window_default_text "#W"
+          set -g @catppuccin_window_default_text "#W#{?window_bell_flag,🔔,}#{?window_activity_flag,📝,}"
           set -g @catppuccin_window_current_text "#W"
         '';
       }
