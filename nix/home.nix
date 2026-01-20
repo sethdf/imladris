@@ -469,8 +469,47 @@
       # Enable RGB color support
       set -ga terminal-overrides ",*256col*:Tc"
 
-      # Context-based color theming triggered by shell hook (see zsh initExtra)
+      # Zone-based color theming triggered by shell hook (see zsh initExtra)
       # Colors: home=green, work=blue, prod=red, other=purple
+
+      # =========================================================================
+      # Session Awareness - Show all sessions, quick switching
+      # =========================================================================
+
+      # Show activity in other windows/sessions
+      set -g monitor-activity on
+      set -g visual-activity off
+      set -g activity-action other
+
+      # Status bar refresh for live session updates
+      set -g status-interval 5
+
+      # Custom session list in status-right showing other sessions
+      # Format: current session + other sessions summary
+      set -g status-right-length 100
+
+      # FZF-based session switcher (prefix + S)
+      bind S display-popup -E -w 60% -h 60% "\
+        tmux list-sessions -F '#{session_name}: #{session_windows} windows (#{session_attached} attached)' | \
+        fzf --reverse --header='Switch Session' | \
+        cut -d: -f1 | \
+        xargs -I{} tmux switch-client -t {}"
+
+      # Quick session creator (prefix + N)
+      bind N command-prompt -p "New session name:" "new-session -s '%%'"
+
+      # Session overview popup (prefix + O)
+      bind O display-popup -E -w 80% -h 80% "\
+        echo '=== TMUX Sessions ===' && echo && \
+        tmux list-sessions -F '#{?session_attached,▶,○} #{session_name}: #{session_windows}w #{session_created_string}' && \
+        echo && echo 'Press any key...' && read -n1"
+
+      # Quick jump to last session (prefix + L)
+      bind L switch-client -l
+
+      # =========================================================================
+      # Pane & Window Management
+      # =========================================================================
 
       # Pane splitting with | and -
       bind | split-window -h -c "#{pane_current_path}"
@@ -490,6 +529,10 @@
 
       # Quick reload
       bind r source-file ~/.tmux.conf \; display "Reloaded!"
+
+      # =========================================================================
+      # Session Persistence
+      # =========================================================================
 
       # Resurrect settings
       set -g @resurrect-capture-pane-contents 'on'
