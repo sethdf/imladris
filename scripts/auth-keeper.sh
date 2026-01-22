@@ -664,10 +664,22 @@ _ak_sdp_api() {
 
     _ak_sdp_get_creds || return 1
 
-    curl -s -X "$method" "${_ak_sdp_base_url}${endpoint}" \
-        -H "Authorization: Zoho-oauthtoken $_ak_sdp_token" \
-        -H "Content-Type: application/x-www-form-urlencoded" \
-        "$@"
+    # Strip /app/itdesk from base URL
+    local base_url="${_ak_sdp_base_url%/app/itdesk*}"
+
+    if [[ "$method" == "GET" ]]; then
+        # GET requests need -G to put data-urlencode in query string
+        curl -s -G "${base_url}${endpoint}" \
+            -H "Authorization: Zoho-oauthtoken $_ak_sdp_token" \
+            -H "Accept: application/vnd.manageengine.v3+json" \
+            "$@"
+    else
+        # POST/PUT requests put data in body
+        curl -s -X "$method" "${base_url}${endpoint}" \
+            -H "Authorization: Zoho-oauthtoken $_ak_sdp_token" \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            "$@"
+    fi
 }
 
 _ak_sdp_configured() {
