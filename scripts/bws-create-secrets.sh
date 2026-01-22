@@ -89,6 +89,10 @@ create_secret "sdp-api-key" "ServiceDesk Plus API technician key"
 create_secret "sdp-technician-id" "Your technician ID in SDP"
 
 echo ""
+echo "--- AWS Cross-Account Access (optional) ---"
+create_secret "aws-cross-accounts" "JSON array of AWS accounts, e.g., [{\"id\":\"123456789012\",\"name\":\"org-dev\",\"roles\":[\"ReadOnlyAccess\"],\"purpose\":\"Dev\"}]"
+
+echo ""
 echo "--- Session Sync (optional) ---"
 create_secret "sessions-git-repo" "Git repo for PAI session backup, e.g., git@github.com:user/pai-sessions.git"
 

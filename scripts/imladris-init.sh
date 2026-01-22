@@ -805,6 +805,34 @@ EOF
 }
 
 # =============================================================================
+# AWS Cross-Account Config from BWS
+# =============================================================================
+
+setup_aws_config() {
+    log "Checking AWS cross-account configuration..."
+
+    # Check if secret exists
+    if ! bws_get "aws-cross-accounts" &>/dev/null; then
+        log "aws-cross-accounts not in BWS - skipping"
+        log "  To configure: aws-accounts-config add"
+        return 0
+    fi
+
+    # Run the config generator
+    local script_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+    if [[ -f "$script_dir/aws-accounts-config.sh" ]]; then
+        bash "$script_dir/aws-accounts-config.sh" generate
+    elif [[ -f "$HOME/bin/aws-accounts-config" ]]; then
+        "$HOME/bin/aws-accounts-config" generate
+    else
+        log "aws-accounts-config script not found"
+        return 0
+    fi
+}
+
+# =============================================================================
 # Session Sync Setup (unified ~/.claude/history)
 # =============================================================================
 
@@ -1039,6 +1067,9 @@ setup_repo_watch
 
 # Configure SDP credentials (work context)
 setup_sdp_credentials
+
+# Configure AWS cross-account profiles from BWS
+setup_aws_config
 
 # Session sync (unified history)
 setup_session_sync
