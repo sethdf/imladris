@@ -189,6 +189,7 @@ curu-watch   # Auto-sync daemon (run in tmux)
 | `scripts/session-sync.sh` | Git-based session history sync |
 | `scripts/auth-keeper.sh` | Lazy auth refresh for AWS/Azure CLIs |
 | `scripts/bws-init.sh` | Bitwarden Secrets Manager helpers |
+| `scripts/aws-accounts-config.sh` | Generate ~/.aws/config from BWS cross-accounts |
 
 ## Common Commands
 
