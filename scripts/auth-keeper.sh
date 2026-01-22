@@ -637,6 +637,7 @@ _ak_sdp_configured() {
 _ak_sdp_api() {
     local endpoint="$1"
     local limit="${2:-50}"
+    local show_all="${3:-}"
 
     local token base_url tech_id
     token=$(_ak_sdp_get_access_token) || return 1
@@ -658,9 +659,12 @@ _ak_sdp_api() {
         fi
 
         # Normalize and filter output
-        # Filter: Open or In Progress status, optionally by technician
+        # Filter: Open or In Progress status, optionally by technician (unless --all)
         local jq_filter
-        if [[ -n "$tech_id" && "$tech_id" =~ ^[0-9]+$ ]]; then
+        if [[ "$show_all" == "--all" ]]; then
+            # Show all tickets regardless of status
+            jq_filter='[.requests[]?]'
+        elif [[ -n "$tech_id" && "$tech_id" =~ ^[0-9]+$ ]]; then
             jq_filter="[.requests[]? | select(.status.name == \"Open\" or .status.name == \"In Progress\" or .status.name == \"On Hold\") | select(.technician.id == \"$tech_id\")]"
         else
             jq_filter='[.requests[]? | select(.status.name == "Open" or .status.name == "In Progress" or .status.name == "On Hold")]'
