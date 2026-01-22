@@ -108,34 +108,33 @@ output = json
 
 EOF
 
-    # Generate profiles for each account/role combo
+    # Generate profiles using jq to flatten account/role combos
+    # This avoids nested while-read loop issues
     local count=0
-    while IFS= read -r account; do
-        local id name purpose
-        id=$(echo "$account" | jq -r '.id')
-        name=$(echo "$account" | jq -r '.name')
-        purpose=$(echo "$account" | jq -r '.purpose // ""')
+    local profiles
+    profiles=$(echo "$accounts" | jq -r '.[] | . as $acct | .roles[] | "\($acct.id)|\($acct.name)|\($acct.purpose // "")|\(.)"')
 
-        # Add comment for account
-        echo "# $name - $purpose" >> "$AWS_CONFIG"
+    local current_name=""
+    while IFS='|' read -r id name purpose role; do
+        # Add comment when starting new account
+        if [[ "$name" != "$current_name" ]]; then
+            echo "# $name - $purpose" >> "$AWS_CONFIG"
+            current_name="$name"
+        fi
 
-        # Generate profile for each role
-        while IFS= read -r role; do
-            local suffix profile_name
-            suffix=$(role_to_suffix "$role")
-            profile_name="${name}-${suffix}"
+        local suffix profile_name
+        suffix=$(role_to_suffix "$role")
+        profile_name="${name}-${suffix}"
 
-            cat >> "$AWS_CONFIG" << EOF
+        cat >> "$AWS_CONFIG" << EOF
 [profile $profile_name]
 role_arn = arn:aws:iam::${id}:role/${role}
 credential_source = Ec2InstanceMetadata
 region = us-east-1
 
 EOF
-            ((count++))
-        done < <(echo "$account" | jq -r '.roles[]')
-
-    done < <(echo "$accounts" | jq -c '.[]')
+        ((count++))
+    done <<< "$profiles"
 
     log_success "Generated $count profiles in $AWS_CONFIG"
 }
