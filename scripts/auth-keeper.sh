@@ -1347,15 +1347,18 @@ EOF
             case "${1:-}" in
                 ""|"my"|"assigned")
                     # List my assigned tickets
-                    local input_data
-                    input_data=$(jq -n --arg email "$_ak_sdp_user" '{
+                    local tech_id input_data
+                    tech_id="${SDP_TECHNICIAN_ID:-$(_ak_bws_get 'sdp-technician-id')}"
+                    input_data=$(jq -n --arg tid "$tech_id" '{
                         list_info: {
                             row_count: 50,
                             sort_field: "due_by_time",
                             sort_order: "asc",
                             search_criteria: [
-                                {field: "technician.email_id", condition: "is", value: $email},
-                                {field: "status.name", condition: "is not", values: ["Closed", "Resolved"]}
+                                {field: "technician.id", condition: "is", value: $tid},
+                                {field: "status.name", condition: "is not", value: "Closed", logical_operator: "AND"},
+                                {field: "status.name", condition: "is not", value: "Resolved", logical_operator: "AND"},
+                                {field: "status.name", condition: "is not", value: "Canceled", logical_operator: "AND"}
                             ]
                         }
                     }')
