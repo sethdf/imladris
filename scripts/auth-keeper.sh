@@ -582,26 +582,28 @@ _ak_signal_api_running() {
 # ============================================================================
 
 _ak_sdp_user="sfoley@buxtonco.com"
-_ak_sdp_token_cache_file="/tmp/.sdp_token_cache_$$"
 
-# Ensure token is fresh (call before using _ak_sdp_token)
-_ak_sdp_ensure_token() {
-    local now cached_expiry cached_token
+# Check if SDP token is valid (uses keyring cache)
+_ak_sdp_token_valid() {
+    local expiry
+    expiry=$(secret-tool lookup service imladris-sdp type expiry 2>/dev/null || echo "0")
+
+    local now buffer
     now=$(date +%s)
+    buffer=$AUTH_KEEPER_REFRESH_BUFFER
 
-    # Check cache file
-    if [[ -f "$_ak_sdp_token_cache_file" ]]; then
-        cached_expiry=$(head -1 "$_ak_sdp_token_cache_file" 2>/dev/null || echo "0")
-        cached_token=$(tail -1 "$_ak_sdp_token_cache_file" 2>/dev/null || echo "")
+    [[ -n "$expiry" ]] && (( expiry - buffer > now ))
+}
 
-        # Return cached token if still valid (with 5 min buffer)
-        if [[ -n "$cached_token" && "$cached_expiry" -gt $((now + 300)) ]]; then
-            _ak_sdp_token="$cached_token"
-            return 0
-        fi
+# Get access token (from keyring cache or refresh)
+_ak_sdp_get_access_token() {
+    # Return cached token if valid
+    if _ak_sdp_token_valid; then
+        secret-tool lookup service imladris-sdp type access-token 2>/dev/null
+        return 0
     fi
 
-    # Get OAuth credentials from BWS
+    # Need to refresh token
     local client_id client_secret refresh_token
     client_id="${SDP_CLIENT_ID:-$(_ak_bws_get 'sdp-client-id')}"
     client_secret="${SDP_CLIENT_SECRET:-$(_ak_bws_get 'sdp-client-secret')}"
@@ -629,12 +631,20 @@ _ak_sdp_ensure_token() {
         return 1
     fi
 
-    # Cache to file (expiry on line 1, token on line 2)
-    echo "$((now + expires_in))" > "$_ak_sdp_token_cache_file"
-    echo "$access_token" >> "$_ak_sdp_token_cache_file"
-    chmod 600 "$_ak_sdp_token_cache_file"
+    # Store in keyring
+    local now expiry
+    now=$(date +%s)
+    expiry=$((now + expires_in))
 
-    _ak_sdp_token="$access_token"
+    echo -n "$access_token" | secret-tool store --label="SDP Access Token" service imladris-sdp type access-token
+    echo -n "$expiry" | secret-tool store --label="SDP Token Expiry" service imladris-sdp type expiry
+
+    echo "$access_token"
+}
+
+# Legacy function for backward compatibility
+_ak_sdp_ensure_token() {
+    _ak_sdp_token=$(_ak_sdp_get_access_token) || return 1
 }
 
 _ak_sdp_creds_loaded=""
