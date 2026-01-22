@@ -1357,6 +1357,48 @@ EOF
             fi
             shift
             case "${1:-}" in
+                "--json")
+                    # Output JSON for programmatic use (Triage tool)
+                    local tech_id input_data
+                    tech_id="${SDP_TECHNICIAN_ID:-$(_ak_bws_get 'sdp-technician-id')}"
+                    input_data=$(jq -n --arg tid "$tech_id" '{
+                        list_info: {
+                            row_count: 50,
+                            sort_field: "due_by_time",
+                            sort_order: "asc",
+                            search_criteria: [
+                                {field: "technician.id", condition: "is", value: $tid},
+                                {field: "status.name", condition: "is not", value: "Closed", logical_operator: "AND"},
+                                {field: "status.name", condition: "is not", value: "Resolved", logical_operator: "AND"},
+                                {field: "status.name", condition: "is not", value: "Canceled", logical_operator: "AND"}
+                            ]
+                        }
+                    }')
+
+                    local response
+                    response=$(_ak_sdp_api GET "/api/v3/requests" --data-urlencode "input_data=$input_data")
+
+                    if echo "$response" | jq -e '.requests' &>/dev/null; then
+                        # Normalize to expected Ticket format
+                        echo "$response" | jq '[.requests[] | {
+                            id: (.id | tostring),
+                            subject: .subject,
+                            status: .status.name,
+                            priority: (.priority.name // "Medium"),
+                            due_by_time: .due_by_time.value,
+                            created_time: .created_time.value,
+                            last_updated_time: (.last_updated_time.value // .created_time.value),
+                            requester: (if .requester then {
+                                name: .requester.name,
+                                email: .requester.email_id,
+                                is_vip: (.requester.is_vip_user // false),
+                                department: (.requester.department.name // "Unknown")
+                            } else null end)
+                        }]'
+                    else
+                        echo "[]"
+                    fi
+                    ;;
                 ""|"my"|"assigned")
                     # List my assigned tickets
                     local tech_id input_data
