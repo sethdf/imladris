@@ -1492,6 +1492,8 @@ if [[ -n "${ZSH_VERSION:-}" ]] && command -v compdef &>/dev/null; then
             'google:Google API access'
             'slack:Slack API access'
             'telegram:Telegram Bot API access'
+            'signal:Signal REST API access'
+            'sdp:ServiceDesk Plus API access'
             'refresh:Force token refresh'
             'help:Show help'
         )
@@ -1502,12 +1504,14 @@ elif [[ -n "${BASH_VERSION:-}" ]]; then
     _auth_keeper_comp() {
         local cur="${COMP_WORDS[COMP_CWORD]}"
         case "${COMP_WORDS[1]:-}" in
-            refresh) mapfile -t COMPREPLY < <(compgen -W "aws azure google all" -- "$cur") ;;
+            refresh) mapfile -t COMPREPLY < <(compgen -W "aws azure google sdp all" -- "$cur") ;;
             google) mapfile -t COMPREPLY < <(compgen -W "mail calendar --auth --token --help" -- "$cur") ;;
             ms365) mapfile -t COMPREPLY < <(compgen -W "--interactive --help" -- "$cur") ;;
             slack) mapfile -t COMPREPLY < <(compgen -W "channels read send auth --help" -- "$cur") ;;
             telegram) mapfile -t COMPREPLY < <(compgen -W "updates send auth --help" -- "$cur") ;;
-            *) mapfile -t COMPREPLY < <(compgen -W "status ms365 google slack telegram refresh help" -- "$cur") ;;
+            signal) mapfile -t COMPREPLY < <(compgen -W "send link auth --help" -- "$cur") ;;
+            sdp) mapfile -t COMPREPLY < <(compgen -W "list get note auth --token --help" -- "$cur") ;;
+            *) mapfile -t COMPREPLY < <(compgen -W "status ms365 google slack telegram signal sdp refresh help" -- "$cur") ;;
         esac
     }
     complete -F _auth_keeper_comp auth-keeper
