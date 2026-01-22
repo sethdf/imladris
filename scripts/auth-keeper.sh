@@ -1377,19 +1377,22 @@ EOF
                     fi
                     ;;
                 "overdue")
-                    local now_ms
+                    local now_ms tech_id
                     now_ms=$(($(date +%s) * 1000))
+                    tech_id="${SDP_TECHNICIAN_ID:-$(_ak_bws_get 'sdp-technician-id')}"
 
                     local input_data
-                    input_data=$(jq -n --arg email "$_ak_sdp_user" --argjson now "$now_ms" '{
+                    input_data=$(jq -n --arg tid "$tech_id" --argjson now "$now_ms" '{
                         list_info: {
                             row_count: 50,
                             sort_field: "due_by_time",
                             sort_order: "asc",
                             search_criteria: [
-                                {field: "technician.email_id", condition: "is", value: $email},
-                                {field: "due_by_time", condition: "less than", value: ($now | tostring)},
-                                {field: "status.name", condition: "is not", values: ["Closed", "Resolved"]}
+                                {field: "technician.id", condition: "is", value: $tid},
+                                {field: "due_by_time", condition: "less than", value: ($now | tostring), logical_operator: "AND"},
+                                {field: "status.name", condition: "is not", value: "Closed", logical_operator: "AND"},
+                                {field: "status.name", condition: "is not", value: "Resolved", logical_operator: "AND"},
+                                {field: "status.name", condition: "is not", value: "Canceled", logical_operator: "AND"}
                             ]
                         }
                     }')
