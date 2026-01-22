@@ -551,6 +551,167 @@ _ak_signal_api_running() {
 }
 
 # ============================================================================
+# SDP - ServiceDesk Plus (Zoho OAuth2)
+# ============================================================================
+
+_ak_sdp_get_creds() {
+    local secrets
+    secrets=$(bws secret list 2>/dev/null) || {
+        echo "Error: BWS not available. Run: bws login" >&2
+        return 1
+    }
+
+    _ak_sdp_client_id=$(echo "$secrets" | jq -r '.[] | select(.key == "sdp-client-id") | .value')
+    _ak_sdp_client_secret=$(echo "$secrets" | jq -r '.[] | select(.key == "sdp-client-secret") | .value')
+    _ak_sdp_refresh_token=$(echo "$secrets" | jq -r '.[] | select(.key == "sdp-refresh-token") | .value')
+    _ak_sdp_base_url=$(echo "$secrets" | jq -r '.[] | select(.key == "sdp-base-url") | .value')
+    _ak_sdp_technician_id=$(echo "$secrets" | jq -r '.[] | select(.key == "sdp-technician-id") | .value')
+
+    # Clean base URL
+    _ak_sdp_base_url="${_ak_sdp_base_url%/app/itdesk}"
+    _ak_sdp_base_url="${_ak_sdp_base_url%/}"
+
+    if [[ -z "$_ak_sdp_client_id" || -z "$_ak_sdp_client_secret" ]]; then
+        echo "Error: sdp-client-id or sdp-client-secret not found in BWS" >&2
+        return 1
+    fi
+}
+
+_ak_sdp_token_valid() {
+    # Check keyring for cached token
+    local expiry
+    expiry=$(secret-tool lookup service imladris-sdp type expiry 2>/dev/null || echo "0")
+
+    local now buffer
+    now=$(date +%s)
+    buffer=$AUTH_KEEPER_REFRESH_BUFFER
+
+    [[ -n "$expiry" ]] && (( expiry - buffer > now ))
+}
+
+_ak_sdp_get_access_token() {
+    # Return cached token if valid
+    if _ak_sdp_token_valid; then
+        secret-tool lookup service imladris-sdp type access-token 2>/dev/null
+        return 0
+    fi
+
+    # Refresh token
+    _ak_sdp_get_creds || return 1
+
+    if [[ -z "$_ak_sdp_refresh_token" ]]; then
+        echo "Error: No refresh token. Add sdp-refresh-token to BWS" >&2
+        return 1
+    fi
+
+    local response
+    response=$(curl -s -X POST "https://accounts.zoho.com/oauth/v2/token" \
+        -d "client_id=$_ak_sdp_client_id" \
+        -d "client_secret=$_ak_sdp_client_secret" \
+        -d "grant_type=refresh_token" \
+        -d "refresh_token=$_ak_sdp_refresh_token")
+
+    if echo "$response" | jq -e '.access_token' &>/dev/null; then
+        local access_token expires_in expiry_time
+        access_token=$(echo "$response" | jq -r '.access_token')
+        expires_in=$(echo "$response" | jq -r '.expires_in')
+        expiry_time=$(($(date +%s) + expires_in))
+
+        # Cache in keyring
+        echo -n "$access_token" | secret-tool store --label="sdp-access-token" service imladris-sdp type access-token
+        echo -n "$expiry_time" | secret-tool store --label="sdp-expiry" service imladris-sdp type expiry
+
+        echo "$access_token"
+        return 0
+    else
+        echo "Error: Token refresh failed: $(echo "$response" | jq -r '.error_description // .error')" >&2
+        return 1
+    fi
+}
+
+_ak_sdp_configured() {
+    bws secret list 2>/dev/null | jq -e '.[] | select(.key == "sdp-client-id")' &>/dev/null
+}
+
+# SDP API helper - fetches tickets and returns normalized JSON
+_ak_sdp_api() {
+    local endpoint="$1"
+    local limit="${2:-50}"
+
+    local token base_url tech_id
+    token=$(_ak_sdp_get_access_token) || return 1
+    _ak_sdp_get_creds || return 1
+    base_url="$_ak_sdp_base_url"
+    tech_id="$_ak_sdp_technician_id"
+
+    if [[ "$endpoint" == "requests" ]]; then
+        # List tickets - build search criteria
+        local search_criteria='[{"field":"status.in_progress","condition":"is","logical_operator":"OR","value":true},{"field":"status.name","condition":"is","value":"Open"}]'
+
+        if [[ -n "$tech_id" ]]; then
+            search_criteria=$(echo "$search_criteria" | jq --arg tid "$tech_id" '. + [{"field":"technician.id","condition":"is","value":$tid}]')
+        fi
+
+        local input_data
+        input_data=$(jq -n --argjson limit "$limit" --argjson criteria "$search_criteria" '{
+            list_info: {
+                row_count: $limit,
+                start_index: 1,
+                sort_field: "due_by_time",
+                sort_order: "asc",
+                get_total_count: true,
+                search_criteria: $criteria
+            }
+        }')
+
+        local response
+        response=$(curl -s "${base_url}/api/v3/requests" \
+            -G --data-urlencode "input_data=$input_data" \
+            -H "Authorization: Zoho-oauthtoken $token" \
+            -H "Accept: application/json")
+
+        if echo "$response" | jq -e '.response_status.status == "failed"' &>/dev/null; then
+            echo "Error: $(echo "$response" | jq -r '.response_status.messages[0].message // "Unknown error"')" >&2
+            return 1
+        fi
+
+        # Normalize output
+        echo "$response" | jq '[.requests[]? | {
+            id: .id,
+            subject: .subject,
+            status: .status.name,
+            priority: (.priority.name // "Medium"),
+            due_by_time: .due_by_time.value,
+            created_time: .created_time.value,
+            last_updated_time: .last_updated_time.value,
+            requester: (if .requester then {
+                name: .requester.name,
+                email: .requester.email_id,
+                is_vip: (.requester.is_vipuser // false),
+                department: (.requester.department.name // "Unknown")
+            } else null end),
+            technician: (if .technician then {
+                name: .technician.name,
+                email: .technician.email_id
+            } else null end)
+        }]'
+    else
+        # Single ticket or other endpoint
+        local response
+        response=$(curl -s "${base_url}/api/v3/${endpoint}" \
+            -H "Authorization: Zoho-oauthtoken $token" \
+            -H "Accept: application/json")
+
+        if echo "$response" | jq -e '.response_status.status == "failed"' &>/dev/null; then
+            echo "Error: $(echo "$response" | jq -r '.response_status.messages[0].message // "Unknown error"')" >&2
+            return 1
+        fi
+
+        echo "$response" | jq '.request // .'
+    fi
+}
+
+# ============================================================================
 # Tailscale
 # ============================================================================
 
@@ -653,6 +814,22 @@ auth-keeper() {
                 fi
             else
                 echo "signal: API not running (docker start signal-cli-rest-api)"
+            fi
+
+            # SDP
+            if _ak_sdp_configured; then
+                if _ak_sdp_token_valid; then
+                    local exp_time remaining hours mins
+                    exp_time=$(secret-tool lookup service imladris-sdp type expiry 2>/dev/null || echo "0")
+                    remaining=$((exp_time - $(date +%s)))
+                    hours=$((remaining / 3600))
+                    mins=$(((remaining % 3600) / 60))
+                    echo "sdp: valid (expires in ${hours}h ${mins}m)"
+                else
+                    echo "sdp: expired (has refresh token - will auto-refresh)"
+                fi
+            else
+                echo "sdp: not configured (need sdp-client-id in BWS)"
             fi
 
             # Tailscale
@@ -1243,13 +1420,17 @@ EOF
                 google)
                     _ak_google_get_access_token >/dev/null && echo "Google token refreshed"
                     ;;
+                sdp)
+                    _ak_sdp_get_access_token >/dev/null && echo "SDP token refreshed"
+                    ;;
                 all)
                     _ak_aws_refresh
                     _ak_azure_refresh
                     _ak_google_get_access_token >/dev/null && echo "Google token refreshed"
+                    _ak_sdp_get_access_token >/dev/null && echo "SDP token refreshed"
                     ;;
                 *)
-                    echo "Usage: auth-keeper refresh [aws|azure|google|all]"
+                    echo "Usage: auth-keeper refresh [aws|azure|google|sdp|all]"
                     ;;
             esac
             ;;
