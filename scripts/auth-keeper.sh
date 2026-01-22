@@ -667,9 +667,10 @@ _ak_sdp_api() {
 
         local response
         response=$(curl -s "${base_url}/api/v3/requests" \
-            -G --data-urlencode "input_data=$input_data" \
             -H "Authorization: Zoho-oauthtoken $token" \
-            -H "Accept: application/json")
+            -H "Accept: application/json" \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            -d "input_data=$input_data")
 
         if echo "$response" | jq -e '.response_status.status == "failed"' &>/dev/null; then
             echo "Error: $(echo "$response" | jq -r '.response_status.messages[0].message // "Unknown error"')" >&2
@@ -701,7 +702,8 @@ _ak_sdp_api() {
         local response
         response=$(curl -s "${base_url}/api/v3/${endpoint}" \
             -H "Authorization: Zoho-oauthtoken $token" \
-            -H "Accept: application/json")
+            -H "Accept: application/json" \
+            -H "Content-Type: application/x-www-form-urlencoded")
 
         if echo "$response" | jq -e '.response_status.status == "failed"' &>/dev/null; then
             echo "Error: $(echo "$response" | jq -r '.response_status.messages[0].message // "Unknown error"')" >&2
