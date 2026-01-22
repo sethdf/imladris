@@ -1383,7 +1383,7 @@ EOF
                         count=$(echo "$response" | jq '.requests | length')
                         echo "My assigned tickets ($count):"
                         echo ""
-                        echo "$response" | jq -r '.requests[] | "  #\(.id) | \(.subject | .[0:50]) | \(.status.name) | Due: \(.due_by_time // "N/A")"'
+                        echo "$response" | jq -r '.requests[] | "  #\(.id) | \(.subject | .[0:50]) | \(.status.name) | Due: \(.due_by_time.display_value // "N/A")"'
                     else
                         echo "Error: $(echo "$response" | jq -r '.response_status[0].messages[0].message // "Unknown error"')" >&2
                     fi
@@ -1420,7 +1420,7 @@ EOF
                         else
                             echo "Overdue tickets ($count):"
                             echo ""
-                            echo "$response" | jq -r '.requests[] | "  #\(.id) | \(.subject | .[0:50]) | Due: \(.due_by_time)"'
+                            echo "$response" | jq -r '.requests[] | "  #\(.id) | \(.subject | .[0:50]) | Due: \(.due_by_time.display_value // "N/A")"'
                         fi
                     else
                         echo "Error: $(echo "$response" | jq -r '.response_status[0].messages[0].message // "Unknown error"')" >&2
