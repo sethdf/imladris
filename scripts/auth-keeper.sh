@@ -646,31 +646,30 @@ _ak_sdp_api() {
     tech_id="$_ak_sdp_technician_id"
 
     if [[ "$endpoint" == "requests" ]]; then
-        # SDP Cloud API - fetch all and filter locally
-        # The OnDemand API doesn't support complex input_data params
-        local response
-        response=$(curl -s --max-time 30 "${base_url}/api/v3/requests" \
-            -H "Authorization: Zoho-oauthtoken $token" \
-            -H "Accept: application/json")
+        # SDP Cloud API v3 - use input_data as query param with proper Accept header
+        local list_info response
 
-        if echo "$response" | jq -e '.response_status.status == "failed"' &>/dev/null; then
-            echo "Error: $(echo "$response" | jq -r '.response_status.messages[0].message // "Unknown error"')" >&2
+        # Build search criteria for active tickets assigned to technician
+        if [[ "$show_all" == "--all" ]]; then
+            list_info="{\"list_info\":{\"row_count\":$limit,\"start_index\":1,\"get_total_count\":true}}"
+        elif [[ -n "$tech_id" && "$tech_id" =~ ^[0-9]+$ ]]; then
+            list_info="{\"list_info\":{\"row_count\":$limit,\"start_index\":1,\"get_total_count\":true,\"search_criteria\":[{\"field\":\"technician.id\",\"condition\":\"is\",\"value\":\"$tech_id\"},{\"field\":\"status.name\",\"condition\":\"is not\",\"value\":\"Closed\",\"logical_operator\":\"AND\"},{\"field\":\"status.name\",\"condition\":\"is not\",\"value\":\"Canceled\",\"logical_operator\":\"AND\"}]}}"
+        else
+            list_info="{\"list_info\":{\"row_count\":$limit,\"start_index\":1,\"get_total_count\":true,\"search_criteria\":[{\"field\":\"status.name\",\"condition\":\"is not\",\"value\":\"Closed\"},{\"field\":\"status.name\",\"condition\":\"is not\",\"value\":\"Canceled\",\"logical_operator\":\"AND\"}]}}"
+        fi
+
+        response=$(curl -s --max-time 30 "${base_url}/api/v3/requests" \
+            -G --data-urlencode "input_data=$list_info" \
+            -H "Authorization: Zoho-oauthtoken $token" \
+            -H "Accept: application/vnd.manageengine.v3+json")
+
+        if echo "$response" | jq -e '.response_status[0].status == "failed"' &>/dev/null 2>&1; then
+            echo "Error: $(echo "$response" | jq -r '.response_status[0].messages[0].message // "Unknown error"')" >&2
             return 1
         fi
 
-        # Normalize and filter output
-        # Filter: Open or In Progress status, optionally by technician (unless --all)
-        local jq_filter
-        if [[ "$show_all" == "--all" ]]; then
-            # Show all tickets regardless of status
-            jq_filter='[.requests[]?]'
-        elif [[ -n "$tech_id" && "$tech_id" =~ ^[0-9]+$ ]]; then
-            jq_filter="[.requests[]? | select(.status.name == \"Open\" or .status.name == \"In Progress\" or .status.name == \"On Hold\") | select(.technician.id == \"$tech_id\")]"
-        else
-            jq_filter='[.requests[]? | select(.status.name == "Open" or .status.name == "In Progress" or .status.name == "On Hold")]'
-        fi
-
-        echo "$response" | jq --argjson lim "$limit" "$jq_filter | sort_by(.due_by_time.value // \"9999\") | .[:\$lim] | [.[] | {
+        # Normalize output
+        echo "$response" | jq '[.requests[]? | {
             id: .id,
             subject: .subject,
             status: .status.name,
