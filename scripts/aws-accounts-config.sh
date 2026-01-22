@@ -79,7 +79,7 @@ role_to_suffix() {
         AdministratorAccess) echo "admin" ;;
         PowerUserAccess) echo "poweruser" ;;
         ViewOnlyAccess) echo "viewonly" ;;
-        *) echo "${role,,}" ;;  # lowercase
+        *) echo "$role" | tr '[:upper:]' '[:lower:]' ;;  # portable lowercase
     esac
 }
 
