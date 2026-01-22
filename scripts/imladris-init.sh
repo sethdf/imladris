@@ -74,6 +74,7 @@ OPTIONAL_SECRETS=(
     "sessions-git-repo:Git repo for session history sync"
     "github-token:GitHub personal access token"
     "tailscale-auth-key:Tailscale auth key for additional devices"
+    "aws-cross-accounts:JSON array of AWS accounts for cross-account access"
 )
 
 check_bws() {
