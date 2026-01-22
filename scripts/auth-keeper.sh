@@ -648,7 +648,8 @@ _ak_sdp_api() {
         # List tickets - build search criteria
         local search_criteria='[{"field":"status.in_progress","condition":"is","logical_operator":"OR","value":true},{"field":"status.name","condition":"is","value":"Open"}]'
 
-        if [[ -n "$tech_id" ]]; then
+        # Only add technician filter if we have a valid numeric ID
+        if [[ -n "$tech_id" && "$tech_id" =~ ^[0-9]+$ ]]; then
             search_criteria=$(echo "$search_criteria" | jq --arg tid "$tech_id" '. + [{"field":"technician.id","condition":"is","value":$tid}]')
         fi
 
