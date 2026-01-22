@@ -1130,6 +1130,108 @@ EOF
             esac
             ;;
 
+        sdp)
+            shift
+            case "${1:-}" in
+                ""|"list")
+                    local limit="${2:-50}"
+                    local response
+                    response=$(_ak_sdp_api "requests" "$limit") || return 1
+
+                    if [[ -n "$response" ]]; then
+                        echo "$response"
+                    else
+                        echo "No tickets found."
+                    fi
+                    ;;
+                "get")
+                    local ticket_id="${2:?Usage: auth-keeper sdp get <ticket_id>}"
+                    local response
+                    response=$(_ak_sdp_api "requests/$ticket_id") || return 1
+                    echo "$response"
+                    ;;
+                "note"|"add-note")
+                    local ticket_id="${2:?Usage: auth-keeper sdp note <ticket_id> <message>}"
+                    shift 2
+                    local message="$*"
+
+                    if [[ -z "$message" ]]; then
+                        echo "Usage: auth-keeper sdp note <ticket_id> <message>" >&2
+                        return 1
+                    fi
+
+                    local token base_url
+                    token=$(_ak_sdp_get_access_token) || return 1
+                    base_url=$(_ak_bws_get "sdp-base-url")
+                    base_url="${base_url%/app/itdesk}"
+                    base_url="${base_url%/}"
+
+                    local input_data
+                    input_data=$(jq -n --arg msg "$message" '{"request_note":{"description":$msg}}')
+
+                    local response
+                    response=$(curl -s -X POST "${base_url}/api/v3/requests/${ticket_id}/notes" \
+                        -H "Authorization: Zoho-oauthtoken $token" \
+                        -H "Content-Type: application/x-www-form-urlencoded" \
+                        --data-urlencode "input_data=$input_data")
+
+                    if echo "$response" | jq -e '.response_status.status == "success"' &>/dev/null; then
+                        echo "Note added to ticket #$ticket_id"
+                    else
+                        echo "Error: $(echo "$response" | jq -r '.response_status.messages[0].message // "Unknown error"')" >&2
+                        return 1
+                    fi
+                    ;;
+                "--token")
+                    _ak_sdp_get_access_token
+                    ;;
+                "auth"|"status")
+                    if ! _ak_sdp_configured; then
+                        echo "SDP not configured. Need sdp-client-id in BWS."
+                        return 1
+                    fi
+
+                    echo "SDP Configuration:"
+                    echo "  Base URL: $(_ak_bws_get 'sdp-base-url' | sed 's|/app/itdesk.*||')"
+                    echo "  Technician ID: $(_ak_bws_get 'sdp-technician-id')"
+
+                    if _ak_sdp_token_valid; then
+                        local exp_time remaining hours mins
+                        exp_time=$(secret-tool lookup service imladris-sdp type expiry 2>/dev/null || echo "0")
+                        remaining=$((exp_time - $(date +%s)))
+                        hours=$((remaining / 3600))
+                        mins=$(((remaining % 3600) / 60))
+                        echo "  Token: valid (expires in ${hours}h ${mins}m)"
+                    else
+                        echo "  Token: expired (will auto-refresh)"
+                    fi
+                    ;;
+                "-h"|"--help")
+                    cat <<'EOF'
+auth-keeper sdp - ServiceDesk Plus API access (OAuth2)
+
+Usage:
+  auth-keeper sdp                    List assigned tickets (JSON)
+  auth-keeper sdp list [limit]       List assigned tickets (default: 50)
+  auth-keeper sdp get <id>           Get ticket details
+  auth-keeper sdp note <id> <msg>    Add note to ticket
+  auth-keeper sdp --token            Get current access token
+  auth-keeper sdp auth               Check configuration
+  auth-keeper sdp -h                 Show this help
+
+Examples:
+  auth-keeper sdp | jq '.[].subject'
+  auth-keeper sdp get 12345
+  auth-keeper sdp note 12345 "Working on this now"
+EOF
+                    ;;
+                *)
+                    echo "Unknown sdp command: $1 (try: auth-keeper sdp -h)" >&2
+                    return 1
+                    ;;
+            esac
+            ;;
+
         refresh|r)
             case "${2:-}" in
                 aws|aws-sso)
