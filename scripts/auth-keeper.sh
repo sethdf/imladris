@@ -67,24 +67,37 @@ _ak_telegram_send() {
 # BWS Helper
 # ============================================================================
 
+# BWS cache for this session (avoids intermittent failures and redundant calls)
+_ak_bws_cache=""
+_ak_bws_cache_time=0
+
 _ak_bws_get() {
     local key="$1"
-    bws secret list 2>/dev/null | jq -r --arg k "$key" '.[] | select(.key == $k) | .value'
+    local now result
+
+    # Cache BWS list for 60 seconds
+    now=$(date +%s)
+    if [[ -z "$_ak_bws_cache" || $((now - _ak_bws_cache_time)) -gt 60 ]]; then
+        local attempts=0
+        while [[ $attempts -lt 3 ]]; do
+            _ak_bws_cache=$(bws secret list 2>/dev/null)
+            if [[ -n "$_ak_bws_cache" && "$_ak_bws_cache" != "[]" ]]; then
+                _ak_bws_cache_time=$now
+                break
+            fi
+            ((attempts++))
+            sleep 0.5
+        done
+    fi
+
+    echo "$_ak_bws_cache" | jq -r --arg k "$key" '.[] | select(.key == $k) | .value'
 }
 
 # ============================================================================
 # AWS SSO
 # ============================================================================
 
-# Check if AWS credentials are valid (any source: instance profile, SSO, env vars, etc.)
-_ak_aws_creds_valid() {
-    # Quick check: can we call STS? This works with any credential source.
-    # Use --no-cli-pager and timeout to avoid hanging.
-    command aws sts get-caller-identity --no-cli-pager &>/dev/null
-}
-
-# Check if SSO token cache is valid (for SSO-specific refresh logic)
-_ak_aws_sso_token_valid() {
+_ak_aws_token_valid() {
     local cache_dir="$HOME/.aws/sso/cache"
     [[ -d "$cache_dir" ]] || return 1
 
@@ -115,11 +128,6 @@ _ak_aws_sso_token_valid() {
     return 1
 }
 
-# Legacy alias for compatibility
-_ak_aws_token_valid() {
-    _ak_aws_sso_token_valid
-}
-
 _ak_aws_refresh() {
     local profile="${1:-${AWS_PROFILE:-}}"
 
@@ -145,18 +153,9 @@ _ak_aws_refresh() {
 
 # shellcheck disable=SC2120
 _ak_ensure_aws() {
-    # First check: do we have working credentials from ANY source?
-    # (instance profile, env vars, assumed role, etc.)
-    if _ak_aws_creds_valid; then
-        return 0
-    fi
-
-    # No valid creds - try SSO refresh if we're in an SSO environment
-    # (has SSO cache dir or AWS_PROFILE points to SSO profile)
-    if [[ -d "$HOME/.aws/sso/cache" ]] || [[ -n "${AWS_PROFILE:-}" ]]; then
+    if ! _ak_aws_token_valid; then
         _ak_aws_refresh "$@"
     fi
-    # If not SSO and no creds, let the command fail naturally with AWS's error
 }
 
 # AWS wrapper
@@ -371,9 +370,6 @@ _ak_google_get_access_token() {
 _ak_google_auth() {
     _ak_google_get_creds || return 1
 
-    # TODO: Google is deprecating the OOB flow (urn:ietf:wg:oauth:2.0:oob) in 2025.
-    # Future fix: use localhost redirect with a temporary HTTP server.
-    # See: https://developers.google.com/identity/protocols/oauth2/native-app
     local scopes="https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar"
     local auth_url="https://accounts.google.com/o/oauth2/v2/auth?client_id=$_ak_google_client_id&redirect_uri=urn:ietf:wg:oauth:2.0:oob&response_type=code&scope=$(echo "$scopes" | sed 's/ /%20/g')&access_type=offline&prompt=consent"
 
@@ -444,22 +440,47 @@ _ak_google_api() {
 # Slack - Bot API
 # ============================================================================
 
-_ak_slack_get_token() {
+_ak_slack_get_bot_token() {
     local token
     token="${SLACK_BOT_TOKEN:-$(_ak_bws_get 'slack-bot-token')}"
 
     if [[ -z "$token" ]]; then
-        echo "Error: No Slack token. Set SLACK_BOT_TOKEN or add slack-bot-token to BWS" >&2
+        echo "Error: No Slack bot token. Set SLACK_BOT_TOKEN or add slack-bot-token to BWS" >&2
         return 1
     fi
     echo "$token"
 }
 
+_ak_slack_get_user_token() {
+    local token
+    token="${SLACK_USER_TOKEN:-$(_ak_bws_get 'slack-user-token')}"
+
+    if [[ -z "$token" ]]; then
+        echo "Error: No Slack user token. Set SLACK_USER_TOKEN or add slack-user-token to BWS" >&2
+        return 1
+    fi
+    echo "$token"
+}
+
+# Bot token API (for sending, listing)
 _ak_slack_api() {
     local method="$1"
     shift
     local token
-    token=$(_ak_slack_get_token) || return 1
+    token=$(_ak_slack_get_bot_token) || return 1
+
+    curl -s "https://slack.com/api/$method" \
+        -H "Authorization: Bearer $token" \
+        -H "Content-Type: application/json; charset=utf-8" \
+        "$@"
+}
+
+# User token API (for unreads, history)
+_ak_slack_user_api() {
+    local method="$1"
+    shift
+    local token
+    token=$(_ak_slack_get_user_token) || return 1
 
     curl -s "https://slack.com/api/$method" \
         -H "Authorization: Bearer $token" \
@@ -470,6 +491,12 @@ _ak_slack_api() {
 _ak_slack_configured() {
     local token
     token="${SLACK_BOT_TOKEN:-$(_ak_bws_get 'slack-bot-token' 2>/dev/null)}"
+    [[ -n "$token" ]]
+}
+
+_ak_slack_user_configured() {
+    local token
+    token="${SLACK_USER_TOKEN:-$(_ak_bws_get 'slack-user-token' 2>/dev/null)}"
     [[ -n "$token" ]]
 }
 
@@ -551,157 +578,103 @@ _ak_signal_api_running() {
 }
 
 # ============================================================================
-# SDP - ServiceDesk Plus (Zoho OAuth2)
+# SDP (ServiceDesk Plus Cloud) - OAuth 2.0 REST API
 # ============================================================================
 
-_ak_sdp_get_creds() {
-    local secrets
-    secrets=$(bws secret list 2>/dev/null) || {
-        echo "Error: BWS not available. Run: bws login" >&2
-        return 1
-    }
+_ak_sdp_user="sfoley@buxtonco.com"
+_ak_sdp_token_cache_file="/tmp/.sdp_token_cache_$$"
 
-    _ak_sdp_client_id=$(echo "$secrets" | jq -r '.[] | select(.key == "sdp-client-id") | .value')
-    _ak_sdp_client_secret=$(echo "$secrets" | jq -r '.[] | select(.key == "sdp-client-secret") | .value')
-    _ak_sdp_refresh_token=$(echo "$secrets" | jq -r '.[] | select(.key == "sdp-refresh-token") | .value')
-    _ak_sdp_base_url=$(echo "$secrets" | jq -r '.[] | select(.key == "sdp-base-url") | .value')
-    _ak_sdp_technician_id=$(echo "$secrets" | jq -r '.[] | select(.key == "sdp-technician-id") | .value')
-
-    # Clean base URL
-    _ak_sdp_base_url="${_ak_sdp_base_url%/app/itdesk}"
-    _ak_sdp_base_url="${_ak_sdp_base_url%/}"
-
-    if [[ -z "$_ak_sdp_client_id" || -z "$_ak_sdp_client_secret" ]]; then
-        echo "Error: sdp-client-id or sdp-client-secret not found in BWS" >&2
-        return 1
-    fi
-}
-
-_ak_sdp_token_valid() {
-    # Check keyring for cached token
-    local expiry
-    expiry=$(secret-tool lookup service imladris-sdp type expiry 2>/dev/null || echo "0")
-
-    local now buffer
+# Ensure token is fresh (call before using _ak_sdp_token)
+_ak_sdp_ensure_token() {
+    local now cached_expiry cached_token
     now=$(date +%s)
-    buffer=$AUTH_KEEPER_REFRESH_BUFFER
 
-    [[ -n "$expiry" ]] && (( expiry - buffer > now ))
-}
+    # Check cache file
+    if [[ -f "$_ak_sdp_token_cache_file" ]]; then
+        cached_expiry=$(head -1 "$_ak_sdp_token_cache_file" 2>/dev/null || echo "0")
+        cached_token=$(tail -1 "$_ak_sdp_token_cache_file" 2>/dev/null || echo "")
 
-_ak_sdp_get_access_token() {
-    # Return cached token if valid
-    if _ak_sdp_token_valid; then
-        secret-tool lookup service imladris-sdp type access-token 2>/dev/null
-        return 0
+        # Return cached token if still valid (with 5 min buffer)
+        if [[ -n "$cached_token" && "$cached_expiry" -gt $((now + 300)) ]]; then
+            _ak_sdp_token="$cached_token"
+            return 0
+        fi
     fi
 
-    # Refresh token
-    _ak_sdp_get_creds || return 1
+    # Get OAuth credentials from BWS
+    local client_id client_secret refresh_token
+    client_id="${SDP_CLIENT_ID:-$(_ak_bws_get 'sdp-client-id')}"
+    client_secret="${SDP_CLIENT_SECRET:-$(_ak_bws_get 'sdp-client-secret')}"
+    refresh_token="${SDP_REFRESH_TOKEN:-$(_ak_bws_get 'sdp-refresh-token')}"
 
-    if [[ -z "$_ak_sdp_refresh_token" ]]; then
-        echo "Error: No refresh token. Add sdp-refresh-token to BWS" >&2
+    if [[ -z "$client_id" || -z "$client_secret" || -z "$refresh_token" ]]; then
+        echo "Error: Missing SDP OAuth credentials in BWS (sdp-client-id, sdp-client-secret, sdp-refresh-token)" >&2
         return 1
     fi
 
+    # Exchange refresh token for access token
     local response
     response=$(curl -s -X POST "https://accounts.zoho.com/oauth/v2/token" \
-        -d "client_id=$_ak_sdp_client_id" \
-        -d "client_secret=$_ak_sdp_client_secret" \
         -d "grant_type=refresh_token" \
-        -d "refresh_token=$_ak_sdp_refresh_token")
+        -d "client_id=$client_id" \
+        -d "client_secret=$client_secret" \
+        -d "refresh_token=$refresh_token")
 
-    if echo "$response" | jq -e '.access_token' &>/dev/null; then
-        local access_token expires_in expiry_time
-        access_token=$(echo "$response" | jq -r '.access_token')
-        expires_in=$(echo "$response" | jq -r '.expires_in')
-        expiry_time=$(($(date +%s) + expires_in))
+    local access_token expires_in
+    access_token=$(echo "$response" | jq -r '.access_token // empty')
+    expires_in=$(echo "$response" | jq -r '.expires_in // 3600')
 
-        # Cache in keyring
-        echo -n "$access_token" | secret-tool store --label="sdp-access-token" service imladris-sdp type access-token
-        echo -n "$expiry_time" | secret-tool store --label="sdp-expiry" service imladris-sdp type expiry
-
-        echo "$access_token"
-        return 0
-    else
-        echo "Error: Token refresh failed: $(echo "$response" | jq -r '.error_description // .error')" >&2
+    if [[ -z "$access_token" ]]; then
+        echo "Error: Failed to get SDP access token: $(echo "$response" | jq -r '.error // "unknown"')" >&2
         return 1
     fi
+
+    # Cache to file (expiry on line 1, token on line 2)
+    echo "$((now + expires_in))" > "$_ak_sdp_token_cache_file"
+    echo "$access_token" >> "$_ak_sdp_token_cache_file"
+    chmod 600 "$_ak_sdp_token_cache_file"
+
+    _ak_sdp_token="$access_token"
+}
+
+_ak_sdp_creds_loaded=""
+
+_ak_sdp_get_creds() {
+    # Idempotent - only load once per session
+    if [[ -n "$_ak_sdp_creds_loaded" && -n "$_ak_sdp_base_url" ]]; then
+        return 0
+    fi
+
+    _ak_sdp_base_url="${SDP_BASE_URL:-$(_ak_bws_get 'sdp-base-url')}"
+
+    if [[ -z "$_ak_sdp_base_url" ]]; then
+        echo "Error: No SDP base URL. Set SDP_BASE_URL or add sdp-base-url to BWS" >&2
+        return 1
+    fi
+
+    # Ensure we have a fresh token
+    _ak_sdp_ensure_token || return 1
+    _ak_sdp_creds_loaded="1"
+}
+
+_ak_sdp_api() {
+    local method="$1"
+    local endpoint="$2"
+    shift 2
+
+    _ak_sdp_get_creds || return 1
+
+    curl -s -X "$method" "${_ak_sdp_base_url}${endpoint}" \
+        -H "Authorization: Zoho-oauthtoken $_ak_sdp_token" \
+        -H "Content-Type: application/x-www-form-urlencoded" \
+        "$@"
 }
 
 _ak_sdp_configured() {
-    bws secret list 2>/dev/null | jq -e '.[] | select(.key == "sdp-client-id")' &>/dev/null
-}
-
-# SDP API helper - fetches tickets and returns normalized JSON
-_ak_sdp_api() {
-    local endpoint="$1"
-    local limit="${2:-50}"
-    local show_all="${3:-}"
-
-    local token base_url tech_id
-    token=$(_ak_sdp_get_access_token) || return 1
-    _ak_sdp_get_creds || return 1
-    base_url="$_ak_sdp_base_url"
-    tech_id="$_ak_sdp_technician_id"
-
-    if [[ "$endpoint" == "requests" ]]; then
-        # SDP Cloud API v3 - use input_data as query param with proper Accept header
-        local list_info response
-
-        # Build search criteria for active tickets assigned to technician
-        if [[ "$show_all" == "--all" ]]; then
-            list_info="{\"list_info\":{\"row_count\":$limit,\"start_index\":1,\"get_total_count\":true}}"
-        elif [[ -n "$tech_id" && "$tech_id" =~ ^[0-9]+$ ]]; then
-            list_info="{\"list_info\":{\"row_count\":$limit,\"start_index\":1,\"get_total_count\":true,\"search_criteria\":[{\"field\":\"technician.id\",\"condition\":\"is\",\"value\":\"$tech_id\"},{\"field\":\"status.name\",\"condition\":\"is not\",\"value\":\"Closed\",\"logical_operator\":\"AND\"},{\"field\":\"status.name\",\"condition\":\"is not\",\"value\":\"Canceled\",\"logical_operator\":\"AND\"}]}}"
-        else
-            list_info="{\"list_info\":{\"row_count\":$limit,\"start_index\":1,\"get_total_count\":true,\"search_criteria\":[{\"field\":\"status.name\",\"condition\":\"is not\",\"value\":\"Closed\"},{\"field\":\"status.name\",\"condition\":\"is not\",\"value\":\"Canceled\",\"logical_operator\":\"AND\"}]}}"
-        fi
-
-        response=$(curl -s --max-time 30 "${base_url}/api/v3/requests" \
-            -G --data-urlencode "input_data=$list_info" \
-            -H "Authorization: Zoho-oauthtoken $token" \
-            -H "Accept: application/vnd.manageengine.v3+json")
-
-        if echo "$response" | jq -e '.response_status[0].status == "failed"' &>/dev/null 2>&1; then
-            echo "Error: $(echo "$response" | jq -r '.response_status[0].messages[0].message // "Unknown error"')" >&2
-            return 1
-        fi
-
-        # Normalize output
-        echo "$response" | jq '[.requests[]? | {
-            id: .id,
-            subject: .subject,
-            status: .status.name,
-            priority: (.priority.name // \"Medium\"),
-            due_by_time: .due_by_time.value,
-            created_time: .created_time.value,
-            last_updated_time: .last_updated_time.value,
-            requester: (if .requester then {
-                name: .requester.name,
-                email: .requester.email_id,
-                is_vip: (.requester.is_vipuser // false),
-                department: (.requester.department.name // \"Unknown\")
-            } else null end),
-            technician: (if .technician then {
-                name: .technician.name,
-                email: .technician.email_id
-            } else null end)
-        }]"
-    else
-        # Single ticket or other endpoint
-        local response
-        response=$(curl -s --max-time 30 "${base_url}/api/v3/${endpoint}" \
-            -H "Authorization: Zoho-oauthtoken $token" \
-            -H "Accept: application/json")
-
-        if echo "$response" | jq -e '.response_status.status == "failed"' &>/dev/null; then
-            echo "Error: $(echo "$response" | jq -r '.response_status.messages[0].message // "Unknown error"')" >&2
-            return 1
-        fi
-
-        echo "$response" | jq '.request // .'
-    fi
+    local refresh url
+    refresh="${SDP_REFRESH_TOKEN:-$(_ak_bws_get 'sdp-refresh-token' 2>/dev/null)}"
+    url="${SDP_BASE_URL:-$(_ak_bws_get 'sdp-base-url' 2>/dev/null)}"
+    [[ -n "$refresh" && -n "$url" ]]
 }
 
 # ============================================================================
@@ -723,23 +696,13 @@ auth-keeper() {
         status|s)
             echo "=== auth-keeper status ==="
 
-            # AWS - check both instance profile/env creds AND SSO
-            if _ak_aws_creds_valid; then
-                local identity
-                identity=$(command aws sts get-caller-identity --no-cli-pager 2>/dev/null | jq -r '.Arn // "unknown"' | sed 's/.*\///')
-                if _ak_aws_sso_token_valid; then
-                    local exp
-                    exp=$(find "$HOME/.aws/sso/cache" -name '*.json' -exec jq -r '.expiresAt // empty' {} \; 2>/dev/null | grep -v '^$' | head -1)
-                    echo "aws: valid via SSO (expires $exp) [$identity]"
-                else
-                    echo "aws: valid via instance-profile/env [$identity]"
-                fi
-            elif _ak_aws_sso_token_valid; then
+            # AWS SSO
+            if _ak_aws_token_valid; then
                 local exp
                 exp=$(find "$HOME/.aws/sso/cache" -name '*.json' -exec jq -r '.expiresAt // empty' {} \; 2>/dev/null | grep -v '^$' | head -1)
-                echo "aws: SSO token valid but STS call failed (expires $exp)"
+                echo "aws-sso: valid (expires $exp)"
             else
-                echo "aws: no valid credentials"
+                echo "aws-sso: expired"
             fi
 
             # Azure
@@ -809,20 +772,11 @@ auth-keeper() {
                 echo "signal: API not running (docker start signal-cli-rest-api)"
             fi
 
-            # SDP
+            # SDP (ServiceDesk Plus)
             if _ak_sdp_configured; then
-                if _ak_sdp_token_valid; then
-                    local exp_time remaining hours mins
-                    exp_time=$(secret-tool lookup service imladris-sdp type expiry 2>/dev/null || echo "0")
-                    remaining=$((exp_time - $(date +%s)))
-                    hours=$((remaining / 3600))
-                    mins=$(((remaining % 3600) / 60))
-                    echo "sdp: valid (expires in ${hours}h ${mins}m)"
-                else
-                    echo "sdp: expired (has refresh token - will auto-refresh)"
-                fi
+                echo "sdp: configured (user: $_ak_sdp_user)"
             else
-                echo "sdp: not configured (need sdp-client-id in BWS)"
+                echo "sdp: not configured (need sdp-api-key and sdp-base-url in BWS)"
             fi
 
             # Tailscale
@@ -957,6 +911,69 @@ EOF
                         echo "Error: $(echo "$response" | jq -r '.error // "Unknown error"')" >&2
                     fi
                     ;;
+                "unread"|"u")
+                    # Show unread counts (requires user token)
+                    if ! _ak_slack_user_configured; then
+                        echo "Error: Unread counts require user token (slack-user-token in BWS)" >&2
+                        echo "See: auth-keeper slack -h" >&2
+                        return 1
+                    fi
+
+                    echo "Fetching unread counts..."
+                    local token has_unread=false
+                    token=$(_ak_slack_get_user_token) || return 1
+
+                    # Query each channel type separately (GET params required)
+                    for ch_type in "im" "mpim" "private_channel" "public_channel"; do
+                        local response
+                        response=$(curl -s "https://slack.com/api/conversations.list?types=$ch_type&limit=200&exclude_archived=true" \
+                            -H "Authorization: Bearer $token")
+
+                        if [[ $(echo "$response" | jq -r '.ok') != "true" ]]; then
+                            continue
+                        fi
+
+                        # Check each channel for unread messages
+                        while IFS= read -r ch_id; do
+                            [[ -z "$ch_id" ]] && continue
+                            local info
+                            info=$(curl -s "https://slack.com/api/conversations.info?channel=$ch_id" \
+                                -H "Authorization: Bearer $token")
+
+                            local unread_count name is_im is_private
+                            unread_count=$(echo "$info" | jq -r '.channel.unread_count // 0')
+                            [[ "$unread_count" == "null" ]] && unread_count=0
+
+                            if [[ "$unread_count" -gt 0 ]]; then
+                                has_unread=true
+                                name=$(echo "$info" | jq -r '.channel.name // empty')
+                                is_im=$(echo "$info" | jq -r '.channel.is_im // false')
+                                is_private=$(echo "$info" | jq -r '.channel.is_private // false')
+
+                                # For DMs, resolve user name
+                                if [[ "$is_im" == "true" ]]; then
+                                    local user_id
+                                    user_id=$(echo "$info" | jq -r '.channel.user')
+                                    local user_info
+                                    user_info=$(curl -s "https://slack.com/api/users.info?user=$user_id" \
+                                        -H "Authorization: Bearer $token")
+                                    name=$(echo "$user_info" | jq -r '.user.real_name // .user.name // empty')
+                                    [[ -z "$name" ]] && name="DM ($user_id)"
+                                    printf "  💬 %-25s %d unread\n" "$name" "$unread_count"
+                                elif [[ "$is_private" == "true" ]]; then
+                                    printf "  🔒 %-25s %d unread\n" "$name" "$unread_count"
+                                else
+                                    printf "  #  %-25s %d unread\n" "$name" "$unread_count"
+                                fi
+                            fi
+                        done < <(echo "$response" | jq -r '.channels[].id')
+                    done
+
+                    if [[ "$has_unread" == "false" ]]; then
+                        echo ""
+                        echo "  No unread messages!"
+                    fi
+                    ;;
                 "channels"|"ch")
                     local response
                     response=$(_ak_slack_api "conversations.list" -d '{"types":"public_channel,private_channel","limit":100}')
@@ -970,6 +987,13 @@ EOF
                     fi
                     ;;
                 "read"|"r")
+                    # Read requires user token for channels:history scope
+                    if ! _ak_slack_user_configured; then
+                        echo "Error: Reading messages requires user token (slack-user-token in BWS)" >&2
+                        echo "See: auth-keeper slack -h" >&2
+                        return 1
+                    fi
+
                     local channel="${2:?Usage: auth-keeper slack read <channel> [limit]}"
                     local limit="${3:-20}"
 
@@ -978,7 +1002,7 @@ EOF
                     if [[ ! "$channel" =~ ^[CDG] ]]; then
                         local ch_name="${channel#\#}"
                         local ch_list
-                        ch_list=$(_ak_slack_api "conversations.list" -d '{"types":"public_channel,private_channel","limit":200}')
+                        ch_list=$(_ak_slack_user_api "conversations.list" -d '{"types":"public_channel,private_channel","limit":200}')
                         channel_id=$(echo "$ch_list" | jq -r --arg n "$ch_name" '.channels[] | select(.name == $n) | .id')
                         if [[ -z "$channel_id" ]]; then
                             echo "Error: Channel not found: $channel" >&2
@@ -987,7 +1011,7 @@ EOF
                     fi
 
                     local response
-                    response=$(_ak_slack_api "conversations.history" -d "{\"channel\":\"$channel_id\",\"limit\":$limit}")
+                    response=$(_ak_slack_user_api "conversations.history" -d "{\"channel\":\"$channel_id\",\"limit\":$limit}")
 
                     if echo "$response" | jq -e '.ok' &>/dev/null && [[ $(echo "$response" | jq -r '.ok') == "true" ]]; then
                         echo "Recent messages in $channel:"
@@ -1047,20 +1071,34 @@ EOF
                     ;;
                 "-h"|"--help")
                     cat <<'EOF'
-auth-keeper slack - Slack API access (Bot token)
+auth-keeper slack - Slack API access
 
 Usage:
   auth-keeper slack                    Show recent activity
   auth-keeper slack channels           List channels
-  auth-keeper slack read <ch> [n]      Read last n messages (default: 20)
+  auth-keeper slack unread             Show unread counts (requires user token)
+  auth-keeper slack read <ch> [n]      Read last n messages (requires user token)
   auth-keeper slack send <ch> <msg>    Send message to channel
   auth-keeper slack auth               Test authentication
   auth-keeper slack -h                 Show this help
 
 Channel formats: #general, general, C0123456789
 
+Token Types:
+  Bot token (slack-bot-token):   Used for send, channels, auth
+  User token (slack-user-token): Required for read, unread
+
+To get a user token:
+  1. Go to api.slack.com/apps → Your app → OAuth & Permissions
+  2. Add User Token Scopes: channels:history, channels:read, groups:history,
+     groups:read, im:history, im:read, mpim:history, mpim:read
+  3. Reinstall app to workspace
+  4. Copy User OAuth Token (xoxp-...)
+  5. Store in BWS: bws secret edit slack-user-token -v "xoxp-..."
+
 Examples:
   auth-keeper slack channels
+  auth-keeper slack unread
   auth-keeper slack read #general 10
   auth-keeper slack send #general "Build complete!"
 EOF
@@ -1300,34 +1338,77 @@ EOF
             esac
             ;;
 
-        sdp)
+        sdp|SDP)
+            # Zone awareness: SDP is work-only
+            if [[ "${ZONE:-}" != "work" ]]; then
+                echo "⚠️  SDP is a work tool (zone: ${ZONE:-unset}, expected: work)" >&2
+            fi
             shift
             case "${1:-}" in
-                ""|"list")
-                    local limit="${2:-50}"
-                    local show_all="${3:-}"
+                ""|"my"|"assigned")
+                    # List my assigned tickets
+                    local input_data
+                    input_data=$(jq -n --arg email "$_ak_sdp_user" '{
+                        list_info: {
+                            row_count: 50,
+                            sort_field: "due_by_time",
+                            sort_order: "asc",
+                            search_criteria: [
+                                {field: "technician.email_id", condition: "is", value: $email},
+                                {field: "status.name", condition: "is not", values: ["Closed", "Resolved"]}
+                            ]
+                        }
+                    }')
+
                     local response
+                    response=$(_ak_sdp_api GET "/api/v3/requests" --data-urlencode "input_data=$input_data")
 
-                    if [[ "$2" == "--all" || "$3" == "--all" ]]; then
-                        show_all="--all"
-                        [[ "$2" == "--all" ]] && limit="50"
-                    fi
-
-                    response=$(_ak_sdp_api "requests" "$limit" "$show_all") || return 1
-
-                    if [[ -n "$response" && "$response" != "[]" ]]; then
-                        echo "$response"
+                    if echo "$response" | jq -e '.requests' &>/dev/null; then
+                        local count
+                        count=$(echo "$response" | jq '.requests | length')
+                        echo "My assigned tickets ($count):"
+                        echo ""
+                        echo "$response" | jq -r '.requests[] | "  #\(.id) | \(.subject | .[0:50]) | \(.status.name) | Due: \(.due_by_time // "N/A")"'
                     else
-                        echo "No active tickets found. Use 'auth-keeper sdp list --all' to see all tickets."
+                        echo "Error: $(echo "$response" | jq -r '.response_status[0].messages[0].message // "Unknown error"')" >&2
                     fi
                     ;;
-                "get")
-                    local ticket_id="${2:?Usage: auth-keeper sdp get <ticket_id>}"
+                "overdue")
+                    local now_ms
+                    now_ms=$(($(date +%s) * 1000))
+
+                    local input_data
+                    input_data=$(jq -n --arg email "$_ak_sdp_user" --argjson now "$now_ms" '{
+                        list_info: {
+                            row_count: 50,
+                            sort_field: "due_by_time",
+                            sort_order: "asc",
+                            search_criteria: [
+                                {field: "technician.email_id", condition: "is", value: $email},
+                                {field: "due_by_time", condition: "less than", value: ($now | tostring)},
+                                {field: "status.name", condition: "is not", values: ["Closed", "Resolved"]}
+                            ]
+                        }
+                    }')
+
                     local response
-                    response=$(_ak_sdp_api "requests/$ticket_id") || return 1
-                    echo "$response"
+                    response=$(_ak_sdp_api GET "/api/v3/requests" --data-urlencode "input_data=$input_data")
+
+                    if echo "$response" | jq -e '.requests' &>/dev/null; then
+                        local count
+                        count=$(echo "$response" | jq '.requests | length')
+                        if [[ "$count" == "0" ]]; then
+                            echo "No overdue tickets!"
+                        else
+                            echo "Overdue tickets ($count):"
+                            echo ""
+                            echo "$response" | jq -r '.requests[] | "  #\(.id) | \(.subject | .[0:50]) | Due: \(.due_by_time)"'
+                        fi
+                    else
+                        echo "Error: $(echo "$response" | jq -r '.response_status[0].messages[0].message // "Unknown error"')" >&2
+                    fi
                     ;;
-                "note"|"add-note")
+                "note")
                     local ticket_id="${2:?Usage: auth-keeper sdp note <ticket_id> <message>}"
                     shift 2
                     local message="$*"
@@ -1337,69 +1418,122 @@ EOF
                         return 1
                     fi
 
-                    local token base_url
-                    token=$(_ak_sdp_get_access_token) || return 1
-                    base_url=$(_ak_bws_get "sdp-base-url")
-                    base_url="${base_url%/app/itdesk}"
-                    base_url="${base_url%/}"
-
                     local input_data
-                    input_data=$(jq -n --arg msg "$message" '{"request_note":{"description":$msg}}')
+                    input_data=$(jq -n --arg msg "$message" '{
+                        request_note: {
+                            description: $msg,
+                            show_to_requester: false,
+                            notify_technician: false
+                        }
+                    }')
 
                     local response
-                    response=$(curl -s -X POST "${base_url}/api/v3/requests/${ticket_id}/notes" \
-                        -H "Authorization: Zoho-oauthtoken $token" \
-                        -H "Content-Type: application/x-www-form-urlencoded" \
-                        --data-urlencode "input_data=$input_data")
+                    response=$(_ak_sdp_api POST "/api/v3/requests/$ticket_id/notes" -d "input_data=$input_data")
 
-                    if echo "$response" | jq -e '.response_status.status == "success"' &>/dev/null; then
+                    if echo "$response" | jq -e '.request_note' &>/dev/null; then
+                        local note_id
+                        note_id=$(echo "$response" | jq -r '.request_note.id')
                         echo "Note added to ticket #$ticket_id"
+                        echo "  Note ID: $note_id"
                     else
-                        echo "Error: $(echo "$response" | jq -r '.response_status.messages[0].message // "Unknown error"')" >&2
-                        return 1
+                        echo "Error: $(echo "$response" | jq -r '.response_status[0].messages[0].message // "Unknown error"')" >&2
                     fi
                     ;;
-                "--token")
-                    _ak_sdp_get_access_token
-                    ;;
-                "auth"|"status")
-                    if ! _ak_sdp_configured; then
-                        echo "SDP not configured. Need sdp-client-id in BWS."
+                "reply")
+                    local ticket_id="${2:?Usage: auth-keeper sdp reply <ticket_id> <message>}"
+                    shift 2
+                    local message="$*"
+
+                    if [[ -z "$message" ]]; then
+                        echo "Usage: auth-keeper sdp reply <ticket_id> <message>" >&2
                         return 1
                     fi
 
-                    echo "SDP Configuration:"
-                    echo "  Base URL: $(_ak_bws_get 'sdp-base-url' | sed 's|/app/itdesk.*||')"
-                    echo "  Technician ID: $(_ak_bws_get 'sdp-technician-id')"
+                    local input_data
+                    input_data=$(jq -n --arg msg "$message" '{
+                        reply: {
+                            description: $msg
+                        }
+                    }')
 
-                    if _ak_sdp_token_valid; then
-                        local exp_time remaining hours mins
-                        exp_time=$(secret-tool lookup service imladris-sdp type expiry 2>/dev/null || echo "0")
-                        remaining=$((exp_time - $(date +%s)))
-                        hours=$((remaining / 3600))
-                        mins=$(((remaining % 3600) / 60))
-                        echo "  Token: valid (expires in ${hours}h ${mins}m)"
+                    local response
+                    response=$(_ak_sdp_api POST "/api/v3/requests/$ticket_id/reply" -d "input_data=$input_data")
+
+                    if echo "$response" | jq -e '.response_status[0].status_code' &>/dev/null; then
+                        local status_code
+                        status_code=$(echo "$response" | jq -r '.response_status[0].status_code')
+                        if [[ "$status_code" == "2000" ]]; then
+                            echo "Reply sent to ticket #$ticket_id"
+                        else
+                            echo "Error: $(echo "$response" | jq -r '.response_status[0].messages[0].message // "Unknown error"')" >&2
+                        fi
                     else
-                        echo "  Token: expired (will auto-refresh)"
+                        echo "Error: Unexpected response" >&2
+                    fi
+                    ;;
+                "get"|"show")
+                    local ticket_id="${2:?Usage: auth-keeper sdp get <ticket_id>}"
+
+                    local response
+                    response=$(_ak_sdp_api GET "/api/v3/requests/$ticket_id")
+
+                    if echo "$response" | jq -e '.request' &>/dev/null; then
+                        echo "$response" | jq -r '.request | "Ticket #\(.id)\n  Subject: \(.subject)\n  Status: \(.status.name)\n  Priority: \(.priority.name // "N/A")\n  Requester: \(.requester.name) <\(.requester.email_id)>\n  Technician: \(.technician.name // "Unassigned")\n  Due: \(.due_by_time // "N/A")\n  Created: \(.created_time.display_value)\n\nDescription:\n\(.description // "No description")"'
+                    else
+                        echo "Error: $(echo "$response" | jq -r '.response_status[0].messages[0].message // "Unknown error"')" >&2
+                    fi
+                    ;;
+                "auth"|"test")
+                    echo "SDP Configuration (OAuth 2.0):"
+                    echo "  Base URL: $(_ak_bws_get 'sdp-base-url')"
+                    echo "  User: $_ak_sdp_user"
+                    echo "  Client ID: $(_ak_bws_get 'sdp-client-id' | head -c 20)..."
+                    echo ""
+                    echo "Fetching access token..."
+                    _ak_sdp_ensure_token || return 1
+                    echo "  Token: ${_ak_sdp_token:0:20}... (valid ~1hr)"
+                    echo ""
+                    echo "Testing API connection..."
+
+                    _ak_sdp_get_creds || return 1
+                    local response
+                    response=$(_ak_sdp_api GET "/api/v3/requests" --data-urlencode 'input_data={"list_info":{"row_count":1}}')
+
+                    # response_status is an array in SDP Cloud API
+                    if echo "$response" | jq -e '.response_status[0].status_code' &>/dev/null; then
+                        local status_code
+                        status_code=$(echo "$response" | jq -r '.response_status[0].status_code')
+                        if [[ "$status_code" == "2000" ]]; then
+                            local count
+                            count=$(echo "$response" | jq -r '.requests | length')
+                            echo "Connection successful! (found $count tickets)"
+                        else
+                            echo "Error: $(echo "$response" | jq -r '.response_status[0].messages[0].message // "Unknown error"')" >&2
+                        fi
+                    else
+                        echo "API response: $response" >&2
+                        echo "Connection failed - check credentials" >&2
                     fi
                     ;;
                 "-h"|"--help")
                     cat <<'EOF'
-auth-keeper sdp - ServiceDesk Plus API access (OAuth2)
+auth-keeper sdp - ServiceDesk Plus API access
 
 Usage:
-  auth-keeper sdp                    List assigned tickets (JSON)
-  auth-keeper sdp list [limit]       List assigned tickets (default: 50)
+  auth-keeper sdp                    List my assigned tickets
+  auth-keeper sdp overdue            List overdue tickets
   auth-keeper sdp get <id>           Get ticket details
-  auth-keeper sdp note <id> <msg>    Add note to ticket
-  auth-keeper sdp --token            Get current access token
-  auth-keeper sdp auth               Check configuration
+  auth-keeper sdp note <id> <msg>    Add internal note
+  auth-keeper sdp reply <id> <msg>   Send reply to requester
+  auth-keeper sdp auth               Test API connection
   auth-keeper sdp -h                 Show this help
 
 Examples:
-  auth-keeper sdp | jq '.[].subject'
+  auth-keeper sdp
+  auth-keeper sdp overdue
   auth-keeper sdp get 12345
-  auth-keeper sdp note 12345 "Working on this now"
+  auth-keeper sdp note 12345 "Investigated - DNS issue on prod-web-03"
+  auth-keeper sdp reply 12345 "Issue resolved. DNS cache cleared."
 EOF
                     ;;
                 *)
@@ -1420,17 +1554,13 @@ EOF
                 google)
                     _ak_google_get_access_token >/dev/null && echo "Google token refreshed"
                     ;;
-                sdp)
-                    _ak_sdp_get_access_token >/dev/null && echo "SDP token refreshed"
-                    ;;
                 all)
                     _ak_aws_refresh
                     _ak_azure_refresh
                     _ak_google_get_access_token >/dev/null && echo "Google token refreshed"
-                    _ak_sdp_get_access_token >/dev/null && echo "SDP token refreshed"
                     ;;
                 *)
-                    echo "Usage: auth-keeper refresh [aws|azure|google|sdp|all]"
+                    echo "Usage: auth-keeper refresh [aws|azure|google|all]"
                     ;;
             esac
             ;;
@@ -1448,7 +1578,7 @@ Commands:
   slack [cmd]         Slack API access (bot token)
   telegram [cmd]      Telegram Bot API access
   signal [cmd]        Signal REST API access (Docker)
-  sdp [cmd]           ServiceDesk Plus API access (OAuth2)
+  sdp [cmd]           ServiceDesk Plus ticket management
   refresh [service]   Force token refresh
   help                Show this help
 
@@ -1462,8 +1592,8 @@ Service Access:
   auth-keeper slack send #ch "msg"     Send Slack message
   auth-keeper telegram updates         Get Telegram updates
   auth-keeper telegram send "msg"      Send Telegram message
-  auth-keeper sdp                      List SDP tickets
-  auth-keeper sdp get <id>             Get ticket details
+  auth-keeper sdp                      List my SDP tickets
+  auth-keeper sdp note 12345 "msg"     Add note to ticket
 
 Environment:
   AUTH_KEEPER_NOTIFY         signal, telegram, bell, none (default: signal)
@@ -1493,7 +1623,7 @@ if [[ -n "${ZSH_VERSION:-}" ]] && command -v compdef &>/dev/null; then
             'slack:Slack API access'
             'telegram:Telegram Bot API access'
             'signal:Signal REST API access'
-            'sdp:ServiceDesk Plus API access'
+            'sdp:ServiceDesk Plus ticket management'
             'refresh:Force token refresh'
             'help:Show help'
         )
@@ -1504,13 +1634,13 @@ elif [[ -n "${BASH_VERSION:-}" ]]; then
     _auth_keeper_comp() {
         local cur="${COMP_WORDS[COMP_CWORD]}"
         case "${COMP_WORDS[1]:-}" in
-            refresh) mapfile -t COMPREPLY < <(compgen -W "aws azure google sdp all" -- "$cur") ;;
+            refresh) mapfile -t COMPREPLY < <(compgen -W "aws azure google all" -- "$cur") ;;
             google) mapfile -t COMPREPLY < <(compgen -W "mail calendar --auth --token --help" -- "$cur") ;;
             ms365) mapfile -t COMPREPLY < <(compgen -W "--interactive --help" -- "$cur") ;;
-            slack) mapfile -t COMPREPLY < <(compgen -W "channels read send auth --help" -- "$cur") ;;
+            slack) mapfile -t COMPREPLY < <(compgen -W "channels unread read send auth --help" -- "$cur") ;;
             telegram) mapfile -t COMPREPLY < <(compgen -W "updates send auth --help" -- "$cur") ;;
-            signal) mapfile -t COMPREPLY < <(compgen -W "send link auth --help" -- "$cur") ;;
-            sdp) mapfile -t COMPREPLY < <(compgen -W "list get note auth --token --help" -- "$cur") ;;
+            signal) mapfile -t COMPREPLY < <(compgen -W "receive send link auth --help" -- "$cur") ;;
+            sdp) mapfile -t COMPREPLY < <(compgen -W "my overdue get note reply auth --help" -- "$cur") ;;
             *) mapfile -t COMPREPLY < <(compgen -W "status ms365 google slack telegram signal sdp refresh help" -- "$cur") ;;
         esac
     }
