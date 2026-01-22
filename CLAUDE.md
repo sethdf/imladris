@@ -48,30 +48,54 @@ In each AWS account you want to access, update the role's trust policy to allow 
 }
 ```
 
-### Configure Profiles on Instance
+### Account Registry (BWS)
 
-Create `~/.aws/config`:
+Accounts are stored in BWS secret `aws-cross-accounts` as a JSON array:
 
-```ini
-[profile org-dev-readonly]
-role_arn = arn:aws:iam::111111111111:role/ReadOnlyAccess
-credential_source = Ec2InstanceMetadata
-
-[profile org-dev-admin]
-role_arn = arn:aws:iam::111111111111:role/AdministratorAccess
-credential_source = Ec2InstanceMetadata
-
-[profile org-prod-readonly]
-role_arn = arn:aws:iam::222222222222:role/ReadOnlyAccess
-credential_source = Ec2InstanceMetadata
+```json
+[
+  {
+    "id": "111111111111",
+    "name": "org-dev",
+    "roles": ["ReadOnlyAccess", "AdministratorAccess"],
+    "purpose": "Development environment"
+  },
+  {
+    "id": "222222222222",
+    "name": "org-prod",
+    "roles": ["ReadOnlyAccess"],
+    "purpose": "Production (read-only)"
+  }
+]
 ```
+
+### Managing Accounts
+
+```bash
+# Add a new account interactively
+aws-accounts-config add
+
+# List configured accounts
+aws-accounts-config list
+
+# Regenerate ~/.aws/config from BWS
+aws-accounts-config generate
+
+# Test access to all accounts
+aws-accounts-config test
+```
+
+Generated profile names follow the pattern `{name}-{role-suffix}`:
+- `org-dev-readonly` (for ReadOnlyAccess)
+- `org-dev-admin` (for AdministratorAccess)
+- `org-prod-readonly`
 
 ### Usage
 
 ```bash
 # Use specific profile
 aws --profile org-dev-readonly s3 ls
-aws --profile org-prod-admin ec2 describe-instances
+aws --profile org-dev-admin ec2 describe-instances
 
 # Set default profile
 export AWS_PROFILE=org-dev-readonly
