@@ -645,44 +645,32 @@ _ak_sdp_api() {
     tech_id="$_ak_sdp_technician_id"
 
     if [[ "$endpoint" == "requests" ]]; then
-        # List tickets - build search criteria
-        local search_criteria='[{"field":"status.in_progress","condition":"is","logical_operator":"OR","value":true},{"field":"status.name","condition":"is","value":"Open"}]'
-
-        # Only add technician filter if we have a valid numeric ID
-        if [[ -n "$tech_id" && "$tech_id" =~ ^[0-9]+$ ]]; then
-            search_criteria=$(echo "$search_criteria" | jq --arg tid "$tech_id" '. + [{"field":"technician.id","condition":"is","value":$tid}]')
-        fi
-
-        local input_data
-        input_data=$(jq -n --argjson limit "$limit" --argjson criteria "$search_criteria" '{
-            list_info: {
-                row_count: $limit,
-                start_index: 1,
-                sort_field: "due_by_time",
-                sort_order: "asc",
-                get_total_count: true,
-                search_criteria: $criteria
-            }
-        }')
-
+        # SDP Cloud API - fetch all and filter locally
+        # The OnDemand API doesn't support complex input_data params
         local response
-        response=$(curl -s "${base_url}/api/v3/requests" \
+        response=$(curl -s --max-time 30 "${base_url}/api/v3/requests" \
             -H "Authorization: Zoho-oauthtoken $token" \
-            -H "Accept: application/json" \
-            -H "Content-Type: application/x-www-form-urlencoded" \
-            -d "input_data=$input_data")
+            -H "Accept: application/json")
 
         if echo "$response" | jq -e '.response_status.status == "failed"' &>/dev/null; then
             echo "Error: $(echo "$response" | jq -r '.response_status.messages[0].message // "Unknown error"')" >&2
             return 1
         fi
 
-        # Normalize output
-        echo "$response" | jq '[.requests[]? | {
+        # Normalize and filter output
+        # Filter: Open or In Progress status, optionally by technician
+        local jq_filter
+        if [[ -n "$tech_id" && "$tech_id" =~ ^[0-9]+$ ]]; then
+            jq_filter="[.requests[]? | select(.status.name == \"Open\" or .status.name == \"In Progress\" or .status.name == \"On Hold\") | select(.technician.id == \"$tech_id\")]"
+        else
+            jq_filter='[.requests[]? | select(.status.name == "Open" or .status.name == "In Progress" or .status.name == "On Hold")]'
+        fi
+
+        echo "$response" | jq --argjson lim "$limit" "$jq_filter | sort_by(.due_by_time.value // \"9999\") | .[:\$lim] | [.[] | {
             id: .id,
             subject: .subject,
             status: .status.name,
-            priority: (.priority.name // "Medium"),
+            priority: (.priority.name // \"Medium\"),
             due_by_time: .due_by_time.value,
             created_time: .created_time.value,
             last_updated_time: .last_updated_time.value,
@@ -690,20 +678,19 @@ _ak_sdp_api() {
                 name: .requester.name,
                 email: .requester.email_id,
                 is_vip: (.requester.is_vipuser // false),
-                department: (.requester.department.name // "Unknown")
+                department: (.requester.department.name // \"Unknown\")
             } else null end),
             technician: (if .technician then {
                 name: .technician.name,
                 email: .technician.email_id
             } else null end)
-        }]'
+        }]"
     else
         # Single ticket or other endpoint
         local response
-        response=$(curl -s "${base_url}/api/v3/${endpoint}" \
+        response=$(curl -s --max-time 30 "${base_url}/api/v3/${endpoint}" \
             -H "Authorization: Zoho-oauthtoken $token" \
-            -H "Accept: application/json" \
-            -H "Content-Type: application/x-www-form-urlencoded")
+            -H "Accept: application/json")
 
         if echo "$response" | jq -e '.response_status.status == "failed"' &>/dev/null; then
             echo "Error: $(echo "$response" | jq -r '.response_status.messages[0].message // "Unknown error"')" >&2
