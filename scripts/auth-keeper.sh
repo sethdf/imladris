@@ -1302,13 +1302,20 @@ EOF
             case "${1:-}" in
                 ""|"list")
                     local limit="${2:-50}"
+                    local show_all="${3:-}"
                     local response
-                    response=$(_ak_sdp_api "requests" "$limit") || return 1
 
-                    if [[ -n "$response" ]]; then
+                    if [[ "$2" == "--all" || "$3" == "--all" ]]; then
+                        show_all="--all"
+                        [[ "$2" == "--all" ]] && limit="50"
+                    fi
+
+                    response=$(_ak_sdp_api "requests" "$limit" "$show_all") || return 1
+
+                    if [[ -n "$response" && "$response" != "[]" ]]; then
                         echo "$response"
                     else
-                        echo "No tickets found."
+                        echo "No active tickets found. Use 'auth-keeper sdp list --all' to see all tickets."
                     fi
                     ;;
                 "get")
