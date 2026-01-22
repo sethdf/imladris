@@ -94,10 +94,52 @@ _ak_bws_get() {
 }
 
 # ============================================================================
-# AWS SSO
+# AWS - Instance Profile + SSO + Cross-Account Assume Role
 # ============================================================================
 
-_ak_aws_token_valid() {
+# Check if running on EC2 with instance profile (IMDSv2)
+_ak_aws_on_ec2() {
+    local token
+    token=$(curl -s --max-time 1 -X PUT "http://169.254.169.254/latest/api/token" \
+        -H "X-aws-ec2-metadata-token-ttl-seconds: 60" 2>/dev/null) || return 1
+
+    curl -s --max-time 1 -H "X-aws-ec2-metadata-token: $token" \
+        "http://169.254.169.254/latest/meta-data/iam/info" &>/dev/null
+}
+
+# Check if a profile uses SSO (vs instance profile or assume-role)
+_ak_aws_profile_uses_sso() {
+    local profile="${1:-${AWS_PROFILE:-default}}"
+    local config_file="${AWS_CONFIG_FILE:-$HOME/.aws/config}"
+
+    [[ -f "$config_file" ]] || return 1
+
+    # Check if profile has sso_start_url configured
+    awk -v profile="$profile" '
+        /^\[profile / { in_profile = ($0 ~ "\\[profile " profile "\\]") }
+        /^\[default\]/ { in_profile = (profile == "default") }
+        in_profile && /sso_start_url/ { found = 1; exit }
+        END { exit !found }
+    ' "$config_file"
+}
+
+# Check if a profile uses assume-role from instance profile
+_ak_aws_profile_uses_assume_role() {
+    local profile="${1:-${AWS_PROFILE:-default}}"
+    local config_file="${AWS_CONFIG_FILE:-$HOME/.aws/config}"
+
+    [[ -f "$config_file" ]] || return 1
+
+    # Check if profile has role_arn configured (assume-role)
+    awk -v profile="$profile" '
+        /^\[profile / { in_profile = ($0 ~ "\\[profile " profile "\\]") }
+        /^\[default\]/ { in_profile = (profile == "default") }
+        in_profile && /role_arn/ { found = 1; exit }
+        END { exit !found }
+    ' "$config_file"
+}
+
+_ak_aws_sso_token_valid() {
     local cache_dir="$HOME/.aws/sso/cache"
     [[ -d "$cache_dir" ]] || return 1
 
@@ -153,9 +195,20 @@ _ak_aws_refresh() {
 
 # shellcheck disable=SC2120
 _ak_ensure_aws() {
-    if ! _ak_aws_token_valid; then
-        _ak_aws_refresh "$@"
+    local profile="${1:-${AWS_PROFILE:-}}"
+
+    # On EC2 with instance profile: credentials are always available via IMDS
+    # For assume-role profiles: AWS SDK handles role assumption automatically
+    # Only SSO profiles need explicit token validation/refresh
+
+    if _ak_aws_profile_uses_sso "$profile"; then
+        # SSO profile - validate and refresh token if needed
+        if ! _ak_aws_sso_token_valid; then
+            _ak_aws_refresh "$profile"
+        fi
     fi
+    # Instance profile and assume-role profiles don't need validation
+    # AWS SDK handles credential retrieval automatically
 }
 
 # AWS wrapper
@@ -718,13 +771,21 @@ auth-keeper() {
         status|s)
             echo "=== auth-keeper status ==="
 
-            # AWS SSO
-            if _ak_aws_token_valid; then
+            # AWS - detect auth method
+            if _ak_aws_on_ec2; then
+                local role_arn
+                role_arn=$(curl -s --max-time 1 -X PUT "http://169.254.169.254/latest/api/token" \
+                    -H "X-aws-ec2-metadata-token-ttl-seconds: 60" 2>/dev/null | \
+                    xargs -I{} curl -s --max-time 1 -H "X-aws-ec2-metadata-token: {}" \
+                    "http://169.254.169.254/latest/meta-data/iam/info" 2>/dev/null | \
+                    jq -r '.InstanceProfileArn // "unknown"' 2>/dev/null)
+                echo "aws: instance-profile (${role_arn##*/})"
+            elif _ak_aws_sso_token_valid; then
                 local exp
                 exp=$(find "$HOME/.aws/sso/cache" -name '*.json' -exec jq -r '.expiresAt // empty' {} \; 2>/dev/null | grep -v '^$' | head -1)
-                echo "aws-sso: valid (expires $exp)"
+                echo "aws: sso-token valid (expires $exp)"
             else
-                echo "aws-sso: expired"
+                echo "aws: no valid credentials (run 'aws sso login' for SSO profiles)"
             fi
 
             # Azure
