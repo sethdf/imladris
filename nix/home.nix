@@ -475,8 +475,17 @@
       # Enable RGB color support
       set -ga terminal-overrides ",*256col*:Tc"
 
-      # Zone-based color theming triggered by shell hook (see zsh initExtra)
+      # =========================================================================
+      # Zone-based color theming
       # Colors: home=green, work=blue, prod=red, other=purple
+      # Triggered by: shell chpwd hook, session switch, pane focus
+      # =========================================================================
+
+      # Update zone colors when switching sessions
+      set-hook -g client-session-changed 'run-shell "~/.config/tmux/session-colors.sh"'
+
+      # Update zone colors when focusing a different pane
+      set-hook -g pane-focus-in 'run-shell "~/.config/tmux/session-colors.sh"'
 
       # =========================================================================
       # Session Awareness - Show all sessions, quick switching

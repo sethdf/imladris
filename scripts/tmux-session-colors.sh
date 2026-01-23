@@ -5,16 +5,36 @@
 #   2. Session-switch hook (client-session-changed)
 #   3. Pane focus hook (pane-focus-in)
 
-# Get zone from environment or argument
-ZONE="${1:-$ZONE}"
+# Skip if not in tmux (check both TMUX env and tmux server)
+if [ -z "$TMUX" ] && ! tmux display-message -p '#{session_name}' &>/dev/null; then
+  exit 0
+fi
 
-# Skip if not in tmux
-[ -z "$TMUX" ] && exit 0
-
-# Get current folder name for display
-FOLDER=$(basename "$PWD")
-# Get current running command (app)
+# Get current pane info from tmux (works even when called from hooks)
+PANE_PATH=$(tmux display-message -p '#{pane_current_path}')
+FOLDER=$(basename "$PANE_PATH")
 APP=$(tmux display-message -p '#{pane_current_command}')
+
+# Get zone from: 1) argument, 2) environment, 3) detect from path
+ZONE="${1:-$ZONE}"
+if [ -z "$ZONE" ]; then
+  # Detect zone from path patterns
+  case "$PANE_PATH" in
+    */repos/github.com/sethdf/*|*/.claude/*)
+      ZONE="home"
+      ;;
+    */work/*|*/client/*|*/projects/*)
+      ZONE="work"
+      ;;
+    */prod/*|*/production/*)
+      ZONE="prod"
+      ;;
+    *)
+      # Try to get from tmux session environment (persisted from last shell update)
+      ZONE=$(tmux show-environment ZONE 2>/dev/null | cut -d= -f2)
+      ;;
+  esac
+fi
 
 # Catppuccin Mocha colors
 GREEN="#a6e3a1"    # home zone
