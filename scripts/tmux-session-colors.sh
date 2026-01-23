@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# Tmux zone-based color theming and session naming
-# Called by shell hook when ZONE changes (via direnv)
+# Tmux zone-based color theming with per-session awareness
+# Called by:
+#   1. Shell hook when ZONE changes (via direnv/chpwd)
+#   2. Session-switch hook (client-session-changed)
+#   3. Pane focus hook (pane-focus-in)
 
 # Get zone from environment or argument
 ZONE="${1:-$ZONE}"
@@ -8,11 +11,18 @@ ZONE="${1:-$ZONE}"
 # Skip if not in tmux
 [ -z "$TMUX" ] && exit 0
 
+# Get current folder name for display
+FOLDER=$(basename "$PWD")
+# Get current running command (app)
+APP=$(tmux display-message -p '#{pane_current_command}')
+
 # Catppuccin Mocha colors
 GREEN="#a6e3a1"    # home zone
 BLUE="#89b4fa"     # work zone
 RED="#f38ba8"      # prod/admin zone
 PURPLE="#cba6f7"   # other/default zone
+BG="#313244"       # surface0
+BG_DARK="#11111b"  # crust
 
 # Determine color and icon based on zone
 case "$ZONE" in
@@ -35,25 +45,19 @@ case "$ZONE" in
     ;;
 esac
 
-# Store ZONE in tmux environment for status bar display
+# Store ZONE in session-specific environment (not global)
+# This allows each session to maintain its own zone state
 tmux set-environment ZONE "$ZONE"
 tmux set-environment ZONE_ICON "$ICON"
+tmux set-environment ZONE_COLOR "$COLOR"
 
-# Option 1: Rename session to match zone (uncomment to enable)
-# This makes session name = zone (e.g., "work", "home")
-# tmux rename-session "$ZONE" 2>/dev/null || true
+# Session display format: folder (app) | 🏠 home
+# Using session-specific options where possible, global for theme colors
+tmux set-option -g status-left "#[fg=$COLOR,bold]#[fg=$BG_DARK,bg=$COLOR] $FOLDER #[fg=$COLOR,bg=$BG](#[fg=#cdd6f4,bg=$BG]$APP#[fg=$COLOR,bg=$BG]) #[fg=$BG,bg=default]#[fg=$COLOR] $ICON $ZONE "
+tmux set-option -g status-left-length 60
 
-# Option 2: Keep session name but show zone in status (default)
-# The status bar will show: [session] 🏠 home
-
-# Update catppuccin theme accent color (session indicator)
+# Update theme accent colors (must be global for catppuccin)
 tmux set-option -g @catppuccin_session_color "$COLOR"
-
-# Custom session display with zone
-tmux set-option -g status-left "#[fg=$COLOR,bold]#[fg=#11111b,bg=$COLOR] #S #[fg=$COLOR,bg=#313244] $ICON $ZONE #[fg=#313244,bg=default] "
-tmux set-option -g status-left-length 40
-
-# Update window current number color to match zone
 tmux set-option -g @catppuccin_window_current_number_color "$COLOR"
 
 # Update pane borders
