@@ -330,9 +330,15 @@
         echo "" | gnome-keyring-daemon --unlock &>/dev/null
       fi
 
-      # Update tmux colors when ZONE changes (after direnv)
+      # Update tmux colors and window name when directory changes (after direnv)
       _update_tmux_context() {
-        [[ -n "$TMUX" ]] && ~/.config/tmux/session-colors.sh 2>/dev/null
+        if [[ -n "$TMUX" ]]; then
+          # Update zone colors
+          ~/.config/tmux/session-colors.sh 2>/dev/null
+          # Rename window to current directory name
+          local dir_name=$(basename "$PWD")
+          tmux rename-window "$dir_name" 2>/dev/null
+        fi
       }
       autoload -U add-zsh-hook
       add-zsh-hook chpwd _update_tmux_context
