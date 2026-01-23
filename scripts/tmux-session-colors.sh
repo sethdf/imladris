@@ -15,25 +15,13 @@ PANE_PATH=$(tmux display-message -p '#{pane_current_path}')
 FOLDER=$(basename "$PANE_PATH")
 APP=$(tmux display-message -p '#{pane_current_command}')
 
-# Get zone from: 1) argument, 2) environment, 3) detect from path
+# Get zone from: 1) argument, 2) shell environment (set by direnv)
+# If not set, defaults to "none" (purple) - add .envrc with "export ZONE=home|work|prod" to set
 ZONE="${1:-$ZONE}"
+
+# If still empty, check tmux session environment (persisted from last update)
 if [ -z "$ZONE" ]; then
-  # Detect zone from path patterns
-  case "$PANE_PATH" in
-    */repos/github.com/sethdf/*|*/.claude/*)
-      ZONE="home"
-      ;;
-    */work/*|*/client/*|*/projects/*)
-      ZONE="work"
-      ;;
-    */prod/*|*/production/*)
-      ZONE="prod"
-      ;;
-    *)
-      # Try to get from tmux session environment (persisted from last shell update)
-      ZONE=$(tmux show-environment ZONE 2>/dev/null | cut -d= -f2)
-      ;;
-  esac
+  ZONE=$(tmux show-environment ZONE 2>/dev/null | cut -d= -f2)
 fi
 
 # Catppuccin Mocha colors
