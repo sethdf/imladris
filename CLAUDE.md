@@ -123,6 +123,7 @@ GitHub
 │  ~/repos/github.com/sethdf/imladris/   ← working copy      │
 │  ~/repos/github.com/sethdf/curu-skills/ ← working copy     │
 │  ~/repos/github.com/anthropics/skills/  ← official skills  │
+│  ~/repos/github.com/danielmiessler/Personal_AI_Infrastructure/ │
 │                                                             │
 │  ~/bin/imladris-init    ← downloaded from GitHub           │
 │  ~/.claude/skills/      ← copied from repos                │
@@ -288,11 +289,12 @@ auth-keeper status # Check AWS/Azure token status
 
 ## Important Conventions
 
+- **Foundation:** [PAI (Personal AI Infrastructure)](https://github.com/danielmiessler/Personal_AI_Infrastructure) by Daniel Miessler
 - Instance hostname: `imladris`
 - Data volume name: `hall-of-fire`
 - Default region: `us-east-1`
 - Declarative config via Nix (not imperative apt)
-- Skills format: PAI (SkillName/SKILL.md)
+- Skills format: PAI (`SkillName/SKILL.md`)
 
 ## After Fresh Deploy
 
