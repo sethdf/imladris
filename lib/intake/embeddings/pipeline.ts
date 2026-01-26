@@ -5,7 +5,7 @@
  * Generates 384-dimensional vectors for semantic similarity search.
  */
 
-import { pipeline, type Pipeline, type FeatureExtractionPipeline } from "@huggingface/transformers";
+import { pipeline } from "@huggingface/transformers";
 
 // =============================================================================
 // Configuration
@@ -15,9 +15,13 @@ const MODEL_NAME = "Xenova/all-MiniLM-L6-v2";
 const EMBEDDING_DIMENSION = 384;
 const MAX_TOKENS = 512; // Model's max sequence length
 
+// Pipeline type - using any to avoid complex union type issues with Transformers.js
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type EmbeddingPipeline = any;
+
 // Singleton pipeline instance
-let _pipeline: FeatureExtractionPipeline | null = null;
-let _initPromise: Promise<FeatureExtractionPipeline> | null = null;
+let _pipeline: EmbeddingPipeline | null = null;
+let _initPromise: Promise<EmbeddingPipeline> | null = null;
 
 // =============================================================================
 // Pipeline Management
@@ -27,7 +31,7 @@ let _initPromise: Promise<FeatureExtractionPipeline> | null = null;
  * Initialize the embedding pipeline (lazy, singleton)
  * Downloads model on first use (~25MB)
  */
-export async function initEmbeddingPipeline(): Promise<FeatureExtractionPipeline> {
+export async function initEmbeddingPipeline(): Promise<EmbeddingPipeline> {
   if (_pipeline) return _pipeline;
 
   if (_initPromise) return _initPromise;
@@ -36,10 +40,10 @@ export async function initEmbeddingPipeline(): Promise<FeatureExtractionPipeline
     console.log(`Loading embedding model: ${MODEL_NAME}...`);
     const start = Date.now();
 
-    _pipeline = (await pipeline("feature-extraction", MODEL_NAME, {
+    _pipeline = await pipeline("feature-extraction", MODEL_NAME, {
       // Use ONNX runtime for best performance
       dtype: "fp32",
-    })) as FeatureExtractionPipeline;
+    });
 
     console.log(`Model loaded in ${Date.now() - start}ms`);
     return _pipeline;
