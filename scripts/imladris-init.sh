@@ -660,6 +660,50 @@ install_imladris_scripts() {
 }
 
 # =============================================================================
+# Update Check Timer Installation
+# Daily check for AI tooling updates (PAI, Claude Code, MCP, skills)
+# =============================================================================
+
+install_update_check_timer() {
+    # Look for imladris repo in standard ghq locations
+    local IMLADRIS_SRC=""
+    for repo_root in "$HOME/repos" "$HOME/work/repos" "$HOME/home/repos"; do
+        if [[ -d "$repo_root/github.com/sethdf/imladris" ]]; then
+            IMLADRIS_SRC="$repo_root/github.com/sethdf/imladris"
+            break
+        fi
+    done
+
+    if [[ ! -d "$IMLADRIS_SRC" ]]; then
+        return 0
+    fi
+
+    local SCRIPTS_DIR="$IMLADRIS_SRC/scripts"
+    local SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
+
+    # Check if timer and service files exist
+    if [[ ! -f "$SCRIPTS_DIR/update-check.timer" ]] || [[ ! -f "$SCRIPTS_DIR/update-check.service" ]]; then
+        return 0
+    fi
+
+    log "Installing update-check timer..."
+
+    mkdir -p "$SYSTEMD_USER_DIR"
+
+    # Copy timer and service
+    cp "$SCRIPTS_DIR/update-check.timer" "$SYSTEMD_USER_DIR/"
+    cp "$SCRIPTS_DIR/update-check.service" "$SYSTEMD_USER_DIR/"
+
+    # Reload and enable
+    if systemctl --user daemon-reload 2>/dev/null; then
+        if systemctl --user enable update-check.timer 2>/dev/null; then
+            systemctl --user start update-check.timer 2>/dev/null || true
+            log_success "Update check timer installed (runs at midnight)"
+        fi
+    fi
+}
+
+# =============================================================================
 # Anthropic Official Skills Installation
 # https://github.com/anthropics/skills
 # =============================================================================
@@ -1073,6 +1117,9 @@ setup_aws_config
 
 # Session sync (unified history)
 setup_session_sync
+
+# Update check timer (daily AI tooling update checks)
+install_update_check_timer
 
 # Shell helpers
 setup_shell_integration
