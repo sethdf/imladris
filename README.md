@@ -4,7 +4,7 @@ Terraform-managed AWS development workstation with LUKS encryption, Tailscale ac
 
 ## Overview
 
-Imladris is a cloud development environment designed for security, reliability, and AI-assisted development. It provides:
+Imladris is a cloud development environment built on [PAI (Personal AI Infrastructure)](https://github.com/danielmiessler/Personal_AI_Infrastructure) and designed for security, reliability, and AI-assisted development. It provides:
 
 - **Secure Access:** Tailscale VPN only (zero public ports)
 - **Encrypted Storage:** LUKS-encrypted persistent data volume
@@ -35,6 +35,41 @@ Imladris is a cloud development environment designed for security, reliability, 
          └─────────┘
 ```
 
+## PAI (Personal AI Infrastructure)
+
+**Imladris is built on [PAI (Personal AI Infrastructure)](https://github.com/danielmiessler/Personal_AI_Infrastructure)**, a framework for personalized AI assistants by Daniel Miessler.
+
+PAI provides the skill system, hooks, memory, and workflows that power the Claude Code integration. Imladris extends PAI with:
+
+- **Infrastructure as Code** - Terraform-managed cloud environment
+- **LUKS encryption** - MFA-protected persistent storage
+- **Cross-account AWS access** - Secure role assumption
+- **Context separation** - Work/home isolation via direnv
+- **ServiceDesk Plus integration** - Ticket management skills
+
+### PAI Components Used
+
+| Component | Purpose |
+|-----------|---------|
+| **Skills** | Domain-specific capabilities (`~/.claude/skills/`) |
+| **Hooks** | Lifecycle event handlers (`~/.claude/hooks/`) |
+| **Memory** | Session history and learnings (`~/.claude/MEMORY/`) |
+| **Response Format** | Structured output with voice synthesis |
+| **The Algorithm** | Current State → Ideal State execution |
+
+### Setup
+
+PAI is installed automatically by `imladris-init`. Custom skills are cloned from `sethdf/curu-skills`.
+
+```bash
+# PAI structure after init
+~/.claude/
+├── skills/          # PAI + custom skills
+├── hooks/           # Event handlers
+├── MEMORY/          # Session history
+└── settings.json    # Identity & config
+```
+
 ## Quick Start
 
 ### Prerequisites
@@ -43,6 +78,7 @@ Imladris is a cloud development environment designed for security, reliability, 
 - [Tailscale account](https://tailscale.com/) with auth key
 - [Bitwarden Secrets Manager](https://bitwarden.com/products/secrets-manager/) access token
 - Terraform installed
+- Familiarity with [PAI](https://github.com/danielmiessler/Personal_AI_Infrastructure) concepts
 
 ### Deploy
 
