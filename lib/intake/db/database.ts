@@ -367,8 +367,8 @@ export function upsertTriage(triage: TriageResult): void {
       intake_id, category, priority, confidence, quick_win,
       quick_win_reason, estimated_time, reasoning, suggested_action, triaged_by
     ) VALUES (
-      @intake_id, @category, @priority, @confidence, @quick_win,
-      @quick_win_reason, @estimated_time, @reasoning, @suggested_action, @triaged_by
+      $intake_id, $category, $priority, $confidence, $quick_win,
+      $quick_win_reason, $estimated_time, $reasoning, $suggested_action, $triaged_by
     )
     ON CONFLICT(intake_id) DO UPDATE SET
       category = excluded.category,
@@ -382,16 +382,16 @@ export function upsertTriage(triage: TriageResult): void {
       triaged_by = excluded.triaged_by,
       triaged_at = CURRENT_TIMESTAMP
   `).run({
-    intake_id: triage.intake_id,
-    category: triage.category || null,
-    priority: triage.priority || null,
-    confidence: triage.confidence || null,
-    quick_win: triage.quick_win ? 1 : 0,
-    quick_win_reason: triage.quick_win_reason || null,
-    estimated_time: triage.estimated_time || null,
-    reasoning: triage.reasoning || null,
-    suggested_action: triage.suggested_action || null,
-    triaged_by: triage.triaged_by || null,
+    $intake_id: triage.intake_id,
+    $category: triage.category || null,
+    $priority: triage.priority || null,
+    $confidence: triage.confidence || null,
+    $quick_win: triage.quick_win ? 1 : 0,
+    $quick_win_reason: triage.quick_win_reason || null,
+    $estimated_time: triage.estimated_time || null,
+    $reasoning: triage.reasoning || null,
+    $suggested_action: triage.suggested_action || null,
+    $triaged_by: triage.triaged_by || null,
   });
 }
 
@@ -428,8 +428,8 @@ export function upsertContact(contact: Contact): void {
       id, name, email, slack_user_id, telegram_chat_id, ms365_user_id,
       is_vip, vip_reason, relationship, organization, typical_urgency, notes
     ) VALUES (
-      @id, @name, @email, @slack_user_id, @telegram_chat_id, @ms365_user_id,
-      @is_vip, @vip_reason, @relationship, @organization, @typical_urgency, @notes
+      $id, $name, $email, $slack_user_id, $telegram_chat_id, $ms365_user_id,
+      $is_vip, $vip_reason, $relationship, $organization, $typical_urgency, $notes
     )
     ON CONFLICT(id) DO UPDATE SET
       name = excluded.name,
@@ -445,18 +445,18 @@ export function upsertContact(contact: Contact): void {
       notes = excluded.notes,
       updated_at = CURRENT_TIMESTAMP
   `).run({
-    id: contact.id,
-    name: contact.name || null,
-    email: contact.email || null,
-    slack_user_id: contact.slack_user_id || null,
-    telegram_chat_id: contact.telegram_chat_id || null,
-    ms365_user_id: contact.ms365_user_id || null,
-    is_vip: contact.is_vip ? 1 : 0,
-    vip_reason: contact.vip_reason || null,
-    relationship: contact.relationship || null,
-    organization: contact.organization || null,
-    typical_urgency: contact.typical_urgency || null,
-    notes: contact.notes || null,
+    $id: contact.id,
+    $name: contact.name || null,
+    $email: contact.email || null,
+    $slack_user_id: contact.slack_user_id || null,
+    $telegram_chat_id: contact.telegram_chat_id || null,
+    $ms365_user_id: contact.ms365_user_id || null,
+    $is_vip: contact.is_vip ? 1 : 0,
+    $vip_reason: contact.vip_reason || null,
+    $relationship: contact.relationship || null,
+    $organization: contact.organization || null,
+    $typical_urgency: contact.typical_urgency || null,
+    $notes: contact.notes || null,
   });
 }
 
@@ -493,26 +493,26 @@ export function updateSyncState(state: Partial<SyncState> & { source: string }):
 
   if (existing) {
     const updates: string[] = [];
-    const params: Record<string, unknown> = { source: state.source };
+    const params: Record<string, unknown> = { $source: state.source };
 
     for (const [key, value] of Object.entries(state)) {
       if (key !== "source" && value !== undefined) {
-        updates.push(`${key} = @${key}`);
-        params[key] = value;
+        updates.push(`${key} = $${key}`);
+        params[`$${key}`] = value;
       }
     }
 
     if (updates.length) {
-      db.prepare(`UPDATE sync_state SET ${updates.join(", ")} WHERE source = @source`).run(params);
+      db.prepare(`UPDATE sync_state SET ${updates.join(", ")} WHERE source = $source`).run(params);
     }
   } else {
     db.prepare(`
       INSERT INTO sync_state (source, last_sync, status)
-      VALUES (@source, @last_sync, @status)
+      VALUES ($source, $last_sync, $status)
     `).run({
-      source: state.source,
-      last_sync: state.last_sync || new Date().toISOString(),
-      status: state.status || "pending",
+      $source: state.source,
+      $last_sync: state.last_sync || new Date().toISOString(),
+      $status: state.status || "pending",
     });
   }
 }
