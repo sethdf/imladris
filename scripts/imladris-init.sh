@@ -462,6 +462,23 @@ EOF
     mkdir -p "$DATA_MOUNT/.claude"
     ln -sfn "$DATA_MOUNT/.claude" "$HOME/.claude"
 
+    # AWS config - symlink to data volume
+    mkdir -p "$DATA_MOUNT/.aws"
+    ln -sfn "$DATA_MOUNT/.aws" "$HOME/.aws"
+
+    # Stateful config directories - symlink to data volume
+    # These contain credentials, tokens, and state that must survive root volume loss
+    local CONFIG_DIRS="bws claude fabric gcloud gitwatch himalaya simplex-bridge slack-listener rclone"
+    for dir in $CONFIG_DIRS; do
+        mkdir -p "$DATA_MOUNT/.config/$dir"
+        if [[ -d "$HOME/.config/$dir" ]] && [[ ! -L "$HOME/.config/$dir" ]]; then
+            # Merge existing content then replace with symlink
+            rsync -a "$HOME/.config/$dir/" "$DATA_MOUNT/.config/$dir/" 2>/dev/null || true
+            rm -rf "$HOME/.config/$dir"
+        fi
+        ln -sfn "$DATA_MOUNT/.config/$dir" "$HOME/.config/$dir"
+    done
+
     # Allow direnv for both directories
     mkdir -p "$HOME/.config/direnv"
     if [[ ! -f "$HOME/.config/direnv/direnv.toml" ]]; then
@@ -476,9 +493,11 @@ EOF
     direnv allow "$DATA_MOUNT/home" 2>/dev/null || true
 
     log_success "Work/home directories created"
-    log "  ~/work   → $DATA_MOUNT/work   (work repos, tickets)"
-    log "  ~/home   → $DATA_MOUNT/home   (personal repos, projects)"
-    log "  ~/.claude → $DATA_MOUNT/.claude (skills, hooks, settings)"
+    log "  ~/work    → $DATA_MOUNT/work    (work repos, tickets)"
+    log "  ~/home    → $DATA_MOUNT/home    (personal repos, projects)"
+    log "  ~/.claude → $DATA_MOUNT/.claude (PAI skills, hooks, settings)"
+    log "  ~/.aws    → $DATA_MOUNT/.aws    (AWS profiles, credentials)"
+    log "  ~/.config/{bws,gcloud,fabric,...} → $DATA_MOUNT/.config/ (stateful configs)"
 }
 
 # =============================================================================
