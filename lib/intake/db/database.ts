@@ -180,19 +180,21 @@ export function hashContent(content: string): string {
 // Intake Operations
 // =============================================================================
 
-export function upsertIntake(item: Partial<IntakeItem>): string {
+export function upsertIntake(item: Partial<IntakeItem> & { source: string; source_id: string; type: string }): string {
   const db = getDb();
   const id = item.id || generateId();
   const now = new Date().toISOString();
+  // Default zone from environment or 'work'
+  const zone = item.zone || (process.env.ZONE as Zone) || "work";
 
   const stmt = db.prepare(`
     INSERT INTO intake (
-      id, source, source_id, type, subject, body, context, content_hash,
+      id, zone, source, source_id, type, subject, body, context, content_hash,
       from_name, from_address, from_user_id, participants,
       created_at, updated_at, ingested_at, status, read_status,
       message_count, enrichment, embedding, metadata
     ) VALUES (
-      @id, @source, @source_id, @type, @subject, @body, @context, @content_hash,
+      @id, @zone, @source, @source_id, @type, @subject, @body, @context, @content_hash,
       @from_name, @from_address, @from_user_id, @participants,
       @created_at, @updated_at, @ingested_at, @status, @read_status,
       @message_count, @enrichment, @embedding, @metadata
@@ -211,6 +213,7 @@ export function upsertIntake(item: Partial<IntakeItem>): string {
 
   stmt.run({
     id,
+    zone,
     source: item.source,
     source_id: item.source_id,
     type: item.type,
