@@ -5,9 +5,10 @@ Terraform-managed AWS development workstation with Tailscale VPN access.
 ## Project Overview
 
 **Purpose:** Cloud dev environment with persistent LUKS-encrypted storage
-**Instance:** EC2 t4g.large (ARM64, 2 vCPU, 8GB RAM)
+**Instance:** EC2 m7g.xlarge (ARM64/Graviton3, 4 vCPU, 16GB RAM)
 **Access:** Tailscale mesh VPN (zero public ports)
 **Storage:** LUKS-encrypted EBS volume (hall-of-fire) with hourly snapshots
+**Volumes:** Root 50GB + Data 100GB, gp3 (6000 IOPS, 500 MiB/s)
 **AI:** Claude Code via AWS Bedrock (auto-refreshing credentials)
 
 ## Claude Code / Bedrock Setup
@@ -181,15 +182,56 @@ curu-watch   # Auto-sync daemon (run in tmux)
 
 ## Scripts
 
+### Core Scripts
+
 | Script | Purpose |
 |--------|---------|
 | `scripts/user-data-nix.sh` | Instance bootstrap (Nix + home-manager) |
 | `scripts/imladris-init.sh` | LUKS unlock, skills install, shell setup |
 | `scripts/imladris-unlock.sh` | LUKS unlock only (for reboots) |
-| `scripts/session-sync.sh` | Git-based session history sync |
-| `scripts/auth-keeper.sh` | Lazy auth refresh for AWS/Azure CLIs |
+| `scripts/imladris-check.sh` | Health check (LUKS, network, BWS, directories) |
+| `scripts/imladris-restore.sh` | Restore from snapshots/backups |
+
+### Authentication & Authorization
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/auth-keeper.sh` | Lazy auth refresh for AWS/Azure/Google CLIs |
+| `scripts/asudo.sh` | Unified cloud access control with audit logging |
 | `scripts/bws-init.sh` | Bitwarden Secrets Manager helpers |
+| `scripts/bws-create-secrets.sh` | Create initial BWS secrets |
 | `scripts/aws-accounts-config.sh` | Generate ~/.aws/config from BWS cross-accounts |
+| `scripts/setup-cross-account-roles.sh` | Setup cross-account IAM roles |
+| `scripts/claude-backend.sh` | Switch Claude Code backends (Bedrock/Team/Personal) |
+
+### Backup & Sync
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/backup-stateful.sh` | Backup ~/.claude, repos, config to /data |
+| `scripts/backup-to-s3.sh` | Encrypted backup to S3 |
+| `scripts/backup-luks-to-s3.sh` | LUKS volume backup to S3 |
+| `scripts/backup-to-gdrive.sh` | Backup to Google Drive |
+| `scripts/backup-status.sh` | Show backup status |
+| `scripts/backup-overview.sh` | Overview of all backups |
+| `scripts/session-sync.sh` | Git-based session history sync |
+| `scripts/session-sync-setup.sh` | Setup session sync infrastructure |
+
+### Messaging & Notifications
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/signal-interface.sh` | Signal messaging interface |
+| `scripts/signal-inbox.sh` | Signal inbox processor |
+| `scripts/telegram-inbox.sh` | Telegram inbox processor |
+
+### Utilities
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/pai-today.sh` | PAI daily summary |
+| `scripts/pai-log.sh` | PAI event logging |
+| `scripts/tmux-session-colors.sh` | Context-aware tmux colors (work/home/prod) |
 
 ## Common Commands
 

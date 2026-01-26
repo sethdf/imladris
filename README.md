@@ -90,9 +90,9 @@ imladris-init    # Unlock LUKS only (BWS token cached)
 | Resource | Configuration |
 |----------|---------------|
 | **VPC** | `10.0.0.0/16` with public subnet |
-| **EC2** | `m7g.xlarge` ARM64 (4 vCPU, 16GB RAM) |
-| **Root Volume** | 50GB gp3 (3000 IOPS, 250 MiB/s) |
-| **Data Volume** | 100GB gp3 LUKS-encrypted ("hall-of-fire") |
+| **EC2** | `m7g.xlarge` ARM64/Graviton3 (4 vCPU, 16GB RAM) |
+| **Root Volume** | 50GB gp3 (6000 IOPS, 500 MiB/s) |
+| **Data Volume** | 100GB gp3 LUKS-encrypted ("hall-of-fire", 6000 IOPS, 500 MiB/s) |
 | **Security Group** | Zero ingress (Tailscale only) |
 | **DLM** | Hourly snapshots, 24-hour retention |
 
@@ -113,6 +113,8 @@ The instance profile (`imladris-instance-role`) has minimal permissions:
 | `instance_type` | `m7g.xlarge` | Instance size |
 | `volume_size` | `50` | Root volume GB |
 | `data_volume_size` | `100` | Data volume GB |
+| `volume_iops` | `6000` | EBS gp3 IOPS |
+| `volume_throughput` | `500` | EBS gp3 throughput MiB/s |
 | `hostname` | `imladris` | Instance hostname |
 | `github_username` | (required) | For script downloads |
 | `tailscale_auth_key` | (required) | Tailscale auth |
