@@ -2,11 +2,11 @@
  * Intake Database Operations
  *
  * SQLite database layer for the universal intake system.
- * Uses better-sqlite3 for synchronous operations.
+ * Uses Bun's built-in SQLite for performance.
  * Vector search via sqlite-vec extension.
  */
 
-import Database from "better-sqlite3";
+import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, readFileSync } from "fs";
 import { dirname, join } from "path";
 import { createHash } from "crypto";
@@ -121,9 +121,9 @@ export interface QueryOptions {
 // Database Connection
 // =============================================================================
 
-let _db: Database.Database | null = null;
+let _db: Database | null = null;
 
-export function getDb(): Database.Database {
+export function getDb(): Database {
   if (_db) return _db;
 
   const dbPath = getDbPath();
@@ -133,20 +133,12 @@ export function getDb(): Database.Database {
     mkdirSync(dbDir, { recursive: true });
   }
 
-  _db = new Database(dbPath);
+  _db = new Database(dbPath, { create: true });
 
   // Enable WAL mode for better concurrency
-  _db.pragma("journal_mode = WAL");
-  _db.pragma("synchronous = NORMAL");
-  _db.pragma("foreign_keys = ON");
-
-  // Try to load sqlite-vec extension
-  try {
-    _db.loadExtension("vec0");
-  } catch {
-    // Extension not available, vector search will be disabled
-    console.warn("sqlite-vec extension not loaded, vector search disabled");
-  }
+  _db.exec("PRAGMA journal_mode = WAL");
+  _db.exec("PRAGMA synchronous = NORMAL");
+  _db.exec("PRAGMA foreign_keys = ON");
 
   return _db;
 }
