@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# zone-context - Generate dynamic zone prompt with recent session topics
+# Usage: zone-context [directory]
+# If no directory specified, uses current directory
+
+DIR="${1:-$(pwd)}"
+CLAUDE_PROJECTS="$HOME/.claude/projects"
+
+# Convert directory path to Claude's format: /data/work → -data-work
+path_to_claude_dir() {
+    echo "$1" | tr '/' '-'
+}
+
+# Find nearest .zone-prompt by walking up directory tree
+find_zone_prompt() {
+    local dir="$1"
+    while [[ "$dir" != "/" && "$dir" != "" ]]; do
+        if [[ -f "$dir/.zone-prompt" ]]; then
+            echo "$dir/.zone-prompt"
+            return 0
+        fi
+        dir=$(dirname "$dir")
+    done
+    return 1
+}
+
+# Format ISO timestamp as relative time
+format_relative_time() {
+    local ts="$1"
+    local now ts_epoch diff
+
+    now=$(date +%s)
+    ts_epoch=$(date -d "$ts" +%s 2>/dev/null) || { echo "recently"; return; }
+    diff=$((now - ts_epoch))
+
+    if [[ $diff -lt 3600 ]]; then
+        echo "$((diff / 60))m ago"
+    elif [[ $diff -lt 86400 ]]; then
+        echo "$((diff / 3600))h ago"
+    elif [[ $diff -lt 172800 ]]; then
+        echo "yesterday"
+    else
+        echo "$((diff / 86400))d ago"
+    fi
+}
+
+# Main output
+main() {
+    # Static zone prompt (inherit from parent directories)
+    local zone_prompt
+    zone_prompt=$(find_zone_prompt "$DIR")
+    if [[ -n "$zone_prompt" ]]; then
+        cat "$zone_prompt"
+        echo ""
+        echo ""
+    fi
+
+    # Find Claude sessions for this directory
+    local claude_dir project_path
+    claude_dir=$(path_to_claude_dir "$DIR")
+    project_path="$CLAUDE_PROJECTS/$claude_dir"
+
+    [[ -d "$project_path" ]] || return 0
+
+    # Get 5 most recent session files by modification time
+    local count=0
+    echo "Recent topics in this workspace:"
+
+    while IFS= read -r session && [[ $count -lt 5 ]]; do
+        [[ -f "$session" ]] || continue
+
+        # Get first user message from session
+        local user_line ts msg relative
+        user_line=$(grep -m1 '"type":"user"' "$session" 2>/dev/null) || continue
+        [[ -z "$user_line" ]] && continue
+
+        ts=$(echo "$user_line" | jq -r '.timestamp // empty' 2>/dev/null)
+        msg=$(echo "$user_line" | jq -r '(.message.content // "") | split("\n")[0] | .[0:55]' 2>/dev/null)
+
+        [[ -z "$ts" || -z "$msg" ]] && continue
+
+        relative=$(format_relative_time "$ts")
+        echo "- $msg ($relative)"
+        ((count++))
+    done < <(ls -t "$project_path"/*.jsonl 2>/dev/null)
+
+    [[ $count -eq 0 ]] && echo "- No previous sessions found"
+    return 0
+}
+
+main
