@@ -248,23 +248,23 @@ export function queryIntake(options: QueryOptions = {}): IntakeItem[] {
 
   // Zone filtering - defaults to environment variable if not specified
   if (options.zone) {
-    conditions.push("zone = @zone");
-    params.zone = options.zone;
+    conditions.push("zone = $zone");
+    params.$zone = options.zone;
   }
 
   if (options.source?.length) {
-    conditions.push(`source IN (${options.source.map((_, i) => `@source${i}`).join(", ")})`);
-    options.source.forEach((s, i) => { params[`source${i}`] = s; });
+    conditions.push(`source IN (${options.source.map((_, i) => `$source${i}`).join(", ")})`);
+    options.source.forEach((s, i) => { params[`$source${i}`] = s; });
   }
 
   if (options.status?.length) {
-    conditions.push(`status IN (${options.status.map((_, i) => `@status${i}`).join(", ")})`);
-    options.status.forEach((s, i) => { params[`status${i}`] = s; });
+    conditions.push(`status IN (${options.status.map((_, i) => `$status${i}`).join(", ")})`);
+    options.status.forEach((s, i) => { params[`$status${i}`] = s; });
   }
 
   if (options.since) {
-    conditions.push("updated_at >= @since");
-    params.since = options.since.toISOString();
+    conditions.push("updated_at >= $since");
+    params.$since = options.since.toISOString();
   }
 
   if (options.untriaged) {
@@ -272,13 +272,13 @@ export function queryIntake(options: QueryOptions = {}): IntakeItem[] {
   }
 
   if (options.priority?.length) {
-    conditions.push(`id IN (SELECT intake_id FROM triage WHERE priority IN (${options.priority.map((_, i) => `@priority${i}`).join(", ")}))`);
-    options.priority.forEach((p, i) => { params[`priority${i}`] = p; });
+    conditions.push(`id IN (SELECT intake_id FROM triage WHERE priority IN (${options.priority.map((_, i) => `$priority${i}`).join(", ")}))`);
+    options.priority.forEach((p, i) => { params[`$priority${i}`] = p; });
   }
 
   if (options.category?.length) {
-    conditions.push(`id IN (SELECT intake_id FROM triage WHERE category IN (${options.category.map((_, i) => `@category${i}`).join(", ")}))`);
-    options.category.forEach((c, i) => { params[`category${i}`] = c; });
+    conditions.push(`id IN (SELECT intake_id FROM triage WHERE category IN (${options.category.map((_, i) => `$category${i}`).join(", ")}))`);
+    options.category.forEach((c, i) => { params[`$category${i}`] = c; });
   }
 
   if (options.quick_wins) {
@@ -323,18 +323,18 @@ export function addMessage(message: Message): void {
       id, intake_id, source_message_id, timestamp,
       sender_name, sender_address, content, metadata
     ) VALUES (
-      @id, @intake_id, @source_message_id, @timestamp,
-      @sender_name, @sender_address, @content, @metadata
+      $id, $intake_id, $source_message_id, $timestamp,
+      $sender_name, $sender_address, $content, $metadata
     )
   `).run({
-    id: message.id,
-    intake_id: message.intake_id,
-    source_message_id: message.source_message_id || null,
-    timestamp: message.timestamp,
-    sender_name: message.sender_name || null,
-    sender_address: message.sender_address || null,
-    content: message.content,
-    metadata: message.metadata || null,
+    $id: message.id,
+    $intake_id: message.intake_id,
+    $source_message_id: message.source_message_id || null,
+    $timestamp: message.timestamp,
+    $sender_name: message.sender_name || null,
+    $sender_address: message.sender_address || null,
+    $content: message.content,
+    $metadata: message.metadata || null,
   });
 }
 
