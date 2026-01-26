@@ -182,56 +182,59 @@ curu-watch   # Auto-sync daemon (run in tmux)
 
 ## Scripts
 
+All scripts are in `scripts/` and symlinked to `~/bin` for easy access.
+
 ### Core Scripts
 
-| Script | Purpose |
-|--------|---------|
-| `scripts/user-data-nix.sh` | Instance bootstrap (Nix + home-manager) |
-| `scripts/imladris-init.sh` | LUKS unlock, skills install, shell setup |
-| `scripts/imladris-unlock.sh` | LUKS unlock only (for reboots) |
-| `scripts/imladris-check.sh` | Health check (LUKS, network, BWS, directories) |
-| `scripts/imladris-restore.sh` | Restore from snapshots/backups |
+| Script | Description |
+|--------|-------------|
+| `imladris-init.sh` | Full initialization: LUKS setup with MFA (BWS keyfile + passphrase), BWS secrets management, directory setup (work/home separation), skills installation (curu-skills, anthropic/skills), shell integration, repo watch (gitwatch for auto-commits) |
+| `imladris-unlock.sh` | Quick unlock for reboots: LUKS MFA only, persists BWS token to encrypted volume, creates shell export file for new sessions |
+| `imladris-check.sh` | Health check: BWS connectivity, required secrets (luks-keyfile, tailscale-*), LUKS volume status, Tailscale connection |
+| `imladris-restore.sh` | Status display showing LUKS, network, directories; can auto-unlock LUKS |
+| `user-data-nix.sh` | EC2 user-data bootstrap: system setup, Docker, Tailscale, Nix installation, home-manager, Claude Code & MCP servers, bws CLI |
 
 ### Authentication & Authorization
 
-| Script | Purpose |
-|--------|---------|
-| `scripts/auth-keeper.sh` | Lazy auth refresh for AWS/Azure/Google CLIs |
-| `scripts/asudo.sh` | Unified cloud access control with audit logging |
-| `scripts/bws-init.sh` | Bitwarden Secrets Manager helpers |
-| `scripts/bws-create-secrets.sh` | Create initial BWS secrets |
-| `scripts/aws-accounts-config.sh` | Generate ~/.aws/config from BWS cross-accounts |
-| `scripts/setup-cross-account-roles.sh` | Setup cross-account IAM roles |
-| `scripts/claude-backend.sh` | Switch Claude Code backends (Bedrock/Team/Personal) |
+| Script | Description |
+|--------|-------------|
+| `auth-keeper.sh` | Unified lazy auth (~1800 lines): AWS SSO (auto-refresh before expiry), Azure CLI, Google OAuth, MS365 PowerShell, Slack CLI, Telegram, Signal, ServiceDesk Plus. Use `auth-keeper status` for overview |
+| `asudo.sh` | Cloud access control with audit logging. Like sudo for cloud: `asudo aws dev`, `asudo aws prod --admin`, `asudo azure sub`, `asudo gcp project`. Supports AWS (ReadOnly/Admin roles), Azure subscriptions, GCP projects, M365 access levels. Admin access logged with justification |
+| `bws-init.sh` | Bitwarden Secrets Manager helpers: `bws_get`, `bws_exists`, `bws_set`, `bws_list`. Auto-initializes BWS token from file or LUKS. Source this script in shell |
+| `bws-create-secrets.sh` | Create required BWS secrets with placeholders: tailscale-*, luks-keyfile, sdp-*, aws-cross-accounts, sessions-git-repo |
+| `aws-accounts-config.sh` | Generate ~/.aws/config from BWS secret aws-cross-accounts. Commands: generate, list, test, add. Profile names: {name}-{role-suffix} |
+| `setup-cross-account-roles.sh` | Create ImladrisReadOnly/ImladrisAdmin roles in target accounts. Configures trust policy for imladris instance role. Run locally with SSO access |
+| `claude-backend.sh` | Switch Claude Code backends: `bedrock` (AWS billing via instance role), `team` (Team Premium OAuth), `personal` (Personal Max OAuth). Manages auth.json backup/restore via BWS |
 
 ### Backup & Sync
 
-| Script | Purpose |
-|--------|---------|
-| `scripts/backup-stateful.sh` | Backup ~/.claude, repos, config to /data |
-| `scripts/backup-to-s3.sh` | Encrypted backup to S3 |
-| `scripts/backup-luks-to-s3.sh` | LUKS volume backup to S3 |
-| `scripts/backup-to-gdrive.sh` | Backup to Google Drive |
-| `scripts/backup-status.sh` | Show backup status |
-| `scripts/backup-overview.sh` | Overview of all backups |
-| `scripts/session-sync.sh` | Git-based session history sync |
-| `scripts/session-sync-setup.sh` | Setup session sync infrastructure |
+| Script | Description |
+|--------|-------------|
+| `backup-stateful.sh` | Backup AI/stateful content to /data/backups: ~/.claude, repos, bin, config, ssh, aws, secrets. Keeps 7 days of daily backups with rsync |
+| `backup-to-s3.sh` | Sync /data/backups to S3 with Intelligent Tiering. Requires BACKUP_S3_BUCKET env var |
+| `backup-luks-to-s3.sh` | Full LUKS volume backup to S3 Glacier. Streams directly if insufficient temp space. Preserves encryption |
+| `backup-to-gdrive.sh` | Sync /data to Google Drive via rclone. Excludes lost+found and backups. Requires rclone gdrive remote configured |
+| `backup-status.sh` | Show backup status: local backups, latest backup size, scheduled timer, DLM snapshot status |
+| `backup-overview.sh` | Display backup strategy documentation: EBS snapshots (hourly), file-level sync (daily), S3 offsite (optional) |
+| `session-sync.sh` | Real-time git sync daemon using inotifywait. Watches directory, debounces changes (30s), auto-commits/pushes. Run as systemd service |
+| `session-sync-setup.sh` | Initialize session sync: creates git repo, configures remote, installs systemd service template, enables auto-sync |
 
 ### Messaging & Notifications
 
-| Script | Purpose |
-|--------|---------|
-| `scripts/signal-interface.sh` | Signal messaging interface |
-| `scripts/signal-inbox.sh` | Signal inbox processor |
-| `scripts/telegram-inbox.sh` | Telegram inbox processor |
+| Script | Description |
+|--------|-------------|
+| `signal-interface.sh` | Signal as command interface for PAI. Link phone, send/receive messages, process commands (status, ping, uptime, ip). Uses signal-cli |
+| `signal-inbox.sh` | Capture Signal messages to ~/inbox with markdown frontmatter. Commands (/ping, /status, /help) get responses; text messages saved to inbox |
+| `telegram-inbox.sh` | Capture Telegram messages to ~/inbox via bot API. Similar command interface (/ping, /status, /inbox). Runs as daemon or foreground |
 
 ### Utilities
 
-| Script | Purpose |
-|--------|---------|
-| `scripts/pai-today.sh` | PAI daily summary |
-| `scripts/pai-log.sh` | PAI event logging |
-| `scripts/tmux-session-colors.sh` | Context-aware tmux colors (work/home/prod) |
+| Script | Description |
+|--------|-------------|
+| `pai-today.sh` | Show today's Claude Code activity from ~/.claude/history.jsonl with timestamps |
+| `pai-log.sh` | View Claude sessions: today's files, current/latest session, list all sessions, prompts |
+| `tmux-session-colors.sh` | Tmux zone-based color theming. Colors pane borders/status by context: green (home), blue (work), red (prod/admin), purple (other). Called by direnv/session hooks |
+| `user-data-legacy.sh` | Legacy non-Nix bootstrap: apt packages, oh-my-zsh, tmux plugins, spot interruption handler. Deprecated in favor of Nix |
 
 ## Common Commands
 
