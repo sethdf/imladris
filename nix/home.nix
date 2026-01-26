@@ -123,6 +123,7 @@
 
       # Claude Code with auto-approve
       claude = "claude --dangerously-skip-permissions";
+      c = "claude --dangerously-skip-permissions \"$(zone-context)\"";
 
       # Tmux
       ta = "tmux attach -t main || tmux new -s main";
