@@ -145,7 +145,17 @@ The instance profile (`imladris-instance-role`) has minimal permissions:
 | Script | Purpose |
 |--------|---------|
 | `backup-stateful` | Backup ~/.claude, repos, config to /data |
+| `backup-to-s3` | Encrypted backup to S3 |
+| `backup-to-gdrive` | Backup to Google Drive |
+| `backup-status` | Show backup status |
 | `session-sync` | Real-time git sync for session files |
+
+### Cross-Account Management
+
+| Script | Purpose |
+|--------|---------|
+| `aws-accounts-config` | Generate ~/.aws/config from BWS |
+| `setup-cross-account-roles` | Setup IAM roles in target accounts |
 
 ## Context Separation
 
