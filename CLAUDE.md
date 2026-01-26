@@ -1,9 +1,10 @@
 # Imladris DevBox - AI Assistant Guide
 
-Terraform-managed AWS development workstation with Tailscale VPN access.
+Terraform-managed AWS development workstation with Tailscale VPN access, built on [PAI (Personal AI Infrastructure)](https://github.com/danielmiessler/Personal_AI_Infrastructure).
 
 ## Project Overview
 
+**Foundation:** [PAI](https://github.com/danielmiessler/Personal_AI_Infrastructure) - Skills, hooks, memory, response format
 **Purpose:** Cloud dev environment with persistent LUKS-encrypted storage
 **Instance:** EC2 m7g.xlarge (ARM64/Graviton3, 4 vCPU, 16GB RAM)
 **Access:** Tailscale mesh VPN (zero public ports)
