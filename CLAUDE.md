@@ -27,6 +27,48 @@ claude
 
 The IAM instance profile has `bedrock:InvokeModel` permissions for all Anthropic models.
 
+## 5-Zone Workflow System
+
+Simplified workspace organization to prevent session sprawl and reduce startup friction.
+
+### The 5 Zones
+
+| Zone | Command | Directory | Purpose |
+|------|---------|-----------|---------|
+| **home** | `/home` | `~/home` | Personal projects, PAI, imladris, finances |
+| **work** | `/work` | `~/work` | Primary work tasks and projects |
+| **research** | `/research` | `~/work/research` | Investigation, learning, exploration |
+| **tickets** | `/tickets` | `~/work/tickets` | ServiceDesk Plus, support requests |
+| **adhoc** | `/adhoc` | `~/work/adhoc` | Quick one-off questions, temp work |
+
+### Rules
+
+1. **One tmux session** - Use `main` session only
+2. **Max 5 windows** - One per zone (duplicates prevented automatically)
+3. **Zone commands switch, don't create** - `/work` switches to existing work window if open
+
+### Daily Startup
+
+```
+SSH → tmux attach → /startup or /dashboard → Pick ONE zone → /work or /home etc
+```
+
+### Auth is Automatic
+
+Don't hunt for credentials. Auth-keeper handles everything:
+- **Check status:** `auth-keeper status`
+- **AWS/Azure/MS365:** Commands auto-authenticate via lazy loading
+- **Secrets:** BWS (Bitwarden Secrets) - use `bws_get "secret-name"`
+
+### Tmux Quick Reference
+
+| Action | Keys |
+|--------|------|
+| Switch window | `Ctrl-b n` (next) or `Ctrl-b 1-5` |
+| List windows | `Ctrl-b w` |
+| Detach | `Ctrl-b d` |
+| Reattach | `tmux attach` |
+
 ## Cross-Account AWS Access
 
 The instance role has `sts:AssumeRole` permission, enabling access to any AWS account that trusts it.
