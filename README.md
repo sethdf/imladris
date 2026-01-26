@@ -276,31 +276,55 @@ bws_list                  # List all secrets
 The environment is declaratively managed in `nix/home.nix`:
 
 **Development:**
-- git, gh, lazygit, delta
+- git, git-crypt, gh, lazygit, delta
 - Node.js 20, Python 3.11, Go, Bun
 - gcc, make
 
 **CLI Tools:**
 - ripgrep, fd, bat, eza, fzf
-- jq, yq, htop, ncdu
+- jq, yq, htop, ncdu, tree
+- yt-dlp (media/transcripts)
 
 **Cloud CLIs:**
 - awscli2, azure-cli, google-cloud-sdk
+- powershell (Microsoft Graph SDK for M365)
 
 **Shell:**
 - zsh with starship prompt
 - tmux with plugins (resurrect, continuum, catppuccin)
-- direnv, zoxide, mise
+- direnv, zoxide, mise, ghq
+
+**Messaging:**
+- signal-cli (Signal notifications)
+
+**Services:**
+- gnome-keyring (OAuth2 token caching)
+- inotify-tools, mosh
 
 ### Shell Aliases
 
 ```bash
-ls → eza              # Modern ls
+# Modern replacements
+ls → eza              # Modern ls (also ll, la, lt)
 cat → bat             # Syntax highlighting
+
+# TUI tools
 lg → lazygit          # Git TUI
 ld → lazydocker       # Docker TUI
-init → imladris-init  # Quick init
+
+# DevBox
+init → imladris-init  # Initialize/unlock
 check → imladris-check
+restore → imladris-restore
+
+# Cloud access
+ms365 → auth-keeper ms365    # MS365 PowerShell
+gmail → auth-keeper google   # Gmail access
+gcal → auth-keeper google calendar
+
+# Navigation
+repos → ghq-cd        # FZF repo switcher
+ta → tmux attach      # Attach to main session
 ```
 
 ### Applying Changes
