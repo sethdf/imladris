@@ -38,7 +38,7 @@ Simplified workspace organization to prevent session sprawl and reduce startup f
 | **home** | `/home` | `~/home` | Personal projects, PAI, imladris, finances |
 | **work** | `/work` | `~/work` | Primary work tasks and projects |
 | **research** | `/research` | `~/work/research` | Investigation, learning, exploration |
-| **tickets** | `/tickets` | `~/work/tickets` | ServiceDesk Plus, support requests |
+| **tasks** | `/tasks` | `~/work/tasks` | Tickets, requests, changes, actionable items |
 | **adhoc** | `/adhoc` | `~/work/adhoc` | Quick one-off questions, temp work |
 
 ### Rules
