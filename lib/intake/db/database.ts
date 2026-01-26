@@ -295,7 +295,7 @@ export function queryIntake(options: QueryOptions = {}): IntakeItem[] {
     sql += ` OFFSET ${options.offset}`;
   }
 
-  return db.prepare(sql).all(params) as IntakeItem[];
+  return db.prepare(sql).all(params as unknown as Record<string, string | number | null>) as IntakeItem[];
 }
 
 export function updateIntakeStatus(id: string, status: string): boolean {
@@ -414,7 +414,7 @@ export function recordCorrection(
       intake_id, original_category, original_priority,
       corrected_category, corrected_priority, correction_reason
     ) VALUES (?, ?, ?, ?, ?, ?)
-  `).run(intakeId, originalCategory, originalPriority, correctedCategory, correctedPriority, reason);
+  `).run(intakeId, originalCategory ?? null, originalPriority ?? null, correctedCategory, correctedPriority, reason ?? null);
 }
 
 // =============================================================================
@@ -503,7 +503,7 @@ export function updateSyncState(state: Partial<SyncState> & { source: string }):
     }
 
     if (updates.length) {
-      db.prepare(`UPDATE sync_state SET ${updates.join(", ")} WHERE source = $source`).run(params);
+      db.prepare(`UPDATE sync_state SET ${updates.join(", ")} WHERE source = $source`).run(params as unknown as Record<string, string | number | null>);
     }
   } else {
     db.prepare(`
