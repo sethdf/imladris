@@ -122,40 +122,79 @@ The instance profile (`imladris-instance-role`) has minimal permissions:
 
 ## Scripts
 
+All scripts are in `scripts/` and symlinked to `~/bin` for easy access.
+
 ### Core Scripts
 
 | Script | Purpose |
 |--------|---------|
-| `imladris-init` | Full initialization: LUKS setup, BWS, skills, shell |
-| `imladris-unlock` | Quick unlock for reboots (LUKS only) |
-| `imladris-check` | Health check (LUKS, network, BWS, directories) |
-| `imladris-restore` | Restore from snapshots/backups |
+| `imladris-init` | Full initialization: LUKS setup with MFA (BWS keyfile + passphrase), BWS secrets management, directory setup (work/home separation), skills installation, shell integration, repo watch (gitwatch) |
+| `imladris-unlock` | Quick unlock for reboots: LUKS MFA only, persists BWS token to encrypted volume, creates shell export file for new sessions |
+| `imladris-check` | Health check: BWS connectivity, required secrets (luks-keyfile, tailscale-*), LUKS volume status, Tailscale connection |
+| `imladris-restore` | Status display showing LUKS, network, directories; can auto-unlock LUKS |
 
 ### Authentication & Cloud Access
 
 | Script | Purpose |
 |--------|---------|
-| `auth-keeper` | Lazy token refresh for AWS/Azure/GCP |
-| `asudo` | Unified cloud access control with audit logging |
-| `bws-init` | Bitwarden Secrets Manager CLI helpers |
-| `claude-backend` | Switch Claude Code payment backends |
+| `auth-keeper` | Unified lazy auth for multiple services: AWS SSO (auto-refresh before expiry), Azure CLI, Google OAuth, MS365 PowerShell, Slack CLI, Telegram, Signal, ServiceDesk Plus. Provides `auth-keeper status` overview and service-specific commands |
+| `asudo` | Cloud access control with audit logging. Like sudo but for cloud: `asudo aws dev`, `asudo aws prod --admin`, `asudo azure sub`, `asudo gcp project`. Supports AWS (ReadOnly/Admin roles), Azure subscriptions, GCP projects, M365 access levels. All admin access logged with justification |
+| `bws-init` | Bitwarden Secrets Manager helpers: `bws_get`, `bws_exists`, `bws_set`, `bws_list`. Auto-initializes BWS token from file or LUKS. Source this script in shell |
+| `claude-backend` | Switch Claude Code backends: `bedrock` (AWS billing via instance role), `team` (Team Premium OAuth), `personal` (Personal Max OAuth). Manages auth.json backup/restore via BWS. Warns if Claude running |
 
-### Backup & Sync
+### Backup Scripts
 
 | Script | Purpose |
 |--------|---------|
-| `backup-stateful` | Backup ~/.claude, repos, config to /data |
-| `backup-to-s3` | Encrypted backup to S3 |
-| `backup-to-gdrive` | Backup to Google Drive |
-| `backup-status` | Show backup status |
-| `session-sync` | Real-time git sync for session files |
+| `backup-stateful` | Backup AI/stateful content to /data/backups: ~/.claude, repos, bin, config, ssh, aws, secrets. Keeps 7 days of daily backups with rsync |
+| `backup-to-s3` | Sync /data/backups to S3 with Intelligent Tiering. Requires BACKUP_S3_BUCKET env var |
+| `backup-luks-to-s3` | Full LUKS volume backup to S3 Glacier. Streams directly if insufficient temp space. Preserves encryption |
+| `backup-to-gdrive` | Sync /data to Google Drive via rclone. Excludes lost+found and backups. Requires rclone gdrive remote configured |
+| `backup-status` | Show backup status: local backups, latest backup size, scheduled timer, DLM snapshot status |
+| `backup-overview` | Display backup strategy documentation: EBS snapshots (hourly), file-level sync (daily), S3 offsite (optional) |
+
+### Session & Sync Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `session-sync` | Real-time git sync daemon using inotifywait. Watches directory, debounces changes (30s), auto-commits/pushes. Run as systemd service |
+| `session-sync-setup` | Initialize session sync: creates git repo, configures remote, installs systemd service template, enables auto-sync |
+
+### Messaging Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `signal-interface` | Signal as command interface for PAI. Link phone, send/receive messages, process commands (status, ping, uptime, ip). Uses signal-cli |
+| `signal-inbox` | Capture Signal messages to ~/inbox with markdown frontmatter. Commands (/ping, /status, /help) get responses; text messages saved to inbox |
+| `telegram-inbox` | Capture Telegram messages to ~/inbox via bot API. Similar command interface (/ping, /status, /inbox). Runs as daemon or foreground |
+
+### PAI/Claude Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `pai-today` | Show today's Claude Code activity from ~/.claude/history.jsonl with timestamps |
+| `pai-log` | View Claude sessions: today's files, current/latest session, list all sessions, prompts |
+
+### Bootstrap Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `user-data-nix` | EC2 user-data script for new instances: system setup, Docker, Tailscale, Nix installation, home-manager, Claude Code & MCP servers, bws CLI. Used by Terraform |
+| `user-data-legacy` | Legacy non-Nix bootstrap: apt packages, oh-my-zsh, tmux plugins, spot interruption handler. Deprecated in favor of Nix |
 
 ### Cross-Account Management
 
 | Script | Purpose |
 |--------|---------|
-| `aws-accounts-config` | Generate ~/.aws/config from BWS |
-| `setup-cross-account-roles` | Setup IAM roles in target accounts |
+| `aws-accounts-config` | Generate ~/.aws/config from BWS secret aws-cross-accounts. Commands: generate, list, test, add. Profile names: {name}-{role-suffix} |
+| `setup-cross-account-roles` | Create ImladrisReadOnly/ImladrisAdmin roles in target accounts. Configures trust policy for imladris instance role. Run locally with SSO access |
+| `bws-create-secrets` | Create required BWS secrets with placeholders: tailscale-*, luks-keyfile, sdp-*, aws-cross-accounts, sessions-git-repo |
+
+### Utility Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `tmux-session-colors` | Tmux zone-based color theming. Colors pane borders/status by context: green (home), blue (work), red (prod/admin), purple (other). Called by direnv/session hooks |
 
 ## Context Separation
 
