@@ -235,6 +235,7 @@ All scripts are in `scripts/` and symlinked to `~/bin` for easy access.
 |--------|-------------|
 | `pai-today.sh` | Show today's Claude Code activity from ~/.claude/history.jsonl with timestamps |
 | `pai-log.sh` | View Claude sessions: today's files, current/latest session, list all sessions, prompts |
+| `update-check.sh` | Daily AI tooling update checker. Checks PAI, Claude Code (@anthropic-ai/claude-code), MCP servers (@modelcontextprotocol/*), skills repos (curu-skills, anthropics/skills), simplex-chat. Runs at midnight via systemd timer. Notifications via SimpleX (E2E encrypted). Commands: check, report, notify |
 | `tmux-session-colors.sh` | Tmux zone-based color theming. Colors pane borders/status by context: green (home), blue (work), red (prod/admin), purple (other). Called by direnv/session hooks |
 | `user-data-legacy.sh` | Legacy non-Nix bootstrap: apt packages, oh-my-zsh, tmux plugins, spot interruption handler. Deprecated in favor of Nix |
 
