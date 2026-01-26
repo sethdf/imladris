@@ -230,6 +230,7 @@ All scripts are in `scripts/` and symlinked to `~/bin` for easy access.
 
 | Script | Purpose |
 |--------|---------|
+| `update-check` | Daily AI tooling update checker. Monitors PAI, Claude Code, MCP servers, skills repos, simplex-chat. Runs at midnight via systemd timer. Notifications via SimpleX. Commands: check, report, notify |
 | `tmux-session-colors` | Tmux zone-based color theming. Colors pane borders/status by context: green (home), blue (work), red (prod/admin), purple (other). Called by direnv/session hooks |
 
 ## Context Separation
