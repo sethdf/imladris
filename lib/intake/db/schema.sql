@@ -9,6 +9,7 @@
 -- Primary intake units (threads for chat, individual for email/ticket)
 CREATE TABLE IF NOT EXISTS intake (
     id TEXT PRIMARY KEY,                    -- UUID
+    zone TEXT NOT NULL DEFAULT 'work',      -- work, home (zone differentiation)
     source TEXT NOT NULL,                   -- slack, telegram, email-ms365, email-gmail, sdp-ticket, sdp-task, capture
     source_id TEXT NOT NULL,                -- Original ID from source system
     type TEXT NOT NULL,                     -- conversation, email, ticket, task, note, file
@@ -145,7 +146,9 @@ CREATE TABLE IF NOT EXISTS rules (
 -- =============================================================================
 
 -- Core lookups
+CREATE INDEX IF NOT EXISTS idx_intake_zone ON intake(zone);
 CREATE INDEX IF NOT EXISTS idx_intake_source ON intake(source);
+CREATE INDEX IF NOT EXISTS idx_intake_zone_source ON intake(zone, source);
 CREATE INDEX IF NOT EXISTS idx_intake_status ON intake(status);
 CREATE INDEX IF NOT EXISTS idx_intake_created ON intake(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_intake_updated ON intake(updated_at DESC);
@@ -218,6 +221,7 @@ ORDER BY i.ingested_at DESC;
 -- Stats by source
 CREATE VIEW IF NOT EXISTS v_stats_by_source AS
 SELECT
+    zone,
     source,
     COUNT(*) as total,
     SUM(CASE WHEN status = 'new' THEN 1 ELSE 0 END) as new_count,
@@ -225,4 +229,16 @@ SELECT
     SUM(CASE WHEN status = 'actioned' THEN 1 ELSE 0 END) as actioned_count,
     MAX(updated_at) as last_activity
 FROM intake
-GROUP BY source;
+GROUP BY zone, source;
+
+-- Stats by zone
+CREATE VIEW IF NOT EXISTS v_stats_by_zone AS
+SELECT
+    zone,
+    COUNT(*) as total,
+    SUM(CASE WHEN status = 'new' THEN 1 ELSE 0 END) as new_count,
+    SUM(CASE WHEN status = 'seen' THEN 1 ELSE 0 END) as seen_count,
+    SUM(CASE WHEN status = 'actioned' THEN 1 ELSE 0 END) as actioned_count,
+    MAX(updated_at) as last_activity
+FROM intake
+GROUP BY zone;
