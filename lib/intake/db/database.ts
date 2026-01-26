@@ -254,6 +254,12 @@ export function queryIntake(options: QueryOptions = {}): IntakeItem[] {
   const conditions: string[] = [];
   const params: Record<string, unknown> = {};
 
+  // Zone filtering - defaults to environment variable if not specified
+  if (options.zone) {
+    conditions.push("zone = @zone");
+    params.zone = options.zone;
+  }
+
   if (options.source?.length) {
     conditions.push(`source IN (${options.source.map((_, i) => `@source${i}`).join(", ")})`);
     options.source.forEach((s, i) => { params[`source${i}`] = s; });
@@ -271,6 +277,20 @@ export function queryIntake(options: QueryOptions = {}): IntakeItem[] {
 
   if (options.untriaged) {
     conditions.push("id NOT IN (SELECT intake_id FROM triage)");
+  }
+
+  if (options.priority?.length) {
+    conditions.push(`id IN (SELECT intake_id FROM triage WHERE priority IN (${options.priority.map((_, i) => `@priority${i}`).join(", ")}))`);
+    options.priority.forEach((p, i) => { params[`priority${i}`] = p; });
+  }
+
+  if (options.category?.length) {
+    conditions.push(`id IN (SELECT intake_id FROM triage WHERE category IN (${options.category.map((_, i) => `@category${i}`).join(", ")}))`);
+    options.category.forEach((c, i) => { params[`category${i}`] = c; });
+  }
+
+  if (options.quick_wins) {
+    conditions.push("id IN (SELECT intake_id FROM triage WHERE quick_win = 1)");
   }
 
   let sql = "SELECT * FROM intake";
@@ -510,7 +530,9 @@ export function updateSyncState(state: Partial<SyncState> & { source: string }):
 // =============================================================================
 
 export interface IntakeStats {
+  zone?: Zone;
   total: number;
+  by_zone: Record<string, number>;
   by_source: Record<string, number>;
   by_status: Record<string, number>;
   by_priority: Record<string, number>;
@@ -518,28 +540,45 @@ export interface IntakeStats {
   quick_wins: number;
 }
 
-export function getStats(): IntakeStats {
+export function getStats(zone?: Zone): IntakeStats {
   const db = getDb();
+  const zoneFilter = zone ? " WHERE zone = ?" : "";
+  const zoneParam = zone ? [zone] : [];
 
-  const total = (db.prepare("SELECT COUNT(*) as count FROM intake").get() as { count: number }).count;
+  const total = (db.prepare(`SELECT COUNT(*) as count FROM intake${zoneFilter}`).get(...zoneParam) as { count: number }).count;
+
+  const byZone: Record<string, number> = {};
+  for (const row of db.prepare("SELECT zone, COUNT(*) as count FROM intake GROUP BY zone").all() as { zone: string; count: number }[]) {
+    byZone[row.zone] = row.count;
+  }
 
   const bySource: Record<string, number> = {};
-  for (const row of db.prepare("SELECT source, COUNT(*) as count FROM intake GROUP BY source").all() as { source: string; count: number }[]) {
+  for (const row of db.prepare(`SELECT source, COUNT(*) as count FROM intake${zoneFilter} GROUP BY source`).all(...zoneParam) as { source: string; count: number }[]) {
     bySource[row.source] = row.count;
   }
 
   const byStatus: Record<string, number> = {};
-  for (const row of db.prepare("SELECT status, COUNT(*) as count FROM intake GROUP BY status").all() as { status: string; count: number }[]) {
+  for (const row of db.prepare(`SELECT status, COUNT(*) as count FROM intake${zoneFilter} GROUP BY status`).all(...zoneParam) as { status: string; count: number }[]) {
     byStatus[row.status] = row.count;
   }
 
   const byPriority: Record<string, number> = {};
-  for (const row of db.prepare("SELECT priority, COUNT(*) as count FROM triage WHERE priority IS NOT NULL GROUP BY priority").all() as { priority: string; count: number }[]) {
+  const priorityQuery = zone
+    ? "SELECT priority, COUNT(*) as count FROM triage t JOIN intake i ON t.intake_id = i.id WHERE priority IS NOT NULL AND i.zone = ? GROUP BY priority"
+    : "SELECT priority, COUNT(*) as count FROM triage WHERE priority IS NOT NULL GROUP BY priority";
+  for (const row of db.prepare(priorityQuery).all(...zoneParam) as { priority: string; count: number }[]) {
     byPriority[row.priority] = row.count;
   }
 
-  const untriaged = (db.prepare("SELECT COUNT(*) as count FROM intake WHERE id NOT IN (SELECT intake_id FROM triage)").get() as { count: number }).count;
-  const quickWins = (db.prepare("SELECT COUNT(*) as count FROM triage WHERE quick_win = 1").get() as { count: number }).count;
+  const untriagedQuery = zone
+    ? "SELECT COUNT(*) as count FROM intake WHERE zone = ? AND id NOT IN (SELECT intake_id FROM triage)"
+    : "SELECT COUNT(*) as count FROM intake WHERE id NOT IN (SELECT intake_id FROM triage)";
+  const untriaged = (db.prepare(untriagedQuery).get(...zoneParam) as { count: number }).count;
 
-  return { total, by_source: bySource, by_status: byStatus, by_priority: byPriority, untriaged, quick_wins: quickWins };
+  const quickWinsQuery = zone
+    ? "SELECT COUNT(*) as count FROM triage t JOIN intake i ON t.intake_id = i.id WHERE t.quick_win = 1 AND i.zone = ?"
+    : "SELECT COUNT(*) as count FROM triage WHERE quick_win = 1";
+  const quickWins = (db.prepare(quickWinsQuery).get(...zoneParam) as { count: number }).count;
+
+  return { zone, total, by_zone: byZone, by_source: bySource, by_status: byStatus, by_priority: byPriority, untriaged, quick_wins: quickWins };
 }
