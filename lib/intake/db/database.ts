@@ -186,10 +186,10 @@ export function upsertIntake(item: Partial<IntakeItem> & { source: string; sourc
       created_at, updated_at, ingested_at, status, read_status,
       message_count, enrichment, embedding, metadata
     ) VALUES (
-      @id, @zone, @source, @source_id, @type, @subject, @body, @context, @content_hash,
-      @from_name, @from_address, @from_user_id, @participants,
-      @created_at, @updated_at, @ingested_at, @status, @read_status,
-      @message_count, @enrichment, @embedding, @metadata
+      $id, $zone, $source, $source_id, $type, $subject, $body, $context, $content_hash,
+      $from_name, $from_address, $from_user_id, $participants,
+      $created_at, $updated_at, $ingested_at, $status, $read_status,
+      $message_count, $enrichment, $embedding, $metadata
     )
     ON CONFLICT(source, source_id) DO UPDATE SET
       subject = excluded.subject,
@@ -204,28 +204,28 @@ export function upsertIntake(item: Partial<IntakeItem> & { source: string; sourc
   `);
 
   stmt.run({
-    id,
-    zone,
-    source: item.source,
-    source_id: item.source_id,
-    type: item.type,
-    subject: item.subject || null,
-    body: item.body || null,
-    context: item.context || null,
-    content_hash: item.content_hash || (item.body ? hashContent(item.body) : null),
-    from_name: item.from_name || null,
-    from_address: item.from_address || null,
-    from_user_id: item.from_user_id || null,
-    participants: item.participants || null,
-    created_at: item.created_at || now,
-    updated_at: item.updated_at || now,
-    ingested_at: item.ingested_at || now,
-    status: item.status || "new",
-    read_status: item.read_status || "unread",
-    message_count: item.message_count || 1,
-    enrichment: item.enrichment || null,
-    embedding: item.embedding || null,
-    metadata: item.metadata || null,
+    $id: id,
+    $zone: zone,
+    $source: item.source,
+    $source_id: item.source_id,
+    $type: item.type,
+    $subject: item.subject || null,
+    $body: item.body || null,
+    $context: item.context || null,
+    $content_hash: item.content_hash || (item.body ? hashContent(item.body) : null),
+    $from_name: item.from_name || null,
+    $from_address: item.from_address || null,
+    $from_user_id: item.from_user_id || null,
+    $participants: item.participants || null,
+    $created_at: item.created_at || now,
+    $updated_at: item.updated_at || now,
+    $ingested_at: item.ingested_at || now,
+    $status: item.status || "new",
+    $read_status: item.read_status || "unread",
+    $message_count: item.message_count || 1,
+    $enrichment: item.enrichment || null,
+    $embedding: item.embedding || null,
+    $metadata: item.metadata || null,
   });
 
   return id;
