@@ -1,0 +1,13 @@
+[Unit]
+Description=Daily AI tooling update check
+
+[Timer]
+# Run at midnight daily
+OnCalendar=*-*-* 00:00:00
+# Run missed timer on boot if system was off
+Persistent=true
+# Stagger to avoid thundering herd
+RandomizedDelaySec=30m
+
+[Install]
+WantedBy=timers.target

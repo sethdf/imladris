@@ -1,0 +1,18 @@
+[Unit]
+Description=Check for AI tooling updates
+After=network-online.target data.mount
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+ExecStart=/home/ubuntu/bin/update-check
+StandardOutput=journal
+StandardError=journal
+
+# SimpleX notification config - set contact name to enable notifications
+# Edit this line or export UPDATE_NOTIFY_CONTACT in your shell
+Environment=UPDATE_NOTIFY_CONTACT=
+
+# Increase timeout for network operations
+TimeoutStartSec=300
