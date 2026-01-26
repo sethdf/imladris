@@ -18,7 +18,11 @@ import {
   type Zone,
   type QueryOptions,
 } from "./db/database.js";
-import { embed, prepareIntakeText, embeddingToBuffer } from "./embeddings/pipeline.js";
+
+// Lazy-load embeddings to avoid onnxruntime dependency unless needed
+async function loadEmbeddings() {
+  return import("./embeddings/pipeline.js");
+}
 
 // =============================================================================
 // CLI Commands
@@ -197,6 +201,9 @@ async function stats(args: string[]): Promise<void> {
 
 async function embedCmd(args: string[]): Promise<void> {
   const action = args[0];
+
+  // Lazy-load embeddings module only when needed
+  const { embed, prepareIntakeText } = await loadEmbeddings();
 
   if (action === "backfill") {
     console.log("Backfilling embeddings for items without them...");
