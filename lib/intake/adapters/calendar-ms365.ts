@@ -19,7 +19,7 @@ import {
   type Message,
   type Zone,
 } from "../db/database.js";
-import { BaseAdapter, type AdapterConfig, type SyncResult, registerAdapter } from "./base.js";
+import { BaseAdapter, type AdapterConfig, type SyncResult, registerAdapter, upsertAndTriage } from "./base.js";
 
 // =============================================================================
 // Configuration
@@ -163,7 +163,7 @@ Get-MgUserCalendar -UserId '${user}' | Select-Object Name | ConvertTo-Json
         result.itemsProcessed++;
 
         try {
-          const isCreated = this.upsertEvent(event);
+          const isCreated = await this.upsertEvent(event);
           if (isCreated) {
             result.itemsCreated++;
           } else {
@@ -228,7 +228,7 @@ Get-MgUserCalendarView -UserId '${user}' -StartDateTime $startTime -EndDateTime 
   /**
    * Upsert calendar event
    */
-  private upsertEvent(event: MS365CalendarEvent): boolean {
+  private async upsertEvent(event: MS365CalendarEvent): Promise<boolean> {
     const sourceId = `event_${event.Id}`;
 
     // Get participants
@@ -281,8 +281,8 @@ Get-MgUserCalendarView -UserId '${user}' -StartDateTime $startTime -EndDateTime 
       }),
     };
 
-    // Upsert intake record
-    upsertIntake(item);
+    // Upsert intake record and run triage
+    await upsertAndTriage(item);
 
     return true;
   }
