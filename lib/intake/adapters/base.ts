@@ -5,7 +5,9 @@
  * Adapters sync data from external sources into the intake system.
  */
 
-import type { IntakeItem, Message, Zone } from "../db/database.js";
+import { upsertIntake, queryIntake, type IntakeItem, type Message, type Zone } from "../db/database.js";
+import { triageAndSave, isServiceAvailable } from "../triage/client.js";
+import { triageAndSave as triageAndSaveLegacy } from "../triage/engine.js";
 
 // =============================================================================
 // Types
@@ -80,6 +82,50 @@ export abstract class BaseAdapter {
    * Transform source messages to Message[]
    */
   protected abstract transformMessages(sourceData: unknown): Message[];
+}
+
+// =============================================================================
+// Triage Helper
+// =============================================================================
+
+/**
+ * Upsert an intake item and run triage on it
+ *
+ * This should be called for the FINAL upsert of an item (after context is built).
+ * Triage runs async and doesn't block the sync process on failure.
+ */
+export async function upsertAndTriage(
+  item: Partial<IntakeItem> & { source: string; source_id: string; type: string },
+  options: { verbose?: boolean } = {}
+): Promise<string> {
+  // Upsert the item first
+  const intakeId = upsertIntake(item);
+
+  // Get the full item for triage (query by source+source_id)
+  const items = queryIntake({ source: [item.source], limit: 100 });
+  const fullItem = items.find((i) => i.source_id === item.source_id);
+
+  if (!fullItem) {
+    return intakeId;
+  }
+
+  // Run triage async - don't block sync on triage failures
+  try {
+    const serviceAvailable = await isServiceAvailable();
+
+    if (serviceAvailable) {
+      await triageAndSave(fullItem, { verbose: options.verbose });
+    } else {
+      await triageAndSaveLegacy(fullItem, { verbose: options.verbose });
+    }
+  } catch (err) {
+    if (options.verbose) {
+      console.warn(`Triage failed for ${intakeId}: ${err}`);
+    }
+    // Don't throw - triage failure shouldn't fail the sync
+  }
+
+  return intakeId;
 }
 
 // =============================================================================

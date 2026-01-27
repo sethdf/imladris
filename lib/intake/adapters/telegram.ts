@@ -17,7 +17,7 @@ import {
   type Message,
   type Zone,
 } from "../db/database.js";
-import { BaseAdapter, type AdapterConfig, type SyncResult, registerAdapter } from "./base.js";
+import { BaseAdapter, type AdapterConfig, type SyncResult, registerAdapter, upsertAndTriage } from "./base.js";
 
 // =============================================================================
 // Types
@@ -138,8 +138,8 @@ export class TelegramAdapter extends BaseAdapter {
         }
 
         try {
-          // Create or update conversation (thread-first model)
-          const isCreated = this.upsertConversation(msg);
+          // Create or update conversation (thread-first model) + triage
+          const isCreated = await this.upsertConversation(msg);
           if (isCreated) {
             result.itemsCreated++;
           } else {
@@ -183,7 +183,7 @@ export class TelegramAdapter extends BaseAdapter {
    * Upsert conversation and add message
    * Returns true if new conversation created
    */
-  private upsertConversation(msg: TelegramMessage): boolean {
+  private async upsertConversation(msg: TelegramMessage): Promise<boolean> {
     // Build conversation ID from chat
     const chatId = String(msg.chat.id);
     const sourceId = `chat_${chatId}`;
@@ -232,9 +232,9 @@ export class TelegramAdapter extends BaseAdapter {
 
     addMessage(message);
 
-    // Update context with recent thread history
+    // Update context with recent thread history and run triage
     const context = buildThreadContext(intakeId, 10);
-    upsertIntake({
+    await upsertAndTriage({
       ...item,
       context,
       message_count: (item.message_count || 0) + 1,
