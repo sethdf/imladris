@@ -23,6 +23,15 @@ ZONE=work
 # Signal: every 5 minutes
 */5 * * * * ubuntu ZONE=$ZONE flock -n /tmp/intake-sync-signal.lock $BUN $INTAKE_DIR/cli.ts sync signal 2>&1 | logger -t intake-signal
 
+# Email MS365: every 10 minutes
+*/10 * * * * ubuntu ZONE=$ZONE flock -n /tmp/intake-sync-email-ms365.lock $BUN $INTAKE_DIR/cli.ts sync email-ms365 2>&1 | logger -t intake-email-ms365
+
+# Email Gmail: every 10 minutes
+*/10 * * * * ubuntu ZONE=$ZONE flock -n /tmp/intake-sync-email-gmail.lock $BUN $INTAKE_DIR/cli.ts sync email-gmail 2>&1 | logger -t intake-email-gmail
+
+# Calendar MS365: every 15 minutes
+*/15 * * * * ubuntu ZONE=$ZONE flock -n /tmp/intake-sync-calendar-ms365.lock $BUN $INTAKE_DIR/cli.ts sync calendar-ms365 2>&1 | logger -t intake-calendar-ms365
+
 # All sources: every 15 minutes (backup comprehensive sync)
 */15 * * * * ubuntu ZONE=$ZONE flock -n /tmp/intake-sync-all.lock $BUN $INTAKE_DIR/cli.ts sync all 2>&1 | logger -t intake-all
 
@@ -44,6 +53,9 @@ ZONE=work
 # Architecture:
 # - Telegram sync: every 5 minutes
 # - Signal sync: every 5 minutes
+# - Email MS365: every 10 minutes
+# - Email Gmail: every 10 minutes
+# - Calendar MS365: every 15 minutes
 # - All sources: every 15 minutes (comprehensive)
 # - Triage: every 10 minutes
 # - Embeddings: every hour
