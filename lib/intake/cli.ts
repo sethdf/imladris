@@ -219,6 +219,25 @@ async function queryCmd(args: string[]): Promise<void> {
 async function triage(args: string[]): Promise<void> {
   const action = args[0];
 
+  // Parse flags
+  let verbose = false;
+  let skipAI = false;
+  let limit = 10;
+
+  for (let i = 1; i < args.length; i++) {
+    const arg = args[i];
+    const next = args[i + 1];
+
+    if (arg === "-v" || arg === "--verbose") {
+      verbose = true;
+    } else if (arg === "--skip-ai") {
+      skipAI = true;
+    } else if (arg === "-n" || arg === "--limit") {
+      limit = parseInt(next, 10) || 10;
+      i++;
+    }
+  }
+
   if (!action || action === "list") {
     // List untriaged items
     const items = queryIntake({ untriaged: true, limit: 20 });
@@ -232,13 +251,86 @@ async function triage(args: string[]): Promise<void> {
   }
 
   if (action === "run") {
-    console.log("Running triage on untriaged items...");
-    // TODO: Implement rules engine + AI triage
-    console.log("Triage engine not yet implemented. See lib/intake/triage/");
+    // Lazy-load triage engine to avoid loading AI deps unless needed
+    const { triageAndSave } = await import("./triage/index.js");
+
+    const items = queryIntake({ untriaged: true, limit });
+
+    if (items.length === 0) {
+      console.log("No untriaged items found.");
+      return;
+    }
+
+    console.log(`Running triage on ${items.length} items...`);
+    console.log(`Options: verbose=${verbose}, skipAI=${skipAI}\n`);
+
+    let processed = 0;
+    let confirmed = 0;
+    let adjusted = 0;
+    let overridden = 0;
+
+    for (const item of items) {
+      try {
+        const result = await triageAndSave(item, { verbose, skipAI });
+        processed++;
+
+        // Track AI actions
+        if (result.layers.ai.action === "confirmed") confirmed++;
+        else if (result.layers.ai.action === "adjusted") adjusted++;
+        else if (result.layers.ai.action === "overridden") overridden++;
+
+        if (!verbose) {
+          // Compact output
+          const quickWin = result.quick_win ? " [QW]" : "";
+          console.log(`[${result.layers.ai.action.toUpperCase()}] ${item.subject || item.id}`);
+          console.log(`   → ${result.category}/${result.priority}${quickWin} (${result.confidence}%)`);
+        }
+      } catch (err) {
+        console.error(`Error triaging ${item.id}:`, err);
+      }
+    }
+
+    console.log(`\n${"─".repeat(60)}`);
+    console.log(`Triaged: ${processed}/${items.length}`);
+    console.log(`  Confirmed: ${confirmed} | Adjusted: ${adjusted} | Overridden: ${overridden}`);
     return;
   }
 
-  console.log("Usage: intake triage [list|run]");
+  if (action === "one") {
+    // Triage a single item by ID
+    const itemId = args[1];
+    if (!itemId) {
+      console.log("Usage: intake triage one <id> [-v]");
+      return;
+    }
+
+    const items = queryIntake({ limit: 1000 });
+    const item = items.find((i) => i.id === itemId || i.id.startsWith(itemId));
+
+    if (!item) {
+      console.log(`Item not found: ${itemId}`);
+      return;
+    }
+
+    const { triageAndSave } = await import("./triage/index.js");
+    const result = await triageAndSave(item, { verbose: true, skipAI });
+
+    console.log(`\nResult saved to database.`);
+    return;
+  }
+
+  console.log(`Usage: intake triage <list|run|one> [options]
+
+Commands:
+  list              List untriaged items
+  run               Run triage on untriaged items
+  one <id>          Triage a single item by ID
+
+Options:
+  -v, --verbose     Show detailed layer output
+  --skip-ai         Skip AI verification (deterministic only)
+  -n, --limit <n>   Limit items to process (default: 10)
+`);
 }
 
 async function stats(args: string[]): Promise<void> {
