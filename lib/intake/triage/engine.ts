@@ -9,7 +9,7 @@
  */
 
 import type { IntakeItem } from "../db/database.js";
-import { updateTriage } from "../db/database.js";
+import { upsertTriage } from "../db/database.js";
 import { extractEntities, type ExtractedEntities } from "./entities.js";
 import { triageWithRules, type TriageOutput } from "./rules.js";
 import { suggestClassification, type ClassificationSuggestion } from "./similarity.js";
@@ -227,7 +227,7 @@ export async function triageAndSave(
   const result = await runTriage(item, options);
 
   // Save to database
-  updateTriage({
+  upsertTriage({
     intake_id: item.id,
     category: result.category,
     priority: result.priority,
