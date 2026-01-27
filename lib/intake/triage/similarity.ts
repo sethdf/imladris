@@ -177,7 +177,7 @@ export async function suggestClassification(
   const confidence = calculateConfidence(similar, category, priority);
 
   // Build reasoning
-  const reasoning = buildReasoning(similar, category, priority, confidence);
+  const reasoning = buildReasoning(similar, confidence, category, priority);
 
   return {
     category,
@@ -219,7 +219,7 @@ function getItemsWithEmbeddings(zone?: Zone): IntakeItem[] {
   const db = getDb();
 
   let sql = "SELECT * FROM intake WHERE embedding IS NOT NULL";
-  const params: unknown[] = [];
+  const params: string[] = [];
 
   if (zone) {
     sql += " AND zone = ?";
@@ -303,9 +303,9 @@ function calculateConfidence(
  */
 function buildReasoning(
   similar: SimilarItem[],
+  confidence: number,
   category?: string,
-  priority?: string,
-  confidence: number
+  priority?: string
 ): string {
   const parts: string[] = [];
 
