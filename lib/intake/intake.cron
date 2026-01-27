@@ -1,0 +1,51 @@
+# Intake System - Automated sync
+# Install: sudo cp intake.cron /etc/cron.d/intake && sudo chmod 644 /etc/cron.d/intake
+#
+# NOTE: Prefer systemd timer (intake-sync.timer) over cron for better control.
+# This file is provided as an alternative for systems without systemd.
+
+SHELL=/bin/bash
+PATH=/home/ubuntu/.bun/bin:/home/ubuntu/.nix-profile/bin:/usr/local/bin:/usr/bin:/bin
+HOME=/home/ubuntu
+
+# Configuration
+INTAKE_DIR=/home/ubuntu/repos/github.com/sethdf/imladris/lib/intake
+BUN=/home/ubuntu/.bun/bin/bun
+ZONE=work
+
+# =============================================================================
+# SYNC JOBS - Pull data from sources into intake cache
+# =============================================================================
+
+# Telegram: every 5 minutes
+*/5 * * * * ubuntu ZONE=$ZONE flock -n /tmp/intake-sync-telegram.lock $BUN $INTAKE_DIR/cli.ts sync telegram 2>&1 | logger -t intake-telegram
+
+# Signal: every 5 minutes
+*/5 * * * * ubuntu ZONE=$ZONE flock -n /tmp/intake-sync-signal.lock $BUN $INTAKE_DIR/cli.ts sync signal 2>&1 | logger -t intake-signal
+
+# All sources: every 15 minutes (backup comprehensive sync)
+*/15 * * * * ubuntu ZONE=$ZONE flock -n /tmp/intake-sync-all.lock $BUN $INTAKE_DIR/cli.ts sync all 2>&1 | logger -t intake-all
+
+# =============================================================================
+# TRIAGE JOB - Run auto-triage on untriaged items
+# =============================================================================
+
+# Triage: every 10 minutes
+*/10 * * * * ubuntu ZONE=$ZONE flock -n /tmp/intake-triage.lock $BUN $INTAKE_DIR/cli.ts triage run 2>&1 | logger -t intake-triage
+
+# =============================================================================
+# EMBEDDING JOB - Backfill embeddings for items without them
+# =============================================================================
+
+# Embeddings: once per hour
+0 * * * * ubuntu flock -n /tmp/intake-embed.lock $BUN $INTAKE_DIR/cli.ts embed backfill 2>&1 | logger -t intake-embed
+
+# =============================================================================
+# Architecture:
+# - Telegram sync: every 5 minutes
+# - Signal sync: every 5 minutes
+# - All sources: every 15 minutes (comprehensive)
+# - Triage: every 10 minutes
+# - Embeddings: every hour
+# - Database: /data/.cache/intake/intake.sqlite
+# =============================================================================
