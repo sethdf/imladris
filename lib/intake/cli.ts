@@ -334,19 +334,53 @@ async function triage(args: string[]): Promise<void> {
       return;
     }
 
-    const { triageAndSave } = await import("./triage/index.js");
-    const result = await triageAndSave(item, { verbose: true, skipAI });
+    const triageMod = await import("./triage/index.js");
+    const serviceAvailable = await triageMod.isServiceAvailable();
 
-    console.log(`\nResult saved to database.`);
+    let result;
+    if (serviceAvailable) {
+      result = await triageMod.triageAndSave(item, { skipAI, verbose: true });
+    } else {
+      result = await triageMod.triageAndSaveLegacy(item, { skipAI, verbose: true });
+    }
+
+    if (result) {
+      console.log(`\nResult saved to database.`);
+    } else {
+      console.log(`\nTriage failed.`);
+    }
     return;
   }
 
-  console.log(`Usage: intake triage <list|run|one> [options]
+  if (action === "status") {
+    // Check triage service status
+    const { checkHealth } = await import("./triage/index.js");
+    const health = await checkHealth();
+
+    if (health) {
+      console.log("Triage Service Status: RUNNING");
+      console.log(`  spaCy model: ${health.spacy_model}`);
+      console.log(`  ChromaDB items: ${health.chroma_collections}`);
+      console.log(`  Version: ${health.version}`);
+    } else {
+      console.log("Triage Service Status: NOT RUNNING");
+      console.log("\nTo start the service:");
+      console.log("  cd lib/intake/triage-service");
+      console.log("  uv run server.py");
+      console.log("\nOr install systemd service:");
+      console.log("  sudo cp intake-triage.service /etc/systemd/system/");
+      console.log("  sudo systemctl enable --now intake-triage");
+    }
+    return;
+  }
+
+  console.log(`Usage: intake triage <list|run|one|status> [options]
 
 Commands:
   list              List untriaged items
   run               Run triage on untriaged items
   one <id>          Triage a single item by ID
+  status            Check triage service status
 
 Options:
   -v, --verbose     Show detailed layer output
