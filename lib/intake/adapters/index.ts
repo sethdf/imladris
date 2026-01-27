@@ -21,3 +21,9 @@ export { GmailAdapter, createGmailAdapter } from "./email-gmail.js";
 
 // Calendar - MS365
 export { MS365CalendarAdapter, createMS365CalendarAdapter } from "./calendar-ms365.js";
+
+// Calendar - Gmail
+export { GmailCalendarAdapter, createGmailCalendarAdapter } from "./calendar-gmail.js";
+
+// Slack
+export { SlackAdapter, createSlackAdapter } from "./slack.js";
