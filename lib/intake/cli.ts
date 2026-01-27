@@ -51,14 +51,81 @@ async function init(_args: string[]): Promise<void> {
 async function sync(args: string[]): Promise<void> {
   const source = args[0];
   if (!source) {
-    console.log("Usage: intake sync <source>");
-    console.log("Sources: slack, telegram, email-ms365, email-gmail, sdp-ticket, sdp-task, capture");
+    console.log("Usage: intake sync <source|all>");
+    console.log("Sources: telegram, signal, slack, email-ms365, email-gmail, sdp-ticket, sdp-task, capture");
     return;
   }
 
-  console.log(`Syncing ${source}...`);
-  // TODO: Implement source-specific sync adapters
-  console.log("Sync adapters not yet implemented. See lib/intake/adapters/");
+  // Get zone from environment or default
+  const zone = (process.env.ZONE as "work" | "home") || "work";
+
+  if (source === "all") {
+    // Sync all available sources
+    const sources = ["telegram", "signal"];
+    for (const s of sources) {
+      await syncSource(s, zone);
+    }
+    return;
+  }
+
+  await syncSource(source, zone);
+}
+
+async function syncSource(source: string, zone: "work" | "home"): Promise<void> {
+  console.log(`\nSyncing ${source} (zone: ${zone})...`);
+
+  try {
+    // Dynamic import to avoid loading all adapters upfront
+    const adapters = await import("./adapters/index.js");
+
+    let adapter: Awaited<ReturnType<typeof adapters.createTelegramAdapter>> | null = null;
+
+    switch (source) {
+      case "telegram":
+        adapter = await adapters.createTelegramAdapter(zone);
+        break;
+      case "signal":
+        adapter = await adapters.createSignalAdapter(zone);
+        break;
+      default:
+        console.log(`Adapter for '${source}' not yet implemented.`);
+        return;
+    }
+
+    if (!adapter) {
+      console.log(`Failed to create ${source} adapter (missing credentials?)`);
+      return;
+    }
+
+    // Validate connection
+    const valid = await adapter.validate();
+    if (!valid) {
+      console.log(`Cannot connect to ${source} API`);
+      return;
+    }
+
+    // Run sync
+    const result = await adapter.sync();
+
+    console.log(`  Processed: ${result.itemsProcessed}`);
+    console.log(`  Created: ${result.itemsCreated}`);
+    console.log(`  Updated: ${result.itemsUpdated}`);
+
+    if (result.errors.length > 0) {
+      console.log(`  Errors: ${result.errors.length}`);
+      for (const err of result.errors.slice(0, 5)) {
+        console.log(`    - ${err}`);
+      }
+    }
+
+    if (result.success) {
+      console.log(`  Status: Success`);
+    } else {
+      console.log(`  Status: Failed`);
+    }
+  } catch (err) {
+    console.error(`Error syncing ${source}:`, err);
+  }
 }
 
 async function queryCmd(args: string[]): Promise<void> {
