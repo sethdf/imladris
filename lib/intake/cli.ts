@@ -295,7 +295,10 @@ async function triage(args: string[]): Promise<void> {
         processed++;
 
         // Track AI actions (handle both response formats)
-        const action = result.action || result.layers?.ai?.action || "unknown";
+        // Python service has .action at top level; legacy TS has .layers.ai.action
+        const action = 'layers' in result
+          ? (result.layers?.ai?.action || "unknown")
+          : (result.action || "unknown");
         if (action === "confirmed") confirmed++;
         else if (action === "adjusted") adjusted++;
         else if (action === "overridden") overridden++;
