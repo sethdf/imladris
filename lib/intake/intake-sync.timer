@@ -1,0 +1,17 @@
+[Unit]
+Description=Intake System - Periodic sync timer
+After=data.mount
+
+[Timer]
+# Run every 5 minutes
+OnBootSec=2min
+OnUnitActiveSec=5min
+
+# Spread load by randomizing start time slightly
+RandomizedDelaySec=30
+
+# Persist timer across reboots
+Persistent=true
+
+[Install]
+WantedBy=timers.target

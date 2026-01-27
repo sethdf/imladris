@@ -1,0 +1,23 @@
+[Unit]
+Description=Intake System - Sync from message sources
+After=network-online.target data.mount
+Wants=network-online.target
+ConditionPathIsMountPoint=/data
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/repos/github.com/sethdf/imladris/lib/intake
+ExecStart=/home/ubuntu/.bun/bin/bun run cli.ts sync all
+StandardOutput=journal
+StandardError=journal
+
+# Zone configuration (work or home)
+Environment=ZONE=work
+
+# Timeout for sync operations
+TimeoutStartSec=300
+
+# Restart on failure (transient network issues)
+Restart=on-failure
+RestartSec=30
