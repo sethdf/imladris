@@ -61,13 +61,15 @@ interface TelegramConfig extends AdapterConfig {
 // =============================================================================
 
 export class TelegramAdapter extends BaseAdapter {
-  private config: TelegramConfig;
   private baseUrl: string;
 
   constructor(config: TelegramConfig) {
     super(config);
-    this.config = config;
     this.baseUrl = `https://api.telegram.org/bot${config.credentials.botToken}`;
+  }
+
+  private get telegramConfig(): TelegramConfig {
+    return this.config as TelegramConfig;
   }
 
   /**
@@ -124,8 +126,8 @@ export class TelegramAdapter extends BaseAdapter {
         const msg = update.message;
 
         // Filter by allowed chat if configured
-        if (this.config.credentials.allowedChatId) {
-          if (String(msg.chat.id) !== this.config.credentials.allowedChatId) {
+        if (this.telegramConfig.credentials.allowedChatId) {
+          if (String(msg.chat.id) !== this.telegramConfig.credentials.allowedChatId) {
             continue;
           }
         }
@@ -198,7 +200,7 @@ export class TelegramAdapter extends BaseAdapter {
       source_id: sourceId,
       type: "conversation",
       subject: msg.chat.title || `Chat with ${senderName}`,
-      body: msg.text,
+      body: msg.text || "",
       from_name: senderName,
       from_user_id: msg.from ? String(msg.from.id) : undefined,
       created_at: new Date(msg.date * 1000).toISOString(),
@@ -257,7 +259,7 @@ export class TelegramAdapter extends BaseAdapter {
       source_id: `chat_${msg.chat.id}`,
       type: "conversation",
       subject: msg.chat.title || `Chat with ${senderName}`,
-      body: msg.text,
+      body: msg.text || "",
       from_name: senderName,
       from_user_id: msg.from ? String(msg.from.id) : undefined,
       created_at: new Date(msg.date * 1000).toISOString(),

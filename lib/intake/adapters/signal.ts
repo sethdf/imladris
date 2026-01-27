@@ -53,11 +53,12 @@ interface SignalConfig extends AdapterConfig {
 // =============================================================================
 
 export class SignalAdapter extends BaseAdapter {
-  private config: SignalConfig;
-
   constructor(config: SignalConfig) {
     super(config);
-    this.config = config;
+  }
+
+  private get signalConfig(): SignalConfig {
+    return this.config as SignalConfig;
   }
 
   /**
@@ -65,7 +66,7 @@ export class SignalAdapter extends BaseAdapter {
    */
   async validate(): Promise<boolean> {
     try {
-      const response = await fetch(`${this.config.credentials.apiUrl}/v1/about`, {
+      const response = await fetch(`${this.signalConfig.credentials.apiUrl}/v1/about`, {
         signal: AbortSignal.timeout(5000),
       });
       return response.ok;
@@ -87,7 +88,7 @@ export class SignalAdapter extends BaseAdapter {
     };
 
     try {
-      const { apiUrl, phoneNumber } = this.config.credentials;
+      const { apiUrl, phoneNumber } = this.signalConfig.credentials;
 
       // Receive messages (this also acknowledges them in signal-cli)
       const response = await fetch(`${apiUrl}/v1/receive/${encodeURIComponent(phoneNumber)}`, {
