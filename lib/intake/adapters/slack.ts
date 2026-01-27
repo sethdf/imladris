@@ -22,7 +22,7 @@ import {
   type Message,
   type Zone,
 } from "../db/database.js";
-import { BaseAdapter, type AdapterConfig, type SyncResult, registerAdapter } from "./base.js";
+import { BaseAdapter, type AdapterConfig, type SyncResult, registerAdapter, upsertAndTriage } from "./base.js";
 
 // =============================================================================
 // Configuration
@@ -156,7 +156,7 @@ export class SlackAdapter extends BaseAdapter {
             new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
           );
 
-          const isCreated = this.upsertConversation(channelId, channelMessages);
+          const isCreated = await this.upsertConversation(channelId, channelMessages);
           if (isCreated) {
             result.itemsCreated++;
           } else {
@@ -236,7 +236,7 @@ export class SlackAdapter extends BaseAdapter {
   /**
    * Upsert conversation and add messages
    */
-  private upsertConversation(channelId: string, messages: SlackMessage[]): boolean {
+  private async upsertConversation(channelId: string, messages: SlackMessage[]): Promise<boolean> {
     const latestMsg = messages[messages.length - 1];
     const firstMsg = messages[0];
 
@@ -293,9 +293,9 @@ export class SlackAdapter extends BaseAdapter {
       addMessage(message);
     }
 
-    // Update context
+    // Update context and run triage
     const context = buildThreadContext(intakeId, 10);
-    upsertIntake({
+    await upsertAndTriage({
       ...item,
       context,
       message_count: messages.length,
