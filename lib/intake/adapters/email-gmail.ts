@@ -21,7 +21,7 @@ import {
   type Message,
   type Zone,
 } from "../db/database.js";
-import { BaseAdapter, type AdapterConfig, type SyncResult, registerAdapter } from "./base.js";
+import { BaseAdapter, type AdapterConfig, type SyncResult, registerAdapter, upsertAndTriage } from "./base.js";
 
 // =============================================================================
 // Configuration
@@ -164,7 +164,7 @@ curl -s -X ${method} "https://www.googleapis.com/${endpoint}" \\
             return dateA - dateB;
           });
 
-          const isCreated = this.upsertConversation(threadId, messages);
+          const isCreated = await this.upsertConversation(threadId, messages);
           if (isCreated) {
             result.itemsCreated++;
           } else {
@@ -250,7 +250,7 @@ curl -s -X ${method} "https://www.googleapis.com/${endpoint}" \\
   /**
    * Upsert conversation and add messages
    */
-  private upsertConversation(threadId: string, messages: GmailMessage[]): boolean {
+  private async upsertConversation(threadId: string, messages: GmailMessage[]): Promise<boolean> {
     const latestMsg = messages[messages.length - 1];
     const firstMsg = messages[0];
 
@@ -322,9 +322,9 @@ curl -s -X ${method} "https://www.googleapis.com/${endpoint}" \\
       addMessage(message);
     }
 
-    // Update context
+    // Update context and run triage
     const context = buildThreadContext(intakeId, 10);
-    upsertIntake({
+    await upsertAndTriage({
       ...item,
       context,
       message_count: messages.length,
