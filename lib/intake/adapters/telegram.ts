@@ -133,7 +133,7 @@ export class TelegramAdapter extends BaseAdapter {
         }
 
         // Skip commands (handled separately)
-        if (msg.text.startsWith("/")) {
+        if (msg.text?.startsWith("/")) {
           continue;
         }
 
