@@ -251,8 +251,12 @@ async function triage(args: string[]): Promise<void> {
   }
 
   if (action === "run") {
-    // Lazy-load triage engine to avoid loading AI deps unless needed
-    const { triageAndSave } = await import("./triage/index.js");
+    // Load triage module
+    const triageMod = await import("./triage/index.js");
+
+    // Check if Python service is available
+    const serviceAvailable = await triageMod.isServiceAvailable();
+    const backend = serviceAvailable ? "Python service (spaCy + ChromaDB + Instructor)" : "TypeScript (legacy)";
 
     const items = queryIntake({ untriaged: true, limit });
 
@@ -262,36 +266,54 @@ async function triage(args: string[]): Promise<void> {
     }
 
     console.log(`Running triage on ${items.length} items...`);
+    console.log(`Backend: ${backend}`);
     console.log(`Options: verbose=${verbose}, skipAI=${skipAI}\n`);
 
     let processed = 0;
     let confirmed = 0;
     let adjusted = 0;
     let overridden = 0;
+    let failed = 0;
 
     for (const item of items) {
       try {
-        const result = await triageAndSave(item, { verbose, skipAI });
+        let result;
+
+        if (serviceAvailable) {
+          // Use Python service
+          result = await triageMod.triageAndSave(item, { skipAI, verbose });
+        } else {
+          // Fall back to legacy TypeScript
+          result = await triageMod.triageAndSaveLegacy(item, { skipAI, verbose });
+        }
+
+        if (!result) {
+          failed++;
+          continue;
+        }
+
         processed++;
 
-        // Track AI actions
-        if (result.layers.ai.action === "confirmed") confirmed++;
-        else if (result.layers.ai.action === "adjusted") adjusted++;
-        else if (result.layers.ai.action === "overridden") overridden++;
+        // Track AI actions (handle both response formats)
+        const action = result.action || result.layers?.ai?.action || "unknown";
+        if (action === "confirmed") confirmed++;
+        else if (action === "adjusted") adjusted++;
+        else if (action === "overridden") overridden++;
 
         if (!verbose) {
           // Compact output
           const quickWin = result.quick_win ? " [QW]" : "";
-          console.log(`[${result.layers.ai.action.toUpperCase()}] ${item.subject || item.id}`);
+          console.log(`[${action.toUpperCase()}] ${item.subject || item.id}`);
           console.log(`   → ${result.category}/${result.priority}${quickWin} (${result.confidence}%)`);
         }
       } catch (err) {
         console.error(`Error triaging ${item.id}:`, err);
+        failed++;
       }
     }
 
     console.log(`\n${"─".repeat(60)}`);
-    console.log(`Triaged: ${processed}/${items.length}`);
+    console.log(`Triaged: ${processed}/${items.length}${failed > 0 ? ` (${failed} failed)` : ""}`);
     console.log(`  Confirmed: ${confirmed} | Adjusted: ${adjusted} | Overridden: ${overridden}`);
     return;
   }
