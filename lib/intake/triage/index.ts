@@ -1,15 +1,45 @@
 /**
  * Triage Module
  *
- * Multi-layer classification system:
- * 1. Entity extraction (chrono-node, compromise)
- * 2. Rules engine (json-rules-engine)
- * 3. Similarity search (Transformers.js)
- * 4. AI verification (Claude) - ALWAYS runs to confirm/override
+ * Production multi-layer classification system:
+ * 1. Entity extraction (spaCy via Python service)
+ * 2. Similarity search (ChromaDB via Python service)
+ * 3. Rules engine (Python service)
+ * 4. AI verification (Instructor + Claude via Python service)
+ *
+ * The Python triage-service must be running for full functionality.
+ * Falls back to legacy TypeScript implementation if service unavailable.
  */
 
+// =============================================================================
+// Production Client (Python service) - PREFERRED
+// =============================================================================
+
+export {
+  checkHealth,
+  isServiceAvailable,
+  triage,
+  triageAndSave,
+  extractEntities as extractEntitiesRemote,
+  findSimilar,
+  recordCorrection,
+  storeItem,
+} from "./client.js";
+
+export type {
+  TriageResult,
+  ExtractedEntities as RemoteExtractedEntities,
+  SimilarItem as RemoteSimilarItem,
+  HealthResponse,
+  CorrectionRequest,
+} from "./client.js";
+
+// =============================================================================
+// Legacy TypeScript Implementation (fallback)
+// =============================================================================
+
 // Main engine - use this for triage
-export { runTriage, triageAndSave, triageBatch } from "./engine.js";
+export { runTriage, triageAndSave as triageAndSaveLegacy, triageBatch } from "./engine.js";
 export type { TriageEngineResult, TriageEngineOptions } from "./engine.js";
 
 // AI verifier
@@ -20,7 +50,7 @@ export type { AIVerificationResult, DeterministicContext, VerificationInput } fr
 export { createTriageEngine, triageWithRules } from "./rules.js";
 export type { TriageInput, TriageOutput } from "./rules.js";
 
-// Entity extraction (layer 1)
+// Entity extraction (layer 1) - legacy
 export {
   extractEntities,
   extractDates,
@@ -31,7 +61,7 @@ export {
 } from "./entities.js";
 export type { ExtractedEntities, ParsedDate, UrgencyCue } from "./entities.js";
 
-// Similarity search (layer 3)
+// Similarity search (layer 3) - legacy
 export {
   findSimilarItems,
   findSimilarByText,
