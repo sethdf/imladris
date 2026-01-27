@@ -16,3 +16,13 @@ export {
   extractTopics,
 } from "./entities.js";
 export type { ExtractedEntities, ParsedDate, UrgencyCue } from "./entities.js";
+
+export {
+  findSimilarItems,
+  findSimilarByText,
+  suggestClassification,
+  suggestClassificationBatch,
+  hasSimilarTriagedItems,
+  findPotentialDuplicates,
+} from "./similarity.js";
+export type { SimilarItem, ClassificationSuggestion, SimilaritySearchOptions } from "./similarity.js";
