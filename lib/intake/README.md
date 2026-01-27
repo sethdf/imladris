@@ -11,9 +11,11 @@ bun run cli.ts init
 # Sync from sources
 bun run cli.ts sync telegram
 bun run cli.ts sync signal
+bun run cli.ts sync slack
 bun run cli.ts sync email-ms365
 bun run cli.ts sync email-gmail
 bun run cli.ts sync calendar-ms365
+bun run cli.ts sync calendar-gmail
 bun run cli.ts sync all
 
 # Query items
@@ -40,10 +42,10 @@ bun run cli.ts embed test "your text here"
 │                         INTAKE SYSTEM                                    │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                          │
-│  ┌────────────┐ ┌────────────┐ ┌────────────┐ ┌────────────┐            │
-│  │  Telegram  │ │   Signal   │ │   Email    │ │  Calendar  │  Sources   │
-│  │  Adapter   │ │  Adapter   │ │ MS365/Gmail│ │   MS365    │            │
-│  └─────┬──────┘ └─────┬──────┘ └─────┬──────┘ └─────┬──────┘            │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐       │
+│  │ Telegram │ │  Signal  │ │  Slack   │ │  Email   │ │ Calendar │ Src   │
+│  │ Adapter  │ │ Adapter  │ │ Adapter  │ │MS365/Gml │ │MS365/Gml │       │
+│  └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘       │
 │         │                   │                   │                        │
 │         └───────────────────┴───────────────────┘                        │
 │                             │                                            │
@@ -188,6 +190,8 @@ lib/intake/
 │   ├── email-ms365.ts        # MS365 email adapter (Graph API)
 │   ├── email-gmail.ts        # Gmail adapter (Gmail API)
 │   ├── calendar-ms365.ts     # MS365 calendar adapter (Graph API)
+│   ├── calendar-gmail.ts     # Gmail calendar adapter (Google Calendar API)
+│   ├── slack.ts              # Slack adapter (slackdump archive)
 │   └── index.ts              # Exports
 └── triage/
     ├── rules.ts              # json-rules-engine rules
@@ -218,13 +222,15 @@ Key differences:
 | `TELEGRAM_CHAT_ID` | Allowed chat ID | (from BWS) |
 | `SIGNAL_API_URL` | Signal CLI API | `http://127.0.0.1:8080` |
 | `SIGNAL_PHONE` | Signal phone number | (from BWS) |
-| `MS365_USER` | MS365 user email | (required for email/calendar) |
+| `MS365_USER` | MS365 user email | (required for MS365 email/calendar) |
+| `SLACK_ARCHIVE` | Path to slackdump SQLite | `~/slack-archive/slackdump.sqlite` |
 
 ## Authentication
 
 Email and calendar adapters use `auth-keeper.sh` for authentication:
 
 - **MS365**: Uses PowerShell via `_ak_ms365_cmd` for Graph API access
-- **Gmail**: Uses curl with OAuth token from `_ak_google_get_access_token`
+- **Gmail/Google Calendar**: Uses curl with OAuth token from `_ak_google_get_access_token`
+- **Slack**: Reads from local slackdump SQLite archive (populated by separate cron job)
 
 Ensure auth-keeper is configured before using email/calendar sync. See `scripts/auth-keeper.sh` for setup.
