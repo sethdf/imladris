@@ -32,6 +32,12 @@ ZONE=work
 # Calendar MS365: every 15 minutes
 */15 * * * * ubuntu ZONE=$ZONE flock -n /tmp/intake-sync-calendar-ms365.lock $BUN $INTAKE_DIR/cli.ts sync calendar-ms365 2>&1 | logger -t intake-calendar-ms365
 
+# Calendar Gmail: every 15 minutes
+*/15 * * * * ubuntu ZONE=$ZONE flock -n /tmp/intake-sync-calendar-gmail.lock $BUN $INTAKE_DIR/cli.ts sync calendar-gmail 2>&1 | logger -t intake-calendar-gmail
+
+# Slack: every 15 minutes (reads from slackdump archive)
+*/15 * * * * ubuntu ZONE=$ZONE flock -n /tmp/intake-sync-slack.lock $BUN $INTAKE_DIR/cli.ts sync slack 2>&1 | logger -t intake-slack
+
 # All sources: every 15 minutes (backup comprehensive sync)
 */15 * * * * ubuntu ZONE=$ZONE flock -n /tmp/intake-sync-all.lock $BUN $INTAKE_DIR/cli.ts sync all 2>&1 | logger -t intake-all
 
@@ -56,6 +62,8 @@ ZONE=work
 # - Email MS365: every 10 minutes
 # - Email Gmail: every 10 minutes
 # - Calendar MS365: every 15 minutes
+# - Calendar Gmail: every 15 minutes
+# - Slack: every 15 minutes
 # - All sources: every 15 minutes (comprehensive)
 # - Triage: every 10 minutes
 # - Embeddings: every hour
