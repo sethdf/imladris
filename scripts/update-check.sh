@@ -79,6 +79,26 @@ check_bun() {
     return 0
 }
 
+# Check intake system dependencies for updates
+check_intake_deps() {
+    local intake_path="${INTAKE_PATH:-$HOME/repos/github.com/sethdf/imladris/lib/intake}"
+
+    # Skip if intake system not installed
+    if [[ ! -f "$intake_path/package.json" ]]; then
+        return 0
+    fi
+
+    # Check for outdated dependencies
+    local outdated
+    outdated=$(cd "$intake_path" && bun outdated 2>/dev/null | grep -E "(huggingface|chrono-node|compromise|json-rules-engine)" || true)
+
+    if [[ -n "$outdated" ]]; then
+        echo "$outdated"
+        return 1
+    fi
+    return 0
+}
+
 # Check simplex-chat CLI for updates via GitHub releases
 check_simplex() {
     # Skip if not installed
@@ -155,6 +175,15 @@ generate_report() {
         has_updates=1
     fi
 
+    log "Checking Intake System dependencies..."
+    local intake_check
+    intake_check=$(check_intake_deps 2>&1) || true
+    if [[ -n "$intake_check" ]]; then
+        updates+=("Intake System")
+        report+="Intake deps:\n$intake_check\n"
+        has_updates=1
+    fi
+
     # Save report to file
     mkdir -p "$(dirname "$REPORT_FILE")"
     {
@@ -197,11 +226,13 @@ Checks:
   - Curu Skills (sethdf/curu-skills)
   - Anthropic Skills (anthropics/skills)
   - SimpleX Chat CLI
+  - Intake System deps (transformers, chrono-node, etc.)
 
 Environment:
   UPDATE_NOTIFY_CONTACT   SimpleX contact for notifications
   SIMPLEX_CLI             Path to simplex-chat (default: ~/.local/bin/simplex-chat)
   UPDATE_CHECK_REPORT     Path to report file
+  INTAKE_PATH             Path to intake system (default: ~/repos/.../imladris/lib/intake)
 
 Examples:
   update-check                              # Run check
