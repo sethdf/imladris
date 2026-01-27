@@ -61,7 +61,7 @@ async function sync(args: string[]): Promise<void> {
 
   if (source === "all") {
     // Sync all available sources
-    const sources = ["telegram", "signal"];
+    const sources = ["telegram", "signal", "email-ms365", "email-gmail", "calendar-ms365"];
     for (const s of sources) {
       await syncSource(s, zone);
     }
@@ -87,6 +87,15 @@ async function syncSource(source: string, zone: "work" | "home"): Promise<void> 
         break;
       case "signal":
         adapter = await adapters.createSignalAdapter(zone);
+        break;
+      case "email-ms365":
+        adapter = await adapters.createMS365EmailAdapter(zone);
+        break;
+      case "email-gmail":
+        adapter = await adapters.createGmailAdapter(zone);
+        break;
+      case "calendar-ms365":
+        adapter = await adapters.createMS365CalendarAdapter(zone);
         break;
       default:
         console.log(`Adapter for '${source}' not yet implemented.`);
