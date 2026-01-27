@@ -12,3 +12,12 @@ export { TelegramAdapter, createTelegramAdapter } from "./telegram.js";
 
 // Signal
 export { SignalAdapter, createSignalAdapter } from "./signal.js";
+
+// Email - MS365
+export { MS365EmailAdapter, createMS365EmailAdapter } from "./email-ms365.js";
+
+// Email - Gmail
+export { GmailAdapter, createGmailAdapter } from "./email-gmail.js";
+
+// Calendar - MS365
+export { MS365CalendarAdapter, createMS365CalendarAdapter } from "./calendar-ms365.js";
