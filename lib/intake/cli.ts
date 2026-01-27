@@ -78,7 +78,8 @@ async function syncSource(source: string, zone: "work" | "home"): Promise<void> 
     // Dynamic import to avoid loading all adapters upfront
     const adapters = await import("./adapters/index.js");
 
-    let adapter: Awaited<ReturnType<typeof adapters.createTelegramAdapter>> | null = null;
+    // Use BaseAdapter as the common type
+    let adapter: { validate: () => Promise<boolean>; sync: (cursor?: string) => Promise<{ success: boolean; itemsProcessed: number; itemsCreated: number; itemsUpdated: number; errors: string[] }> } | null = null;
 
     switch (source) {
       case "telegram":
