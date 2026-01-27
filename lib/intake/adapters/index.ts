@@ -7,8 +7,8 @@
 export { BaseAdapter, registerAdapter, getAdapter, listAdapters } from "./base.js";
 export type { AdapterConfig, SyncResult } from "./base.js";
 
-// Import and register adapters here
-// import { TelegramAdapter } from "./telegram.js";
-// import { SlackAdapter } from "./slack.js";
-// registerAdapter("telegram", TelegramAdapter);
-// registerAdapter("slack", SlackAdapter);
+// Telegram
+export { TelegramAdapter, createTelegramAdapter } from "./telegram.js";
+
+// Signal
+export { SignalAdapter, createSignalAdapter } from "./signal.js";
