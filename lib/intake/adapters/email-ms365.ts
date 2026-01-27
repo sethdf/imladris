@@ -21,7 +21,7 @@ import {
   type Message,
   type Zone,
 } from "../db/database.js";
-import { BaseAdapter, type AdapterConfig, type SyncResult, registerAdapter } from "./base.js";
+import { BaseAdapter, type AdapterConfig, type SyncResult, registerAdapter, upsertAndTriage } from "./base.js";
 
 // =============================================================================
 // Configuration
@@ -161,7 +161,7 @@ Get-MgUser -UserId '${user}' | Select-Object UserPrincipalName | ConvertTo-Json
             new Date(a.ReceivedDateTime).getTime() - new Date(b.ReceivedDateTime).getTime()
           );
 
-          const isCreated = this.upsertConversation(convId, messages);
+          const isCreated = await this.upsertConversation(convId, messages);
           if (isCreated) {
             result.itemsCreated++;
           } else {
@@ -223,7 +223,7 @@ Get-MgUserMailFolderMessage -UserId '${user}' -MailFolderId $inbox.Id -Filter 'i
   /**
    * Upsert conversation and add messages
    */
-  private upsertConversation(convId: string, messages: MS365Message[]): boolean {
+  private async upsertConversation(convId: string, messages: MS365Message[]): Promise<boolean> {
     const latestMsg = messages[messages.length - 1];
     const firstMsg = messages[0];
 
@@ -289,9 +289,9 @@ Get-MgUserMailFolderMessage -UserId '${user}' -MailFolderId $inbox.Id -Filter 'i
       addMessage(message);
     }
 
-    // Update context
+    // Update context and run triage
     const context = buildThreadContext(intakeId, 10);
-    upsertIntake({
+    await upsertAndTriage({
       ...item,
       context,
       message_count: messages.length,
