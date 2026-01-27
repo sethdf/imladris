@@ -1,0 +1,33 @@
+[Unit]
+Description=Intake Triage Service (spaCy + ChromaDB + Instructor)
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+
+# Working directory
+WorkingDirectory=/home/ubuntu/repos/github.com/sethdf/imladris/lib/intake/triage-service
+
+# Environment
+Environment=TRIAGE_SERVICE_PORT=8100
+Environment=TRIAGE_SERVICE_HOST=127.0.0.1
+Environment=ANTHROPIC_API_KEY=
+
+# Use uv for fast Python execution
+ExecStart=/home/ubuntu/.local/bin/uv run server.py
+
+# Restart policy
+Restart=on-failure
+RestartSec=5
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=intake-triage
+
+[Install]
+WantedBy=multi-user.target
