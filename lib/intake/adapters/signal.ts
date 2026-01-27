@@ -17,7 +17,7 @@ import {
   type Message,
   type Zone,
 } from "../db/database.js";
-import { BaseAdapter, type AdapterConfig, type SyncResult, registerAdapter } from "./base.js";
+import { BaseAdapter, type AdapterConfig, type SyncResult, registerAdapter, upsertAndTriage } from "./base.js";
 
 // =============================================================================
 // Types
@@ -120,7 +120,7 @@ export class SignalAdapter extends BaseAdapter {
         if (text.startsWith("/")) continue;
 
         try {
-          const isCreated = this.upsertConversation(msg);
+          const isCreated = await this.upsertConversation(msg);
           if (isCreated) {
             result.itemsCreated++;
           } else {
@@ -161,7 +161,7 @@ export class SignalAdapter extends BaseAdapter {
   /**
    * Upsert conversation and add message
    */
-  private upsertConversation(msg: SignalMessage): boolean {
+  private async upsertConversation(msg: SignalMessage): Promise<boolean> {
     const envelope = msg.envelope;
     const text = envelope.dataMessage?.message || "";
 
@@ -213,9 +213,9 @@ export class SignalAdapter extends BaseAdapter {
 
     addMessage(message);
 
-    // Update context
+    // Update context and run triage
     const context = buildThreadContext(intakeId, 10);
-    upsertIntake({
+    await upsertAndTriage({
       ...item,
       context,
       message_count: (item.message_count || 0) + 1,
