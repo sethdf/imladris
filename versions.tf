@@ -11,11 +11,11 @@ terraform {
 
 provider "aws" {
   region  = var.aws_region
-  profile = "buxtonit"
+  profile = var.aws_profile
 
   default_tags {
     tags = {
-      Project     = "aws-devbox"
+      Project     = "imladris"
       ManagedBy   = "terraform"
       Environment = "dev"
     }

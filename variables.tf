@@ -4,6 +4,12 @@ variable "aws_region" {
   default     = "us-east-1"
 }
 
+variable "aws_profile" {
+  description = "AWS CLI profile name (null to use default credential chain)"
+  type        = string
+  default     = null
+}
+
 variable "architecture" {
   description = "CPU architecture: arm64 (Graviton) or x86_64"
   type        = string
