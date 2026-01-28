@@ -272,6 +272,52 @@ def find_similar_by_text(
     return similar_items
 
 
+def upsert_item_by_id(
+    item_id: str,
+    category: Optional[str] = None,
+    priority: Optional[str] = None,
+) -> bool:
+    """
+    Update metadata for an existing item in ChromaDB.
+
+    Used when a user corrects a classification - updates the stored
+    metadata so future similarity searches return the corrected values.
+    """
+    collection = get_collection()
+
+    try:
+        # Get the existing item
+        result = collection.get(
+            ids=[item_id],
+            include=["metadatas", "documents"],
+        )
+
+        if not result["ids"]:
+            return False
+
+        # Update metadata with corrected values
+        existing_metadata = result["metadatas"][0] if result["metadatas"] else {}
+        if category:
+            existing_metadata["category"] = category
+        if priority:
+            existing_metadata["priority"] = priority
+
+        # Get existing document
+        existing_doc = result["documents"][0] if result["documents"] else ""
+
+        # Upsert with updated metadata
+        collection.upsert(
+            ids=[item_id],
+            documents=[existing_doc],
+            metadatas=[existing_metadata],
+        )
+
+        return True
+    except Exception as e:
+        print(f"Failed to update ChromaDB item {item_id}: {e}")
+        return False
+
+
 def delete_item(item_id: str) -> bool:
     """Delete an item from the collection."""
     try:
