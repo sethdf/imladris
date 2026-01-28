@@ -262,12 +262,9 @@
 
       # Note: Claude Code and MCP servers are installed by user-data bootstrap
       # They're not in nixpkgs, so user-data installs them via bun globally
-    };
 
-    # Activation scripts - run on home-manager switch
-    activation = {
+      # Install Microsoft.Graph PowerShell modules if not present
       installPowerShellModules = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
-        # Install Microsoft.Graph PowerShell modules if not present
         if ! ${pkgs.powershell}/bin/pwsh -Command "Get-Module -ListAvailable Microsoft.Graph.Authentication" &>/dev/null; then
           echo "Installing Microsoft.Graph PowerShell modules..."
           ${pkgs.powershell}/bin/pwsh -Command "
