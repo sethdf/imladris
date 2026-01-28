@@ -6,7 +6,7 @@
  * Thread-first model: conversations are grouped by channel.
  */
 
-import { $ } from "bun";
+import { Database } from "bun:sqlite";
 import { existsSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
@@ -81,9 +81,9 @@ export class SlackAdapter extends BaseAdapter {
   }
 
   /**
-   * Run a SQLite query on the slackdump archive
+   * Run a SQLite query on the slackdump archive with parameterized queries
    */
-  private async query<T>(sql: string): Promise<T[]> {
+  private query<T>(sql: string, params: Record<string, unknown> = {}): T[] {
     const archivePath = this.getArchivePath();
 
     if (!this.archiveExists()) {
@@ -92,8 +92,13 @@ export class SlackAdapter extends BaseAdapter {
     }
 
     try {
-      const result = await $`sqlite3 -json ${archivePath} ${sql}`.text();
-      return JSON.parse(result) as T[];
+      const db = new Database(archivePath, { readonly: true });
+      try {
+        const stmt = db.prepare(sql);
+        return stmt.all(params) as T[];
+      } finally {
+        db.close();
+      }
     } catch (e) {
       console.error(`SQLite query failed: ${e}`);
       return [];
@@ -107,7 +112,7 @@ export class SlackAdapter extends BaseAdapter {
     if (!this.archiveExists()) return false;
 
     try {
-      const result = await this.query<{ cnt: number }>("SELECT COUNT(*) as cnt FROM MESSAGE LIMIT 1;");
+      const result = this.query<{ cnt: number }>("SELECT COUNT(*) as cnt FROM MESSAGE LIMIT 1;");
       return result.length > 0;
     } catch {
       return false;
