@@ -409,7 +409,7 @@
   programs.git = {
     enable = true;
     userName = "Seth";
-    # userEmail configured separately or via git config
+    userEmail = "seth@example.com";  # TODO: Update with actual email
 
     delta = {
       enable = true;
