@@ -138,7 +138,7 @@ export class SlackAdapter extends BaseAdapter {
 
     try {
       // Get recent messages (last 24 hours)
-      const messages = await this.getRecentMessages(100, 24);
+      const messages = this.getRecentMessages(100, 24);
       console.log(`Processing ${messages.length} Slack messages...`);
 
       // Group by channel for thread-first model
@@ -202,7 +202,10 @@ export class SlackAdapter extends BaseAdapter {
   /**
    * Get recent messages from Slack archive
    */
-  private async getRecentMessages(limit: number, hoursAgo: number): Promise<SlackMessage[]> {
+  private getRecentMessages(limit: number, hoursAgo: number): SlackMessage[] {
+    // Calculate the cutoff timestamp (hours ago from now)
+    const cutoffTime = Math.floor(Date.now() / 1000) - (hoursAgo * 3600);
+
     const sql = `
       SELECT DISTINCT
         m.CHANNEL_ID || '-' || m.TS AS id,
@@ -227,15 +230,15 @@ export class SlackAdapter extends BaseAdapter {
       FROM MESSAGE m
       LEFT JOIN S_USER u ON json_extract(m.DATA, '$.user') = u.ID
       LEFT JOIN CHANNEL c ON m.CHANNEL_ID = c.ID
-      WHERE datetime(CAST(m.TS AS REAL), 'unixepoch') > datetime('now', '-${hoursAgo} hours')
+      WHERE CAST(m.TS AS REAL) > $cutoffTime
         AND m.TXT IS NOT NULL
         AND m.TXT <> ''
       GROUP BY m.CHANNEL_ID, m.TS
       ORDER BY m.TS DESC
-      LIMIT ${limit};
+      LIMIT $limit;
     `;
 
-    return this.query<SlackMessage>(sql);
+    return this.query<SlackMessage>(sql, { $cutoffTime: cutoffTime, $limit: limit });
   }
 
   /**
