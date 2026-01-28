@@ -281,6 +281,94 @@ All scripts are in `scripts/` and symlinked to `~/bin` for easy access.
 | `tmux-session-colors.sh` | Tmux zone-based color theming. Colors pane borders/status by context: green (home), blue (work), red (prod/admin), purple (other). Called by direnv/session hooks |
 | `user-data-legacy.sh` | Legacy non-Nix bootstrap: apt packages, oh-my-zsh, tmux plugins, spot interruption handler. Deprecated in favor of Nix |
 
+## Libraries
+
+### Unified Intake System (`lib/intake/`)
+
+Universal intake system for personal information triage - a local RAG for messages from all sources.
+
+```bash
+# Initialize database
+bun run lib/intake/cli.ts init
+
+# Sync from sources
+bun run lib/intake/cli.ts sync all          # All sources
+bun run lib/intake/cli.ts sync telegram     # Single source
+
+# Query items
+bun run lib/intake/cli.ts query -z work -n 10
+bun run lib/intake/cli.ts query --untriaged
+
+# Run triage
+bun run lib/intake/cli.ts triage run
+
+# Show statistics
+bun run lib/intake/cli.ts stats
+```
+
+**Architecture:**
+```
+Sources (Telegram, Signal, Slack, Email, Calendar)
+    ↓
+Adapters (lib/intake/adapters/)
+    ↓
+SQLite Database (/data/.cache/intake/intake.sqlite)
+    ↓
+Triage Engine (4 layers: Entities → Rules → Similarity → AI)
+    ↓
+Classified Items (Category, Priority, Quick-Win)
+```
+
+**Supported Sources:**
+| Source | Adapter | Auth Method |
+|--------|---------|-------------|
+| Telegram | Bot API | BWS: telegram-bot-token |
+| Signal | signal-cli REST | BWS: signal-phone |
+| Slack | slackdump archive | Local SQLite |
+| Email (MS365) | Graph API | auth-keeper ms365 |
+| Email (Gmail) | Gmail API | auth-keeper google |
+| Calendar (MS365) | Graph API | auth-keeper ms365 |
+| Calendar (Gmail) | Calendar API | auth-keeper google |
+
+**Triage Output:**
+- Category: Action-Required, FYI, Awaiting-Reply, Delegated, Scheduled, Reference
+- Priority: P0 (emergency), P1 (today), P2 (week), P3 (convenient)
+- Quick-Win flag with estimated time
+- Confidence score (0-100)
+
+**Python Triage Service (optional, for better accuracy):**
+```bash
+cd lib/intake/triage-service
+pip install -r requirements.txt
+uvicorn server:app --port 8100
+```
+
+## Skills
+
+Local skills in `skills/` directory:
+
+| Skill | Purpose |
+|-------|---------|
+| `servicedesk-plus/` | ServiceDesk Plus ticket management with two-way sync |
+
+**Note:** curu-sync, curu-commit, curu-watch commands are PAI features in the curu-skills repo, not in imladris.
+
+## Tests
+
+Test infrastructure in `tests/` directory:
+
+| Directory | Framework | Coverage |
+|-----------|-----------|----------|
+| `tests/shell/` | Bats | 174 shell script tests |
+| `tests/integration/` | Go + Terratest | Infrastructure validation |
+| `tests/unit/` | pytest | Python unit tests (stub) |
+| `tests/docker/` | Docker Compose | Containerized test execution |
+
+```bash
+make test-shell     # Run Bats tests
+make test-docker    # Run all tests in Docker
+```
+
 ## Common Commands
 
 ```bash
