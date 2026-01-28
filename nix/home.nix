@@ -229,8 +229,15 @@
       installSimplexChat = lib.hm.dag.entryAfter [ "writeBoundary" "createDirs" ] ''
         if [ ! -f "${homeDirectory}/.local/bin/simplex-chat" ]; then
           echo "Installing simplex-chat CLI..."
+          # Detect architecture for correct binary
+          ARCH=$(uname -m)
+          if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+            SIMPLEX_ARCH="aarch64"
+          else
+            SIMPLEX_ARCH="x86-64"
+          fi
           ${pkgs.curl}/bin/curl -L -o "${homeDirectory}/.local/bin/simplex-chat" \
-            "https://github.com/simplex-chat/simplex-chat/releases/latest/download/simplex-chat-ubuntu-22_04-x86-64" || true
+            "https://github.com/simplex-chat/simplex-chat/releases/latest/download/simplex-chat-ubuntu-22_04-$SIMPLEX_ARCH" || true
           chmod +x "${homeDirectory}/.local/bin/simplex-chat" 2>/dev/null || true
         fi
       '';
