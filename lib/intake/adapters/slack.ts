@@ -83,7 +83,7 @@ export class SlackAdapter extends BaseAdapter {
   /**
    * Run a SQLite query on the slackdump archive with parameterized queries
    */
-  private query<T>(sql: string, params: Record<string, unknown> = {}): T[] {
+  private query<T>(sql: string, params: Record<string, string | number | null> = {}): T[] {
     const archivePath = this.getArchivePath();
 
     if (!this.archiveExists()) {
@@ -95,7 +95,7 @@ export class SlackAdapter extends BaseAdapter {
       const db = new Database(archivePath, { readonly: true });
       try {
         const stmt = db.prepare(sql);
-        return stmt.all(params) as T[];
+        return stmt.all(params as Parameters<typeof stmt.all>[0]) as T[];
       } finally {
         db.close();
       }
