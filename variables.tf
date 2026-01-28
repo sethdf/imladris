@@ -118,3 +118,13 @@ variable "tailscale_api_key" {
   type        = string
   sensitive   = true
 }
+
+# -----------------------------------------------------------------------------
+# Cross-Account Access
+# -----------------------------------------------------------------------------
+
+variable "allowed_assume_role_arns" {
+  description = "List of IAM role ARNs the instance can assume (empty = allow all, not recommended)"
+  type        = list(string)
+  default     = []
+}

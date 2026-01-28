@@ -173,9 +173,12 @@ resource "aws_iam_role_policy" "imladris_assume_role" {
     Version = "2012-10-17"
     Statement = [
       {
-        Effect   = "Allow"
-        Action   = "sts:AssumeRole"
-        Resource = "*"
+        Effect = "Allow"
+        Action = "sts:AssumeRole"
+        # If specific ARNs provided, use those; otherwise allow Imladris* roles only
+        Resource = length(var.allowed_assume_role_arns) > 0 ? var.allowed_assume_role_arns : [
+          "arn:aws:iam::*:role/Imladris*"
+        ]
       }
     ]
   })
