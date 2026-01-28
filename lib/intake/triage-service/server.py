@@ -32,6 +32,12 @@ from vectors import (
     upsert_item,
 )
 from classifier import classify
+from database import (
+    record_correction as db_record_correction,
+    get_original_triage,
+    update_triage_with_correction,
+    get_recent_corrections,
+)
 
 # =============================================================================
 # Configuration
@@ -294,19 +300,57 @@ async def triage_endpoint(item: IntakeItem, skip_ai: bool = False):
 
 
 @app.post("/correct")
-async def record_correction(correction: CorrectionRequest):
+async def record_correction_endpoint(correction: CorrectionRequest):
     """
     Record a user correction for learning.
 
     Corrections are stored and used to improve future classifications.
+    This also updates the current triage record and stores the correction
+    history for similarity-based learning.
     """
-    # TODO: Store in SQLite or separate corrections collection
-    # For now, just acknowledge
-    return {
-        "status": "recorded",
-        "intake_id": correction.intake_id,
-        "corrected_to": f"{correction.corrected_category}/{correction.corrected_priority}",
-    }
+    try:
+        # Get original triage values
+        original_category, original_priority = get_original_triage(correction.intake_id)
+
+        # Record the correction in history
+        correction_id = db_record_correction(
+            intake_id=correction.intake_id,
+            corrected_category=correction.corrected_category,
+            corrected_priority=correction.corrected_priority,
+            original_category=original_category,
+            original_priority=original_priority,
+            correction_reason=correction.reason,
+        )
+
+        # Update the triage record
+        updated = update_triage_with_correction(
+            intake_id=correction.intake_id,
+            corrected_category=correction.corrected_category,
+            corrected_priority=correction.corrected_priority,
+        )
+
+        # Update ChromaDB with corrected classification for future similarity
+        # This helps the system learn from corrections
+        from vectors import upsert_item_by_id
+        try:
+            upsert_item_by_id(
+                item_id=correction.intake_id,
+                category=correction.corrected_category,
+                priority=correction.corrected_priority,
+            )
+        except Exception as e:
+            print(f"Warning: Failed to update ChromaDB: {e}")
+
+        return {
+            "status": "recorded",
+            "correction_id": correction_id,
+            "intake_id": correction.intake_id,
+            "original": f"{original_category}/{original_priority}",
+            "corrected_to": f"{correction.corrected_category}/{correction.corrected_priority}",
+            "triage_updated": updated,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to record correction: {e}")
 
 
 @app.post("/store")
