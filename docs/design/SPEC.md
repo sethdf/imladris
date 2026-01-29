@@ -1450,3 +1450,290 @@ When user gains/loses access to accounts:
 | Reliability | Critical sync logic is deterministic |
 | Upgradability | Can update skills without touching host code |
 | Discoverability | Skills query host for available resources |
+
+---
+
+## Appendix E: PAI Workspace Integration
+
+### Overview
+
+Context preservation uses PAI's existing infrastructure (hooks, memory, skills) rather than building parallel systems. Hooks handle session boundaries; skills handle intra-session transitions.
+
+### Context Storage
+
+All context stored within PAI's structure:
+
+```
+~/.claude/history/
+├── workspaces/                  ← Workspace-level context
+│   ├── work:tasks.md
+│   ├── work:projects.md
+│   ├── work:comms.md
+│   ├── home:tasks.md
+│   └── ...
+├── tasks/                       ← Task-level context
+│   ├── sdp-123.md
+│   ├── sdp-456.md
+│   └── ...
+├── sessions/                    ← Existing PAI
+├── learnings/
+└── decisions/
+```
+
+### Environment Variables
+
+Set by workspace switch commands, read by hooks and skills:
+
+```bash
+export CONTEXT=work              # Zone (set by direnv on cd)
+export WORKSPACE_MODE=tasks      # Mode (set by /work tasks)
+export WORKSPACE_NAME=work:tasks # Combined (derived)
+export CURRENT_TASK=sdp-123      # Active task ID
+```
+
+### Session Lifecycle (Hooks)
+
+**SessionStart Hook** - Loads context on session start:
+
+```typescript
+// ~/.claude/hooks/workspace-context-hook.ts
+export async function onSessionStart(input: HookInput): Promise<HookOutput> {
+  const workspace = process.env.WORKSPACE_NAME;
+  const taskId = process.env.CURRENT_TASK;
+
+  let context = "";
+
+  // Load workspace context
+  const workspaceFile = `~/.claude/history/workspaces/${workspace}.md`;
+  if (fs.existsSync(workspaceFile)) {
+    context += fs.readFileSync(workspaceFile, 'utf-8');
+  }
+
+  // Load task context if active
+  if (taskId) {
+    const taskFile = `~/.claude/history/tasks/${taskId}.md`;
+    if (fs.existsSync(taskFile)) {
+      context += "\n\n" + fs.readFileSync(taskFile, 'utf-8');
+    }
+  }
+
+  return { continue: true, context };
+}
+```
+
+**SessionEnd Hook** - Saves context on session end:
+
+```typescript
+// ~/.claude/hooks/workspace-autosave-hook.ts
+export async function onSessionEnd(input: HookInput): Promise<HookOutput> {
+  const workspace = process.env.WORKSPACE_NAME;
+  const taskId = process.env.CURRENT_TASK;
+
+  // Generate summary from transcript
+  const summary = generateSummary(input.transcript);
+
+  // Save workspace context
+  const workspaceFile = `~/.claude/history/workspaces/${workspace}.md`;
+  fs.writeFileSync(workspaceFile, formatWorkspaceContext(summary, taskId));
+
+  // Save task context if active
+  if (taskId) {
+    const taskFile = `~/.claude/history/tasks/${taskId}.md`;
+    fs.writeFileSync(taskFile, formatTaskContext(summary));
+  }
+
+  return { continue: true };
+}
+```
+
+**PreCompact Hook** - Preserves context before summarization:
+
+```typescript
+// ~/.claude/hooks/precompact-save-hook.ts
+export async function onPreCompact(input: HookInput): Promise<HookOutput> {
+  // Same logic as SessionEnd - save before context is compacted
+  // Ensures context is preserved even if Claude summarizes aggressively
+  saveCurrentContext(input);
+  return { continue: true };
+}
+```
+
+### Intra-Session (Skills)
+
+Skills handle context within a session (no hooks fire):
+
+**/task switch** - Save current, load new:
+
+```
+User: /task switch sdp-456
+
+Claude (TaskContext skill):
+1. Summarizes current work: "You were debugging auth token refresh..."
+2. Writes to ~/.claude/history/tasks/sdp-123.md
+3. Reads ~/.claude/history/tasks/sdp-456.md
+4. Injects new context: "Resuming SDP-456: You were implementing..."
+5. Updates CURRENT_TASK=sdp-456
+```
+
+**/park** - Force save without ending session:
+
+```
+User: /park "investigating rate limiting issue"
+
+Claude (TaskContext skill):
+1. Saves current context immediately (same as SessionEnd would)
+2. Adds user note to context file
+3. Confirms: "Context saved. You can safely switch or close."
+```
+
+**/spec pause** - Save spec state:
+
+```
+User: /spec pause
+
+Claude (SpecAssist skill):
+1. Saves current spec progress
+2. Notes phase (specify/plan/task/implement)
+3. Records pending decisions
+4. Writes to .specs/{spec-id}.paused.md
+```
+
+### Context File Format
+
+**Workspace Context** (`~/.claude/history/workspaces/work:tasks.md`):
+
+```markdown
+---
+workspace: work:tasks
+updated: 2026-01-29T14:32:00Z
+active_task: sdp-123
+---
+
+## Last Session Summary
+
+Working on SDP-123 (auth token refresh bug). Found root cause in
+TokenManager.refresh() - wasn't handling 401 responses correctly.
+
+## Active Task
+
+- **ID:** sdp-123
+- **Status:** in-progress
+- **Last action:** Reading TokenManager.ts
+
+## Pending Questions
+
+- Should we retry on 401 or immediately refresh?
+- Need to check if refresh token is also expired
+
+## Open Files
+
+- src/auth/TokenManager.ts:142
+- tests/auth/TokenManager.test.ts
+```
+
+**Task Context** (`~/.claude/history/tasks/sdp-123.md`):
+
+```markdown
+---
+task_id: sdp-123
+source: sdp
+title: Auth token refresh failing intermittently
+updated: 2026-01-29T14:32:00Z
+spec_id: fix-auth-refresh
+---
+
+## Summary
+
+Investigating intermittent auth failures. Users report being logged out
+randomly. Found that TokenManager.refresh() doesn't handle 401 during
+refresh attempt.
+
+## Progress
+
+1. ✓ Reproduced issue locally
+2. ✓ Found root cause in TokenManager.ts:142
+3. → Implementing fix
+4. ○ Write tests
+5. ○ Verify fix
+
+## Key Findings
+
+- 401 during refresh causes infinite loop
+- refresh_token might also be expired
+- Need to check expiry BEFORE attempting refresh
+
+## Next Steps
+
+Implement retry logic with exponential backoff, add refresh token
+expiry check.
+```
+
+### Complete Context Flow
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Session Boundaries (Hooks)                                     │
+│                                                                 │
+│  SessionStart ──► Load workspace + task context                 │
+│  SessionEnd   ──► Save workspace + task context                 │
+│  PreCompact   ──► Save before Claude summarizes                 │
+└─────────────────────────────────────────────────────────────────┘
+         │
+         │ Hooks fire automatically
+         │
+┌────────┴────────────────────────────────────────────────────────┐
+│  Within Session (Skills)                                        │
+│                                                                 │
+│  /task switch ──► Save current task, load new task              │
+│  /task pause  ──► Save task context (no load)                   │
+│  /park        ──► Save all context immediately                  │
+│  /spec pause  ──► Save spec state                               │
+└─────────────────────────────────────────────────────────────────┘
+         │
+         │ Both read/write same files
+         │
+┌────────┴────────────────────────────────────────────────────────┐
+│  Storage                                                        │
+│                                                                 │
+│  ~/.claude/history/workspaces/{workspace}.md                    │
+│  ~/.claude/history/tasks/{task-id}.md                           │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Context Never Lost
+
+| Scenario | What Saves Context |
+|----------|-------------------|
+| Normal session end | SessionEnd hook |
+| Task switch mid-session | TaskContext skill |
+| `/park` command | TaskContext skill |
+| Context window fills | PreCompact hook |
+| SSH disconnect | SessionEnd hook (if clean) |
+| Claude Code crash | PreCompact hook (last save) + JSONL transcript |
+| Instance reboot | JSONL transcript + `/resume` |
+
+### Recovery Commands
+
+```bash
+/resume              # PAI built-in: reload from JSONL transcript
+/context show        # Show current loaded context
+/context reload      # Force reload from context files
+/task history        # Show task context history
+```
+
+### Git Automation Controls
+
+```bash
+/git pause           # Pause auto-commit (messy refactor)
+/git resume          # Resume auto-commit
+/git status          # Show auto-commit state
+```
+
+### Spec Lifecycle Controls
+
+```bash
+/spec pause          # Pause spec, keep WIP branch
+/spec resume         # Resume paused spec
+/spec abandon        # Archive spec, delete WIP branch
+/spec list --all     # Show active, paused, abandoned
+```
