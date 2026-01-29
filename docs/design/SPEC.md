@@ -19,8 +19,9 @@
 8. [Infrastructure](#8-infrastructure)
 9. [User Scenarios](#9-user-scenarios)
 10. [Coding Methodology](#10-coding-methodology)
-11. [Out of Scope](#11-out-of-scope)
-12. [Open Questions](#12-open-questions)
+11. [Chat Gateway (Mobile Access)](#11-chat-gateway-mobile-access)
+12. [Out of Scope](#12-out-of-scope)
+13. [Open Questions](#13-open-questions)
 
 ---
 
@@ -1544,27 +1545,261 @@ echo "config.js:42" >> .gitleaks-allowlist
 
 ---
 
-## 11. Out of Scope
+## 11. Chat Gateway (Mobile Access)
+
+### 11.1 Purpose
+
+Continue Claude sessions from iOS via existing chat platforms. This is NOT a mobile app—it's a bridge from Telegram (which already has an iOS app) to Claude Code sessions running on imladris.
+
+### 11.2 Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  iOS Device                                                 │
+│  ┌─────────────┐                                           │
+│  │ Telegram    │  (existing app, no custom code)           │
+│  └──────┬──────┘                                           │
+└─────────┼───────────────────────────────────────────────────┘
+          │ Bot API (existing)
+          ▼
+┌─────────────────────────────────────────────────────────────┐
+│  imladris                                                   │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │ chat-gateway.sh                                      │   │
+│  │  - Extends telegram-inbox.sh                         │   │
+│  │  - Routes /c messages to Claude                      │   │
+│  │  - Captures responses, sends back                    │   │
+│  └─────────────────────────────────────────────────────┘   │
+│                        │                                    │
+│                        ▼                                    │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │ tmux session (work:tasks, home:adhoc, etc.)          │   │
+│  │  - Claude Code running                               │   │
+│  │  - send-keys for input                               │   │
+│  │  - capture-pane for output                           │   │
+│  └─────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 11.3 Commands
+
+From Telegram on iOS:
+
+| Command | Action |
+|---------|--------|
+| `/c <message>` | Send to active Claude session |
+| `/c` (no args) | Show current session info |
+| `/sessions` | List active tmux windows with Claude |
+| `/switch <workspace>` | Switch to workspace (e.g., `work:tasks`) |
+| `/new <workspace>` | Start new Claude session in workspace |
+| `/last` | Show last response (if truncated) |
+| `/cancel` | Cancel pending request |
+
+Regular messages (no `/c`) continue to work as before—saved to inbox.
+
+### 11.4 Session Management
+
+**State file:** `~/.local/state/chat-gateway.json`
+
+```json
+{
+  "active_session": "work:tasks",
+  "last_request": "2026-01-29T14:32:00Z",
+  "pending": false,
+  "last_response_full": "/tmp/chat-gateway-last.txt"
+}
+```
+
+**Session selection:**
+1. Use explicit `/switch` if specified
+2. Otherwise use `active_session` from state
+3. Default to `work:adhoc` if no state
+
+**Workspace mapping:**
+
+| Workspace | tmux window |
+|-----------|-------------|
+| `work:tasks` | `main:work-tasks` |
+| `work:comms` | `main:work-comms` |
+| `home:adhoc` | `main:home-adhoc` |
+| etc. | Pattern: `main:{zone}-{mode}` |
+
+### 11.5 Input/Output Flow
+
+**Input (iOS → Claude):**
+
+```bash
+# 1. Receive message from Telegram
+msg="/c how do I fix the auth bug?"
+
+# 2. Strip prefix, get content
+content="how do I fix the auth bug?"
+
+# 3. Get target session
+session=$(jq -r '.active_session' ~/.local/state/chat-gateway.json)
+tmux_target="main:${session//:/-}"  # work:tasks → main:work-tasks
+
+# 4. Send to Claude
+tmux send-keys -t "$tmux_target" "$content" Enter
+
+# 5. Mark pending
+update_state pending=true
+```
+
+**Output (Claude → iOS):**
+
+```bash
+# 1. Wait for Claude to finish (detect prompt return)
+# Poll every 2s, timeout 5min
+
+# 2. Capture response
+response=$(tmux capture-pane -t "$tmux_target" -p | extract_last_response)
+
+# 3. Truncate if needed (Telegram limit: 4096 chars)
+if [[ ${#response} -gt 4000 ]]; then
+    echo "$response" > /tmp/chat-gateway-last.txt
+    response="${response:0:3900}...
+
+[Truncated. Send /last for full response]"
+fi
+
+# 4. Send back
+send_telegram_message "$response"
+
+# 5. Clear pending
+update_state pending=false
+```
+
+### 11.6 Response Detection
+
+**Challenge:** Know when Claude has finished responding.
+
+**Solution:** Prompt pattern detection + output stability
+
+```bash
+# Claude Code shows prompt when ready for input
+# Detect by checking if output has stabilized
+
+wait_for_response() {
+    local target="$1"
+    local timeout=300  # 5 min
+    local elapsed=0
+    local interval=2
+    local last_hash=""
+
+    while [[ $elapsed -lt $timeout ]]; do
+        local content=$(tmux capture-pane -t "$target" -p)
+        local current_hash=$(echo "$content" | md5sum | cut -d' ' -f1)
+
+        # If content unchanged for 2 checks, assume done
+        if [[ "$current_hash" == "$last_hash" ]]; then
+            return 0
+        fi
+
+        last_hash="$current_hash"
+        sleep $interval
+        elapsed=$((elapsed + interval))
+    done
+    return 1  # Timeout
+}
+```
+
+### 11.7 Security
+
+| Control | Implementation |
+|---------|----------------|
+| Auth | Only accept from configured `telegram-chat-id` (existing) |
+| Rate limit | 20 messages/minute, 100/hour |
+| Cost awareness | Estimate tokens, warn on long prompts |
+| Timeout | 5 minute max wait per request |
+| Queue | One request at a time (reject if pending) |
+
+### 11.8 Limitations
+
+| Limitation | Workaround |
+|------------|------------|
+| No file uploads | Use `/sync` in datahub, reference by path |
+| No streaming | Poll for completion, show "thinking..." |
+| Response truncation | `/last` for full response |
+| Single request queue | Wait for completion or `/cancel` |
+| No multi-turn visibility | Session context maintained server-side |
+
+### 11.9 Example Session
+
+```
+You: /c what's the status of the auth bug?
+
+Bot: Looking at work:tasks context...
+
+The auth bug (SDP-1234) is in progress. Last update:
+added retry logic to token refresh. Tests passing locally,
+CI pending.
+
+Next step: Review CI results and update ticket.
+
+---
+
+You: /c update the ticket with current status
+
+Bot: ✓ Updated SDP-1234:
+- Added note: "Retry logic implemented, tests passing"
+- Status: In Progress
+
+---
+
+You: /switch home:adhoc
+
+Bot: ✓ Switched to home:adhoc
+
+---
+
+You: /c remind me to call mom tomorrow
+
+Bot: Created reminder in home:tasks:
+"Call mom" - Due: 2026-01-30
+
+---
+
+You: /sessions
+
+Bot: Active sessions:
+• work:tasks (2m ago)
+• work:comms (1h ago)
+• home:adhoc ← active
+```
+
+### 11.10 Implementation Phases
+
+| Phase | Scope |
+|-------|-------|
+| 1 | Basic `/c` routing with fixed 30s wait |
+| 2 | Smart completion detection, truncation, `/last` |
+| 3 | Session management (`/sessions`, `/switch`, `/new`) |
+| 4 | Rate limiting, cost estimates |
+
+---
+
+## 12. Out of Scope
 
 | Feature | Reason |
 |---------|--------|
 | Outbound automation | Collector, not actor |
 | Push notifications | Polling model |
 | Multi-instance/HA | Single user workstation |
-| Mobile app | CLI only |
-| GUI | Terminal only |
+| Native mobile app | Chat gateway via Telegram instead |
+| GUI | Terminal only (Telegram is the "GUI") |
 | Offline Claude | Bedrock requires network |
 
 ---
 
-## 12. Open Questions
+## 13. Open Questions
 
 | Question | Status |
 |----------|--------|
 | Secondary offsite backup destination | S3 (see Appendix F) |
 | Attachment storage/download location | On-demand to `/data/attachments/` |
 | Triage feedback loop (improve Claude) | v2 |
-| Mobile/multi-device access | Out of scope (CLI only) |
+| Mobile/multi-device access | ✓ Resolved: Chat Gateway (Section 11) |
 
 ---
 
