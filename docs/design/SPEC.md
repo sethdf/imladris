@@ -79,12 +79,12 @@ Imladris 2.0 is a personal cloud workstation for:
 - Saves 23+ minutes of "where was I?" on return
 
 ### Principle 4: Friction is Intentional
-| Transition | Friction Level |
-|------------|----------------|
-| Start working | Low |
-| Within mode | Low |
-| Mode → Mode (same zone) | Medium |
-| Zone → Zone | Higher |
+| Transition | Friction Level | What This Means |
+|------------|----------------|-----------------|
+| Start working | Low | Just `/work`, context loads automatically |
+| Within mode | Low | Commands execute immediately |
+| Mode → Mode (same zone) | Medium | Brief pause, context summary shown |
+| Zone → Zone | Higher | Full context save, confirmation prompt |
 
 ### Principle 5: Deep vs Shallow Work Separation
 | Shallow (batch) | Deep (protect) |
@@ -1460,9 +1460,10 @@ echo "config.js:42" >> .gitleaks-allowlist
 
 | Question | Status |
 |----------|--------|
-| Secondary offsite backup destination | TBD |
-| Attachment storage/download location | TBD |
+| Secondary offsite backup destination | S3 (see Appendix F) |
+| Attachment storage/download location | On-demand to `/data/attachments/` |
 | Triage feedback loop (improve Claude) | v2 |
+| Mobile/multi-device access | Out of scope (CLI only) |
 
 ---
 
@@ -2157,6 +2158,49 @@ All modes get PAI context preservation. The difference is whether items sync to 
 | **research** | No | Yes | PAI history (local topics) |
 | **adhoc** | Yes → SDP (General Task) | Yes | Datahub + PAI history |
 
+### Projects Mode & Ownership
+
+Projects mode surfaces long-running initiatives you own (vs tasks assigned to you).
+
+**Ownership defined by:**
+
+| Source | Owner Field | You Own If |
+|--------|-------------|------------|
+| SDP Project | `owner` or `project_manager` | Your user ID matches |
+| DevOps Project | `project.owner` | Your user ID matches |
+| Local project | `owner` in frontmatter | Set to `self` |
+
+**What appears in projects:**
+
+```
+/work projects
+    ↓
+"Your projects (work):
+ - Imladris 2.0 (local) - 3 open tasks
+ - Q1 Security Audit (SDP) - 12 open tasks
+ - API Migration (DevOps) - 8 open tasks
+
+ Select project to see tasks and progress"
+```
+
+**Project vs Task distinction:**
+
+| Aspect | Task | Project |
+|--------|------|---------|
+| Duration | Hours to days | Weeks to months |
+| Subtasks | No | Yes (tasks belong to projects) |
+| Ownership | Assigned to you | You're responsible for outcome |
+| Completion | Single action | Multiple milestones |
+
+**Commands:**
+
+```bash
+/projects                    # List owned projects
+/projects show <id>          # Project details + task breakdown
+/projects status <id>        # Update project status
+/projects add-task <id>      # Create task under project
+```
+
 ### Comms Mode Workflow
 
 Comms mode is for **batch processing** communications - not staying in it all day. Enter, process actionable items, exit.
@@ -2439,3 +2483,379 @@ Extensions fail safely - Claude still works, just without enhancements:
 | Hook error | Continue session (log error) |
 | Skill not loaded | Claude works without skill (degraded) |
 | History write fails | Warn, session continues |
+
+---
+
+## Appendix F: Edge Cases & Operational Concerns
+
+### Terminology Clarification
+
+| Term | Scope | Examples |
+|------|-------|----------|
+| **Item** | Any datahub entry | Email, Slack message, SDP ticket, calendar event |
+| **Task** | Actionable work item | SDP Request, DevOps work item, General Task |
+| **Comm** | Communication needing response | Email needing reply, Slack thread |
+
+**Rule:** "Item" is the generic container. "Task" and "Comm" are item types filtered by mode.
+
+### Default Mode Rationale
+
+`/work` defaults to `comms`, not `tasks`. Why?
+
+| Reason | Explanation |
+|--------|-------------|
+| Triage first | Check what came in before diving into deep work |
+| Quick wins | Process easy comms before committing to tasks |
+| Context loading | Comms are lighter context than task work |
+| Natural flow | Most people check messages before starting work |
+
+**Override:** `/work tasks` to go directly to tasks.
+
+### When to Use What
+
+| Situation | Use This | Not This |
+|-----------|----------|----------|
+| Quick question from existing ticket | `/task split sdp-456` | `/adhoc new` |
+| Unplanned investigation | `/adhoc new "description"` | `/task split --fresh` |
+| Email becomes significant work | `/comms promote` | `/adhoc new` |
+| Parallel work while Claude runs | `/task split` | New terminal |
+
+### Concurrent Write Handling
+
+Two panes writing to same context file:
+
+```
+Pane 1: saves sdp-123.md at 14:32:01
+Pane 2: saves sdp-123.md at 14:32:02
+```
+
+**Resolution:** Last-write-wins with merge attempt.
+
+| Scenario | Handling |
+|----------|----------|
+| Different sections modified | Auto-merge (git-style) |
+| Same section modified | Last write wins, previous in `.backup` |
+| Conflicting status changes | Alert user, require manual resolution |
+
+**Implementation:** File locks with 100ms timeout. If lock fails, queue write for retry.
+
+### Email & Slack Threading
+
+**Email:**
+
+| Unit | Behavior |
+|------|----------|
+| Conversation thread | Single item (grouped by `conversationId`) |
+| Each message | Appended to thread item as notes |
+| New thread | New item |
+
+**Slack:**
+
+| Unit | Behavior |
+|------|----------|
+| Thread | Single item (grouped by `thread_ts`) |
+| Channel message (no thread) | Single item |
+| DM | Single item per conversation |
+
+**Why threads, not messages:** Triage and response happen at conversation level, not per-message.
+
+### Git Conflicts in Parallel Panes
+
+Two panes, same repo, both auto-committing:
+
+| Scenario | Handling |
+|----------|----------|
+| Different files | No conflict, both commit |
+| Same file, different lines | Auto-merge on commit |
+| Same file, same lines | gitwatch pauses, alerts user |
+
+**Resolution flow:**
+
+```
+gitwatch detects conflict
+    ↓
+Pauses auto-commit for that repo
+    ↓
+Alerts: "Conflict in src/auth.ts - resolve manually"
+    ↓
+User resolves (or one pane finishes)
+    ↓
+gitwatch resumes
+```
+
+### Queue & Sync Edge Cases
+
+| Edge Case | Handling |
+|-----------|----------|
+| Item deleted while write pending | Cancel queued write, log warning |
+| External item deleted (404) | Move local to trash, prompt user |
+| LUKS not mounted when poller runs | Poller skips cycle, logs warning |
+| Initial sync with existing files | Merge by timestamp (newer wins), backup conflicts |
+| Duplicate external ID | Append hash suffix, alert user |
+
+### Tag Normalization
+
+All tags normalized to lowercase with special chars stripped:
+
+| Input | Normalized |
+|-------|------------|
+| `Urgent` | `urgent` |
+| `URGENT` | `urgent` |
+| `High Priority` | `high-priority` |
+| `@important` | `important` |
+
+**Sync behavior:** Normalized locally, original case preserved in external system.
+
+### Timezone Handling
+
+| Timestamp | Format | Timezone |
+|-----------|--------|----------|
+| Item `created`/`updated` | ISO 8601 | UTC |
+| Display to user | Local time | User's TZ (from system) |
+| Sync to external | Converted | API's expected TZ |
+| Context file timestamps | ISO 8601 | UTC |
+
+**Rule:** Store UTC, display local, convert on sync.
+
+### Rate Limiting
+
+| Service | Limit | Handling |
+|---------|-------|----------|
+| MS365 Graph | 10,000/10min | Exponential backoff, resume |
+| Gmail | 250 quota units/sec | Batch requests, backoff |
+| SDP | 50/min | Queue with delay |
+| Slack (slackdump) | Session-based | Re-auth if blocked |
+| DevOps | 200/min | Backoff |
+
+**On rate limit:**
+
+```
+1. Log warning
+2. Exponential backoff (1s, 2s, 4s, 8s, max 5min)
+3. Resume from last sync point
+4. Alert if >3 consecutive failures
+```
+
+### Disk Space Management
+
+| Directory | Growth | Management |
+|-----------|--------|------------|
+| `/data/*/datahub/items/` | ~10MB/month | Purge trash after 365 days |
+| `/data/*/datahub/queue/completed/` | Unbounded | Purge after 7 days |
+| `/data/claude/` | ~100MB/month | Compact sessions older than 30 days |
+| `/data/repos/` | Varies | User manages |
+
+**Alerts:**
+
+| Threshold | Action |
+|-----------|--------|
+| 80% disk | Warning in status dashboard |
+| 90% disk | Alert + auto-purge old queue/trash |
+| 95% disk | Pause pollers, urgent alert |
+
+### slackdump Re-authentication
+
+Browser session expires approximately every 30 days.
+
+**Detection:**
+
+```
+slackdump returns auth error
+    ↓
+auth-keeper marks work-slack as expired
+    ↓
+Status bar shows ⚠ slack auth
+    ↓
+Slack poller pauses (others continue)
+```
+
+**Recovery:**
+
+```bash
+auth-keeper setup work-slack    # Opens browser for re-auth
+# Follow Slack OAuth flow
+# slackdump captures new session
+auth-keeper status              # Verify green
+```
+
+**Proactive:** Warning at 25 days since last auth.
+
+### Search Across Zones
+
+| Command | Behavior |
+|---------|----------|
+| `/search "query"` | Current zone only |
+| `/search "query" --all` | Both zones |
+| `/search "query" --zone home` | Explicit zone |
+
+**Why default to current zone:** Prevents accidental mixing of work/home context.
+
+### Calendar Event Creation
+
+```bash
+/calendar add --work "Q3 Planning" --date 2026-02-15 --time 14:00 --duration 1h
+```
+
+| Field | Required | Default |
+|-------|----------|---------|
+| Title | Yes | - |
+| Date | No | Today |
+| Time | No | Next hour |
+| Duration | No | 30min |
+| Zone | No | Current zone |
+
+**Sync:** Queued to appropriate calendar (MS365 for work, Google for home).
+
+### Backup & Restore
+
+**Backup layers:**
+
+| Layer | Frequency | Retention | Restore Time |
+|-------|-----------|-----------|--------------|
+| EBS snapshots (DLM) | Hourly | 24 hours | 10-15 min |
+| S3 sync | Daily | 90 days | 30-60 min |
+| LUKS full image | Weekly | 4 weeks | 1-2 hours |
+
+**Restore procedure:**
+
+```bash
+# From EBS snapshot (fastest)
+1. Stop instance
+2. Detach current data volume
+3. Create volume from snapshot
+4. Attach as /dev/xvdf
+5. Start instance
+6. imladris-unlock
+
+# From S3 (if EBS unavailable)
+1. Create fresh data volume
+2. Attach and format
+3. aws s3 sync s3://backup-bucket/latest /data
+4. imladris-unlock
+
+# Full LUKS image (disaster recovery)
+1. Download image from S3 Glacier (may take hours)
+2. dd to new EBS volume
+3. Attach and unlock
+```
+
+### Error Notification
+
+Beyond status bar, critical errors notify via:
+
+| Severity | Channel |
+|----------|---------|
+| Warning | Status bar only |
+| Error | Status bar + SimpleX message |
+| Critical | Status bar + SimpleX + Telegram |
+
+**What's critical:**
+
+| Event | Severity |
+|-------|----------|
+| Auth expired | Warning |
+| Sync failed 3x | Error |
+| Disk 90%+ | Error |
+| LUKS mount failed | Critical |
+| All pollers down | Critical |
+
+---
+
+## Appendix G: Security Hardening
+
+### Token & Credential Storage
+
+| Credential | Location | Protection |
+|------------|----------|------------|
+| BWS access token | `/data/config/bws/token` | LUKS + file permissions (600) |
+| OAuth refresh tokens | `/data/config/auth-keeper/tokens.json` | LUKS + encrypted at rest (age) |
+| slackdump session | `/data/config/slackdump/` | LUKS + file permissions |
+| SSH keys | `/data/ssh/` | LUKS + file permissions (600) |
+| AWS credentials | None (instance profile) | IAM only |
+
+**Token encryption:**
+
+```bash
+# Tokens encrypted with age before writing
+age -e -R ~/.age/recipients.txt < tokens.json > tokens.json.age
+
+# Decrypted to memory on read
+age -d -i ~/.age/identity.txt < tokens.json.age
+```
+
+### Cross-Account Blast Radius
+
+Instance compromise = access to all AWS accounts in registry.
+
+**Mitigations:**
+
+| Control | Implementation |
+|---------|----------------|
+| Least privilege | ReadOnlyAccess default, Admin requires justification |
+| Session duration | 1 hour max for assumed roles |
+| CloudTrail | All API calls logged in each account |
+| Alerting | GuardDuty alerts on unusual patterns |
+| Rotation | Instance role rotated on reboot |
+
+**Admin access flow:**
+
+```bash
+auth-keeper aws get org-prod --role Admin
+# Prompts: "Admin access to org-prod. Reason?"
+# User enters: "Deploying hotfix for auth bug"
+# Logged to audit trail
+# Session limited to 1 hour
+```
+
+### Audit Logging
+
+All sensitive operations logged to `/data/logs/audit.jsonl`:
+
+```json
+{
+  "timestamp": "2026-01-29T14:32:00Z",
+  "action": "aws_assume_role",
+  "account": "org-prod",
+  "role": "AdminAccess",
+  "reason": "Deploying hotfix",
+  "session_id": "abc123",
+  "source_ip": "100.x.x.x"
+}
+```
+
+**What's logged:**
+
+| Action | Logged |
+|--------|--------|
+| AWS role assumption | Always |
+| Admin role usage | Always + reason |
+| Auth token refresh | Always |
+| External API writes | Always |
+| File access outside datahub | Never (too noisy) |
+
+**Retention:** 90 days locally, synced to S3 for long-term.
+
+### Network Security
+
+| Component | Exposure |
+|-----------|----------|
+| SSH | Tailscale only (no public) |
+| Pollers | Outbound HTTPS only |
+| Claude/Bedrock | Outbound to AWS endpoints |
+| Status TUI | localhost only |
+
+**Firewall rules (iptables):**
+
+```
+# Allow Tailscale
+-A INPUT -i tailscale0 -j ACCEPT
+
+# Allow established connections
+-A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+
+# Drop everything else inbound
+-A INPUT -j DROP
+
+# Allow all outbound
+-A OUTPUT -j ACCEPT
+```
