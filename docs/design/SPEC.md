@@ -325,6 +325,27 @@ Bidirectional sync between local system and external services. Captures all inpu
 
 ### 5.3 Item Format
 
+**ID Structure (globally unique):**
+
+IDs follow the pattern `{source}-{external_id}` to guarantee uniqueness across all sources:
+
+| Source | External ID | Datahub ID | File Name |
+|--------|-------------|------------|-----------|
+| SDP request | `123` | `sdp-123` | `sdp-123.md` |
+| SDP general task | `456` | `sdp-task-456` | `sdp-task-456.md` |
+| MS365 email | `AAMk...` | `ms365-AAMkAG...` | `ms365-AAMkAG....md` |
+| Gmail | `18d5f...` | `gmail-18d5f...` | `gmail-18d5f....md` |
+| Slack message | `1706...` | `slack-1706...` | `slack-1706....md` |
+| DevOps work item | `789` | `devops-789` | `devops-789.md` |
+| Adhoc (local) | timestamp | `adhoc-2026-01-29-14-32` | `adhoc-2026-01-29-14-32.md` |
+
+**Why this matters:**
+- `email-123` from Gmail and `123` from SDP are different items
+- File names match IDs for easy correlation
+- External IDs preserved for sync back to source
+
+**Example item file (`sdp-123.md`):**
+
 ```markdown
 ---
 id: sdp-123
@@ -333,7 +354,7 @@ type: request
 title: Fix auth module
 status: in-progress
 zone: work
-actionable: true
+triage: actionable
 priority: P2
 tags: [auth, urgent, backend]
 created: 2026-01-25
@@ -351,15 +372,27 @@ Found the root cause - token refresh logic
 Assigned to @seth
 ```
 
+**Field reference:**
+
+| Field | Type | Values |
+|-------|------|--------|
+| `id` | string | `{source}-{external_id}` (globally unique) |
+| `source` | string | `sdp`, `ms365`, `gmail`, `slack`, `devops`, `adhoc`, etc. |
+| `type` | string | `request`, `task`, `email`, `message`, `work-item`, etc. |
+| `zone` | string | `work`, `home` |
+| `triage` | string | `actionable`, `keep`, `delete` |
+| `priority` | string | `P0`, `P1`, `P2`, `P3` (optional) |
+| `tags` | array | Tag names |
+
 ### 5.4 Index Schema
 
 ```sql
 CREATE TABLE items (
-  id TEXT PRIMARY KEY,
-  source TEXT,
-  type TEXT,
-  zone TEXT,
-  actionable TEXT,  -- 'actionable', 'keep', 'delete'
+  id TEXT PRIMARY KEY,           -- '{source}-{external_id}' format
+  source TEXT NOT NULL,          -- 'sdp', 'ms365', 'gmail', etc.
+  type TEXT,                     -- 'request', 'email', 'message', etc.
+  zone TEXT NOT NULL,            -- 'work', 'home'
+  triage TEXT DEFAULT 'keep',    -- 'actionable', 'keep', 'delete'
   status TEXT,
   priority TEXT,
   timestamp TEXT,
@@ -370,9 +403,9 @@ CREATE TABLE items (
 
 CREATE TABLE tags (
   id INTEGER PRIMARY KEY,
-  name TEXT UNIQUE NOT NULL,
-  color TEXT,           -- hex color for UI
-  auto_rule TEXT        -- optional: regex or rule for auto-tagging
+  name TEXT UNIQUE NOT NULL,     -- lowercase, normalized
+  color TEXT,                    -- hex color for UI
+  auto_rule TEXT                 -- optional: regex or rule for auto-tagging
 );
 
 CREATE TABLE item_tags (
@@ -383,7 +416,7 @@ CREATE TABLE item_tags (
   PRIMARY KEY (item_id, tag_id)
 );
 
-CREATE INDEX idx_actionable ON items(zone, actionable);
+CREATE INDEX idx_triage ON items(zone, triage);
 CREATE INDEX idx_source ON items(source);
 CREATE INDEX idx_timestamp ON items(timestamp);
 CREATE INDEX idx_item_tags ON item_tags(tag_id);
@@ -1057,6 +1090,97 @@ ghq get github.com/sethdf/imladris
 3. `auth-keeper refresh work-sdp`
 4. Or `auth-keeper setup work-sdp` if refresh fails
 
+### 9.6 First-Time Setup (Bootstrap Guide)
+
+Complete setup in this exact order. Each step depends on previous steps.
+
+**Phase 1: Infrastructure (Terraform)**
+
+```
+1. Clone imladris repo locally
+2. Configure terraform.tfvars (git-crypt encrypted)
+3. terraform apply
+4. Wait for instance to be ready
+5. Note: Instance has Nix, Tailscale, base packages
+```
+
+**Phase 2: Access & Secrets**
+
+```
+6. tailscale up (from local machine, approve device)
+7. ssh imladris (first connection)
+8. BWS_ACCESS_TOKEN=<token> bws-init   ← Unlocks secrets access
+9. imladris-unlock                      ← LUKS passphrase prompt
+10. Verify: ls /data                    ← Should show directories
+```
+
+**Phase 3: Authentication Setup**
+
+```
+Order matters - some services depend on others.
+
+11. auth-keeper setup work-ms365        ← Service principal + cert
+12. auth-keeper setup work-sdp          ← OAuth2 (uses browser)
+13. auth-keeper setup work-devops       ← PAT (manual entry)
+14. auth-keeper setup work-slack        ← slackdump browser auth
+15. auth-keeper setup home-google       ← OAuth2 (uses browser)
+16. auth-keeper setup home-telegram     ← Bot token (manual entry)
+17. auth-keeper status                  ← Verify all green
+```
+
+**Phase 4: Initial Sync**
+
+```
+18. datahub sync --initial              ← 365-day email backfill
+    ├── ms365-mail: ~10-30 min (depends on volume)
+    ├── gmail: ~10-30 min
+    ├── sdp: ~1-5 min
+    ├── devops: ~1-5 min
+    ├── slack: ~5-15 min (slackdump)
+    └── telegram: instant
+19. datahub triage --batch              ← Initial classification
+20. datahub status                      ← Verify counts
+```
+
+**Phase 5: Workspace Setup**
+
+```
+21. tmux new -s main                    ← Create main session
+22. Run workspace-init                  ← Creates all 11 windows
+23. /work                               ← Enter first workspace
+24. Claude loads, shows context
+```
+
+**Verification Checklist:**
+
+| Check | Command | Expected |
+|-------|---------|----------|
+| LUKS mounted | `mount \| grep /data` | `/dev/mapper/hall-of-fire on /data` |
+| BWS accessible | `bws-get test` | No error |
+| All auth valid | `auth-keeper status` | All services green |
+| Datahub populated | `datahub stats` | Item counts > 0 |
+| Workspaces ready | `tmux list-windows` | 11 windows |
+
+**If Something Fails:**
+
+| Failure | Recovery |
+|---------|----------|
+| LUKS won't unlock | Check passphrase, verify BWS keyfile exists |
+| Auth setup fails | Check BWS secrets exist with correct names |
+| Initial sync hangs | Check auth-keeper status for that service |
+| Triage errors | Check Claude/Bedrock connectivity |
+
+**Time Estimate:**
+
+| Phase | Duration |
+|-------|----------|
+| Terraform | 5-10 min |
+| Access & Secrets | 5 min |
+| Auth Setup | 15-20 min (browser flows) |
+| Initial Sync | 30-60 min (background OK) |
+| Workspace Setup | 2 min |
+| **Total** | **~1-1.5 hours** |
+
 ---
 
 ## 10. Coding Methodology
@@ -1089,8 +1213,8 @@ All coding work uses [Spec Kit](https://github.com/github/spec-kit) (GitHub's sp
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  Phase 3: TASKS                                                 │
-│  /task                                                          │
+│  Phase 3: BREAKDOWN                                             │
+│  /breakdown                                                     │
 │  → Break into implementable units with test criteria            │
 └─────────────────────────────────────────────────────────────────┘
                               │
@@ -1174,12 +1298,19 @@ status: implementing
 # Workspace-aware (uses current zone/mode context)
 /specify "description"     # Start spec for new work
 /plan                      # Generate technical plan from spec
-/task                      # Break plan into tasks
-/implement                 # Execute current task
+/breakdown                 # Break plan into implementable units
+/implement                 # Execute current unit
 /verify                    # Check acceptance criteria
 /spec status               # Show current spec state
 /spec list                 # List active specs in workspace
 ```
+
+**Command naming rationale:**
+
+| Command | Purpose | Why this name |
+|---------|---------|---------------|
+| `/task` | Datahub task management | Primary workflow, used constantly |
+| `/breakdown` | Spec Kit phase 3 | Avoids collision, describes action |
 
 ### 10.7 Git Automation
 
@@ -1242,6 +1373,73 @@ wip/feature-auth ──●──●──●──●──●──●──┘
                    ↑  ↑  ↑  ↑  ↑  ↑
                    auto-commits (invisible)
 ```
+
+**Security: Preventing Secret Leaks**
+
+Auto-push to GitHub requires safeguards against accidental secret exposure.
+
+**Pre-commit scanning (mandatory):**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Before every auto-commit:                                       │
+│                                                                 │
+│  1. Run secrets scanner (gitleaks/trufflehog)                   │
+│  2. If secrets detected → BLOCK commit → alert user             │
+│  3. If clean → proceed with commit + push                       │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Mandatory .gitignore patterns:**
+
+```gitignore
+# Secrets - NEVER commit
+.env
+.env.*
+*.pem
+*.key
+*credentials*
+*secret*
+auth.json
+tokens.json
+
+# Imladris-specific
+/datahub/          # Synced data contains PII
+/.claude/          # May contain sensitive context
+/queue/            # Pending writes may have tokens
+```
+
+**What triggers a block:**
+
+| Pattern | Example | Action |
+|---------|---------|--------|
+| API keys | `AKIA...`, `sk-...` | Block + alert |
+| Private keys | `-----BEGIN RSA PRIVATE KEY-----` | Block + alert |
+| Passwords in code | `password = "..."` | Block + alert |
+| AWS credentials | `aws_secret_access_key` | Block + alert |
+| High entropy strings | Random 40+ char strings | Warn (may be false positive) |
+
+**Recovery when blocked:**
+
+```bash
+# gitwatch alerts: "Commit blocked: potential secret in config.js:42"
+
+# Option 1: Remove the secret
+vim config.js                    # Remove secret, use env var instead
+
+# Option 2: False positive - allowlist
+echo "config.js:42" >> .gitleaks-allowlist
+
+# gitwatch resumes automatically after fix
+```
+
+**WIP branches are semi-public:**
+
+| Concern | Mitigation |
+|---------|------------|
+| WIP pushed to GitHub | Use private repos for sensitive work |
+| Branch visible to collaborators | Secrets scanner prevents exposure |
+| Squash loses history | WIP history preserved locally in reflog |
 
 ---
 
@@ -1689,7 +1887,7 @@ User: /spec pause
 
 Claude (SpecAssist skill):
 1. Saves current spec progress
-2. Notes phase (specify/plan/task/implement)
+2. Notes phase (specify/plan/breakdown/implement)
 3. Records pending decisions
 4. Writes to .specs/{spec-id}.paused.md
 ```
@@ -1958,6 +2156,134 @@ All modes get PAI context preservation. The difference is whether items sync to 
 | **projects** | Yes → SDP (if owner) | Yes | Datahub owned projects |
 | **research** | No | Yes | PAI history (local topics) |
 | **adhoc** | Yes → SDP (General Task) | Yes | Datahub + PAI history |
+
+### Comms Mode Workflow
+
+Comms mode is for **batch processing** communications - not staying in it all day. Enter, process actionable items, exit.
+
+**What appears in comms:**
+
+| Source | Item Type | Triage Filter |
+|--------|-----------|---------------|
+| MS365/Gmail | Email | `triage: actionable` (needs reply/action) |
+| Slack | Thread/DM | `triage: actionable` (needs response) |
+| Telegram | Message | `triage: actionable` (needs response) |
+
+**Workflow:**
+
+```
+/work comms
+    ↓
+Claude shows inbox summary:
+
+"Comms inbox (work):
+ 📧 Email: 4 actionable
+ 💬 Slack: 2 threads need response
+
+ Oldest first:
+ 1. [email] ms365-AAMk... - Q3 budget review request (2 days ago)
+ 2. [email] ms365-BBNk... - Architecture decision needed (1 day ago)
+ 3. [slack] slack-1706... - @you: thoughts on API design? (4 hours ago)
+ 4. [email] ms365-CCPk... - Meeting follow-up (3 hours ago)
+ ...
+
+ Process items, or /inbox to see full list"
+```
+
+**Processing an email:**
+
+```
+User: "Let's handle the Q3 budget email"
+    ↓
+Claude loads full item:
+- Shows email body
+- Shows thread history (if reply)
+- Shows sender context (from previous interactions)
+    ↓
+User: "Draft a reply saying I'll review by Friday"
+    ↓
+Claude drafts reply (Comms skill)
+    ↓
+User: "Send it" or "Revise: more formal"
+    ↓
+/comms send                    ← Queues reply to MS365
+/comms done ms365-AAMk...      ← Marks item processed
+```
+
+**Processing a Slack thread:**
+
+```
+User: "What's the API design question?"
+    ↓
+Claude loads thread:
+- Shows full thread context
+- Shows who's involved
+- Shows channel context
+    ↓
+User: "Reply that I prefer REST over GraphQL for this use case, with reasons"
+    ↓
+Claude drafts reply
+    ↓
+/slack reply slack-1706... "I'd recommend REST here because..."
+    ↓
+/comms done slack-1706...
+```
+
+**Comms Commands:**
+
+```bash
+# View
+/inbox                         # Show all actionable comms
+/inbox --email                 # Email only
+/inbox --slack                 # Slack only
+/inbox --unread                # Unread only
+
+# Process
+/comms show <id>               # Load full item with context
+/comms draft                   # Draft reply to current item
+/comms send                    # Queue send for current draft
+/comms done <id>               # Mark processed (triage → keep)
+/comms snooze <id> <duration>  # Snooze for later (1h, tomorrow, etc.)
+/comms delegate <id> <person>  # Forward/assign to someone
+
+# Bulk
+/comms archive-read            # Archive all read emails (triage → keep)
+/comms process-newsletters     # Auto-process newsletter pattern
+```
+
+**Key Principle: Batch, Don't Live Here**
+
+| Pattern | Recommendation |
+|---------|----------------|
+| Check email constantly | ❌ Don't - use tasks mode |
+| Process comms 2-3x/day | ✅ Batch processing |
+| Reply immediately to everything | ❌ Urgent goes to tasks |
+| Clear inbox to zero | ✅ Goal of each comms session |
+
+**Triage Integration:**
+
+Most emails are auto-triaged to `keep` (reference) not `actionable`. Only items that genuinely need your response appear in comms inbox.
+
+| Triage Result | Examples | Where It Goes |
+|---------------|----------|---------------|
+| `actionable` | Direct questions, requests, approvals | Comms inbox |
+| `keep` | CC'd emails, FYIs, receipts | Archive (searchable) |
+| `delete` | Spam, newsletters (if unwanted) | Trash |
+
+**When Comms Becomes a Task:**
+
+If an email requires significant work (not just a reply):
+
+```
+User: "This budget review is actually a big task"
+    ↓
+/comms promote ms365-AAMk... --to-task
+    ↓
+Creates datahub task item linked to email
+Syncs to SDP as Request
+    ↓
+"Created task sdp-890: Q3 budget review. Switch to tasks mode?"
+```
 
 ### Research Mode Context
 
