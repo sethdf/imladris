@@ -1737,3 +1737,69 @@ expiry check.
 /spec abandon        # Archive spec, delete WIP branch
 /spec list --all     # Show active, paused, abandoned
 ```
+
+### Parallel Tasks (Pane-Based)
+
+Work on multiple tasks simultaneously using tmux panes with separate Claude sessions.
+
+**Use case:** Claude is generating code or researching in one session; you want to continue working on something else without waiting.
+
+**Layout:**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ work:tasks                                                      │
+├─────────────────────────────────────────────────────────────────┤
+│ Claude session 1 (sdp-123)                                      │
+│ [generating code...]                                            │
+├─────────────────────────────────────────────────────────────────┤
+│ Claude session 2 (sdp-456)                                      │
+│ [interactive - you're working here]                             │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Commands:**
+
+```bash
+/task split sdp-456        # Split pane horizontally (top/bottom), start new session
+/task split -v sdp-456     # Split pane vertically (left/right)
+/task focus                # Toggle focus between panes
+/task close-pane           # Close current pane, save its context
+/task merge                # Close secondary pane, bring context back to main
+```
+
+**What happens on `/task split`:**
+
+1. tmux splits current pane (horizontal by default)
+2. New pane starts fresh Claude Code session
+3. Sets `CURRENT_TASK=sdp-456` in new pane
+4. Loads sdp-456 context via SessionStart hook
+5. Both panes work independently
+
+**Each pane has:**
+
+| Property | Behavior |
+|----------|----------|
+| Claude session | Separate (independent context) |
+| CURRENT_TASK | Different per pane |
+| Context files | Saved independently |
+| Git auto-commit | Both active (same repo, same WIP branch is fine) |
+
+**Native tmux also works:**
+
+```bash
+Ctrl-b "         # Split horizontally
+Ctrl-b %         # Split vertically
+Ctrl-b o         # Switch between panes
+Ctrl-b z         # Zoom current pane (full screen)
+Ctrl-b arrows    # Resize panes
+```
+
+**When to use:**
+
+| Situation | Approach |
+|-----------|----------|
+| Quick detour, will return | `/task switch` (same session) |
+| Need to wait for Claude | `/task split` (parallel sessions) |
+| Two related tasks simultaneously | `/task split` (parallel sessions) |
+| Compare two approaches | `/task split -v` (side by side) |
