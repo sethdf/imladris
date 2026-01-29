@@ -880,3 +880,94 @@ Imladris 2.0 builds around PAI (Personal AI Infrastructure):
 - Fabric-style pattern for batch classification
 - Input: item metadata + content
 - Output: classification (actionable/keep/delete) + reason
+
+---
+
+## Appendix D: Host vs AI Boundary
+
+### Overview
+
+Clear separation between deterministic host code (Imladris) and AI-interpreted skills (Curu-skills).
+
+| Layer | Repository | Characteristics |
+|-------|------------|-----------------|
+| **Host (Imladris)** | sethdf/imladris | Deterministic, versioned, tested, CLI/code |
+| **AI (Curu-skills)** | sethdf/curu-skills | AI-interpreted, flexible, customizable |
+
+### Host Layer (Imladris)
+
+Deterministic functionality that must work identically every time:
+
+| Component | Implementation | Why Host |
+|-----------|----------------|----------|
+| Pollers | Bun | Deterministic sync logic |
+| Queue processor | Bun | Deterministic write handling |
+| Auth-keeper | Shell/Bun | Security-sensitive token management |
+| Workspace commands | Shell | Deterministic tmux control |
+| Status TUI | Python | Deterministic display |
+| Index rebuild | Bun | Deterministic SQL operations |
+| Datahub CLI | Bun | Deterministic data operations |
+| Conflict detection | Bun | Deterministic comparison |
+
+### AI Layer (Curu-skills)
+
+Functionality that benefits from AI interpretation:
+
+| Component | Skill | Why AI |
+|-----------|-------|--------|
+| Triage | Triage skill | Classification requires understanding |
+| Context summarization | TaskContext skill | Summarization is AI strength |
+| Reply drafting | Comms skill | Composition benefits from AI |
+| Search interpretation | Search skill | Intent understanding |
+| Task breakdown | Task skill | Planning benefits from AI |
+| Priority suggestions | Triage skill | Judgment calls |
+
+### Decision Rule
+
+| If the component... | Then... |
+|---------------------|---------|
+| Must work identically every time | Host (Imladris) |
+| Benefits from AI interpretation | AI (Curu-skills) |
+| User might want to customize behavior | AI (Curu-skills) |
+| Is security/auth sensitive | Host (Imladris) |
+| Directly interacts with external APIs | Host (Imladris) |
+| Formats, interprets, or generates content | AI (Curu-skills) |
+
+### Interface Boundary
+
+Skills call Imladris CLI tools, never external APIs directly:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  AI Layer (Curu-skills)                                         │
+│                                                                 │
+│  Triage skill ──────┐                                           │
+│  Task skill ────────┼──► Calls Imladris CLI                     │
+│  Comms skill ───────┘                                           │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Host Layer (Imladris)                                          │
+│                                                                 │
+│  datahub query --actionable     ← Read items                    │
+│  datahub write --note "..."     ← Write to queue                │
+│  datahub triage --batch         ← Trigger triage                │
+│  auth-keeper get <service>      ← (internal only)               │
+│                                                                 │
+│                    │                                            │
+│                    ▼                                            │
+│            External APIs (SDP, MS365, etc.)                     │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Benefits
+
+| Benefit | How |
+|---------|-----|
+| Security | Auth never exposed to AI layer |
+| Testability | Host layer is deterministic, testable |
+| Flexibility | AI layer can be customized without breaking core |
+| Reliability | Critical sync logic is deterministic |
+| Upgradability | Can update skills without touching host code |
