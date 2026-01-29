@@ -18,8 +18,9 @@
 7. [Commands](#7-commands)
 8. [Infrastructure](#8-infrastructure)
 9. [User Scenarios](#9-user-scenarios)
-10. [Out of Scope](#10-out-of-scope)
-11. [Open Questions](#11-open-questions)
+10. [Coding Methodology](#10-coding-methodology)
+11. [Out of Scope](#11-out-of-scope)
+12. [Open Questions](#12-open-questions)
 
 ---
 
@@ -854,7 +855,131 @@ All stateful data lives on the LUKS-encrypted data volume (`/data`). Root volume
 
 ---
 
-## 10. Out of Scope
+## 10. Coding Methodology
+
+### 10.1 Spec Kit as Standard
+
+All coding work uses [Spec Kit](https://github.com/github/spec-kit) (GitHub's specification-driven development toolkit) for consistency and reliability.
+
+**Rationale:**
+- Specs improve AI code reliability by 2.5-3x
+- Consistent methodology eliminates "is this complex enough?" decisions
+- Tests are defined in spec phase, not afterthought
+- Single user = no team review, so specs provide the "second pair of eyes"
+
+### 10.2 Four-Phase Workflow
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Phase 1: SPECIFY                                               │
+│  /specify "feature description"                                 │
+│  → Writes spec.md with requirements, constraints, acceptance    │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Phase 2: PLAN                                                  │
+│  /plan                                                          │
+│  → Technical design, architecture decisions, file changes       │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Phase 3: TASKS                                                 │
+│  /task                                                          │
+│  → Break into implementable units with test criteria            │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Phase 4: IMPLEMENT                                             │
+│  /implement                                                     │
+│  → Code + tests, referencing spec for acceptance criteria       │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 10.3 Integration with PAI
+
+| Layer | Tool | Purpose |
+|-------|------|---------|
+| **What to build** | Spec Kit | Requirements, constraints, acceptance criteria |
+| **How Claude behaves** | PAI Skills | Execution patterns, response formats |
+| **Project context** | CLAUDE.md | Repository-specific rules and conventions |
+| **External data** | MCP | Structured connections to APIs and services |
+
+**Workflow integration:**
+
+```
+User request
+    │
+    ▼
+Spec Kit (/specify)     ← Define WHAT
+    │
+    ▼
+PAI Skills              ← Define HOW (patterns, methodology)
+    │
+    ▼
+Claude Code execution   ← Do the work
+    │
+    ▼
+Spec Kit (/verify)      ← Confirm acceptance criteria met
+```
+
+### 10.4 Spec Storage
+
+Specs are stored with their associated code:
+
+```
+project/
+├── .specs/
+│   ├── feature-auth.md
+│   ├── feature-auth.plan.md
+│   ├── feature-auth.tasks.md
+│   └── archive/           ← Completed specs
+├── src/
+└── tests/
+```
+
+For datahub items (SDP tickets, etc.), specs link to the item:
+
+```markdown
+---
+id: feature-auth
+linked_item: sdp-456
+status: implementing
+---
+
+## Specification
+...
+```
+
+### 10.5 When Specs Are Required
+
+**Always.** No exceptions for "simple" changes.
+
+| Change Type | Spec Depth |
+|-------------|------------|
+| Bug fix | Minimal (problem, root cause, fix, test) |
+| New feature | Full (requirements, design, tasks, tests) |
+| Refactor | Medium (goal, approach, validation) |
+| Config change | Minimal (what, why, rollback) |
+
+### 10.6 Spec Kit Commands
+
+```bash
+# Workspace-aware (uses current zone/mode context)
+/specify "description"     # Start spec for new work
+/plan                      # Generate technical plan from spec
+/task                      # Break plan into tasks
+/implement                 # Execute current task
+/verify                    # Check acceptance criteria
+/spec status               # Show current spec state
+/spec list                 # List active specs in workspace
+```
+
+---
+
+## 11. Out of Scope
 
 | Feature | Reason |
 |---------|--------|
@@ -867,7 +992,7 @@ All stateful data lives on the LUKS-encrypted data volume (`/data`). Root volume
 
 ---
 
-## 11. Open Questions
+## 12. Open Questions
 
 | Question | Status |
 |----------|--------|
@@ -958,10 +1083,58 @@ Imladris 2.0 builds around PAI (Personal AI Infrastructure):
 - Context signaling (status bar, colors)
 - Bidirectional sync
 
-**New PAI Skill: Triage**
-- Fabric-style pattern for batch classification
-- Input: item metadata + content
-- Output: classification (actionable/keep/delete) + reason
+**Spec Kit Provides:**
+- Specification-driven development workflow
+- Four-phase structure (specify → plan → task → implement)
+- Acceptance criteria and test definitions
+- Consistent methodology for all code changes
+
+**Layer Integration:**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  User Request                                                   │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Spec Kit: /specify                                             │
+│  "WHAT to build" - requirements, constraints, acceptance        │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  PAI: Skills + TELOS                                            │
+│  "HOW to think" - methodology, patterns, goal alignment         │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  CLAUDE.md: Project Rules                                       │
+│  "HOW to behave here" - repo conventions, constraints           │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Claude Code: Execution                                         │
+│  "DO the work" - code, tests, commits                           │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Spec Kit: /verify                                              │
+│  "CONFIRM done" - acceptance criteria validation                │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**New PAI Skills for Imladris:**
+
+| Skill | Purpose |
+|-------|---------|
+| **Triage** | Batch classification (actionable/keep/delete) |
+| **SpecAssist** | Help write clear specifications |
+| **TaskContext** | Summarize/restore workspace context |
+| **Comms** | Draft replies for email/chat |
 
 ---
 
