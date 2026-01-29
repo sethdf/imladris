@@ -1761,12 +1761,59 @@ Work on multiple tasks simultaneously using tmux panes with separate Claude sess
 **Commands:**
 
 ```bash
-/task split sdp-456        # Split pane horizontally (top/bottom), start new session
-/task split -v sdp-456     # Split pane vertically (left/right)
-/task focus                # Toggle focus between panes
-/task close-pane           # Close current pane, save its context
-/task merge                # Close secondary pane, bring context back to main
+/task split              # Picker: select from actionable datahub items
+/task split sdp-456      # Split with specific datahub item
+/task split -v sdp-456   # Split vertically (left/right)
+/task split --fresh      # Prompt for description → create in datahub → sync to SDP
+/task focus              # Toggle focus between panes
+/task close-pane         # Close current pane, save its context
+/task merge              # Close secondary pane, bring context back to main
 ```
+
+**Task picker (shown on `/task split` with no args):**
+
+```
+Select task for new pane:
+
+  Actionable (work:tasks):
+  > sdp-123  Auth token refresh failing       [in-progress]
+    sdp-456  Add rate limiting to API         [open]
+    sdp-789  Update user dashboard            [open]
+    devops-12 Fix CI pipeline timeout         [open]
+
+  [Enter] Select  [/] Filter  [n] New (--fresh)  [q] Cancel
+```
+
+**Fresh task flow (`/task split --fresh`):**
+
+```
+/task split --fresh
+    ↓
+Claude: "What are you working on?"
+    ↓
+User: "Investigating memory leak in auth service"
+    ↓
+Creates datahub item:
+  - source: local
+  - type: standalone-task
+  - title: "Investigating memory leak in auth service"
+  - zone: work (from current workspace)
+    ↓
+Queues sync to SDP (creates standalone task)
+    ↓
+Returns new task ID (e.g., sdp-790)
+    ↓
+Splits pane with new task
+```
+
+**Benefits of --fresh flow:**
+
+| Aspect | Value |
+|--------|-------|
+| Nothing untracked | Even ad-hoc work gets captured |
+| Single source of truth | All tasks in datahub, all synced to SDP |
+| Findable later | "What was that thing I was working on?" |
+| Visible to team | Standalone tasks appear in SDP |
 
 **What happens on `/task split`:**
 
