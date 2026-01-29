@@ -644,6 +644,89 @@ Declarative configuration for:
 - PAI skills
 - Dotfiles
 
+### 8.4 Storage Layout
+
+All stateful data lives on the LUKS-encrypted data volume (`/data`). Root volume is ephemeral/rebuildable.
+
+**LUKS Volume Structure:**
+
+```
+/data/                          ← LUKS mounted (hall-of-fire)
+├── work/
+│   ├── datahub/
+│   │   ├── items/
+│   │   ├── index.sqlite
+│   │   ├── queue/
+│   │   ├── trash/
+│   │   └── state/
+│   └── tasks/                  ← task context files
+│
+├── home/
+│   ├── datahub/
+│   │   └── (same structure)
+│   └── tasks/
+│
+├── calendar/
+│   └── merged.sqlite
+│
+├── claude/                     ← ~/.claude symlinked here
+│   ├── settings.json
+│   ├── memory/
+│   ├── skills/
+│   └── projects/
+│
+├── repos/                      ← ~/repos symlinked here
+│
+├── ssh/                        ← ~/.ssh symlinked here
+│
+├── config/
+│   ├── bws/
+│   ├── slackdump/
+│   ├── auth-keeper/
+│   └── tmux/
+│
+└── backups/                    ← local backup staging
+```
+
+**Symlinks from Home Directory:**
+
+| Symlink | Target |
+|---------|--------|
+| `~/.claude` | `/data/claude` |
+| `~/.ssh` | `/data/ssh` |
+| `~/.bws` | `/data/config/bws` |
+| `~/.slackdump` | `/data/config/slackdump` |
+| `~/repos` | `/data/repos` |
+| `~/work` | `/data/work` |
+| `~/home` | `/data/home` |
+| `~/calendar` | `/data/calendar` |
+
+**Stateful Items Checklist:**
+
+| Item | Location | On LUKS |
+|------|----------|---------|
+| Datahub (work/home) | `/data/work/datahub/`, `/data/home/datahub/` | ✓ |
+| Calendar merged | `/data/calendar/` | ✓ |
+| Task context | `/data/work/tasks/`, `/data/home/tasks/` | ✓ |
+| Claude sessions | `/data/claude/` | ✓ |
+| PAI memory/skills | `/data/claude/memory/`, `/data/claude/skills/` | ✓ |
+| SSH keys | `/data/ssh/` | ✓ |
+| Git repos | `/data/repos/` | ✓ |
+| BWS token cache | `/data/config/bws/` | ✓ |
+| slackdump auth | `/data/config/slackdump/` | ✓ |
+| Auth token cache | `/data/config/auth-keeper/` | ✓ |
+| Sync queue | `/data/*/datahub/queue/` | ✓ |
+| tmux resurrect | `/data/config/tmux/` | ✓ |
+
+**Ephemeral (Root Volume):**
+
+| Item | Reason |
+|------|--------|
+| Nix store | Rebuildable from flake |
+| Packages | Rebuildable |
+| OS | Rebuildable |
+| Temp files | Ephemeral by nature |
+
 ---
 
 ## 9. User Scenarios
