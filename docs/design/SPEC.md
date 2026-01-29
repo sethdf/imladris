@@ -1857,11 +1857,11 @@ All modes get PAI context preservation. The difference is whether items sync to 
 
 | Mode | Datahub (external sync) | PAI Context | Picker Source |
 |------|-------------------------|-------------|---------------|
-| **tasks** | Yes → SDP, DevOps | Yes | Datahub actionable items |
+| **tasks** | Yes → SDP (Request/Incident), DevOps | Yes | Datahub actionable items |
 | **comms** | Yes → Email, Slack | Yes | Datahub messages/threads |
 | **projects** | Yes → SDP (if owner) | Yes | Datahub owned projects |
 | **research** | No | Yes | PAI history (local topics) |
-| **adhoc** | No | Yes | PAI history (recent sessions) |
+| **adhoc** | Yes → SDP (General Task) | Yes | Datahub + PAI history |
 
 ### Research Mode Context
 
@@ -1908,7 +1908,11 @@ Continue one of these, or start new research?"
 
 ### Adhoc Mode Context
 
-Adhoc sessions are tracked locally via PAI history. No datahub, no external sync, but context is preserved.
+Adhoc sessions sync to SDP as **General Tasks** (standalone tasks not linked to requests/problems/changes). This makes quick work visible and findable later.
+
+**Key difference from tasks mode:**
+- **tasks** → SDP Request/Incident (linked to a ticket workflow)
+- **adhoc** → SDP General Task (standalone, no parent entity)
 
 **Storage:**
 
@@ -1921,6 +1925,10 @@ Adhoc sessions are tracked locally via PAI history. No datahub, no external sync
     ├── 2026-01-29-14-32.md
     ├── 2026-01-29-16-45.md
     └── 2026-01-28-09-15.md
+
+~/work/datahub/items/
+├── adhoc-2026-01-29-14-32.md  ← Synced to SDP as General Task
+└── ...
 ```
 
 **On entering `/work adhoc`:**
@@ -1933,9 +1941,9 @@ Loads ~/.claude/history/workspaces/work:adhoc.md
 Claude shows:
 
 "Recent adhoc sessions:
- - 14:32 - Debugging why npm install hangs
- - Yesterday - Testing new tmux config
- - 2 days ago - Quick AWS CLI lookup
+ - 14:32 - Debugging why npm install hangs (SDP: adhoc-14)
+ - Yesterday - Testing new tmux config (SDP: adhoc-13)
+ - 2 days ago - Quick AWS CLI lookup (SDP: adhoc-12)
 
 Continue recent session or start fresh?"
 ```
@@ -1945,8 +1953,25 @@ Continue recent session or start fresh?"
 ```bash
 /adhoc                    # Enter adhoc, show recent sessions
 /adhoc continue           # Resume most recent
-/adhoc new                # Start fresh (still gets context saved)
+/adhoc new "description"  # Start fresh → creates SDP General Task
+/adhoc close "notes"      # Mark complete in SDP + local
 ```
+
+**SDP General Task sync:**
+
+| Direction | Behavior |
+|-----------|----------|
+| Create | `/adhoc new` → queues General Task creation in SDP |
+| Update | `/task note` → syncs note to SDP task |
+| Complete | `/adhoc close` → marks SDP task complete |
+| Worklogs | `/task log` → syncs time to SDP task |
+
+**Why General Tasks for adhoc:**
+- Quick work still gets tracked
+- Findable later ("what was I doing last Tuesday?")
+- Time can be logged against it
+- Can be converted to full Request/Incident if it grows
+- No ceremony - just start working
 
 ### PAI Update Safety
 
