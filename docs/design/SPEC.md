@@ -1850,3 +1850,145 @@ Ctrl-b arrows    # Resize panes
 | Need to wait for Claude | `/task split` (parallel sessions) |
 | Two related tasks simultaneously | `/task split` (parallel sessions) |
 | Compare two approaches | `/task split -v` (side by side) |
+
+### Mode Data Sources
+
+All modes get PAI context preservation. The difference is whether items sync to external systems via datahub.
+
+| Mode | Datahub (external sync) | PAI Context | Picker Source |
+|------|-------------------------|-------------|---------------|
+| **tasks** | Yes → SDP, DevOps | Yes | Datahub actionable items |
+| **comms** | Yes → Email, Slack | Yes | Datahub messages/threads |
+| **projects** | Yes → SDP (if owner) | Yes | Datahub owned projects |
+| **research** | No | Yes | PAI history (local topics) |
+| **adhoc** | No | Yes | PAI history (recent sessions) |
+
+### Research Mode Context
+
+Research topics are tracked locally via PAI history, not synced externally.
+
+**Storage:**
+
+```
+~/.claude/history/
+├── workspaces/
+│   ├── work:research.md      ← Current research summary
+│   └── home:research.md
+└── research/                  ← Individual research topics
+    ├── aws-cost-optimization.md
+    ├── nix-flakes-patterns.md
+    └── zero-trust-architecture.md
+```
+
+**On entering `/work research`:**
+
+```
+SessionStart hook fires
+    ↓
+Loads ~/.claude/history/workspaces/work:research.md
+    ↓
+Claude shows:
+
+"Recent research topics:
+ - AWS cost optimization (last: 2 days ago)
+ - Nix flakes patterns (last: 1 week ago)
+ - Zero trust architecture (last: 2 weeks ago)
+
+Continue one of these, or start new research?"
+```
+
+**Commands:**
+
+```bash
+/research                    # Enter research mode, show recent topics
+/research continue <topic>   # Resume specific research
+/research new "topic"        # Start new research (saved to PAI history)
+/research list               # List all research topics
+```
+
+### Adhoc Mode Context
+
+Adhoc sessions are tracked locally via PAI history. No datahub, no external sync, but context is preserved.
+
+**Storage:**
+
+```
+~/.claude/history/
+├── workspaces/
+│   ├── work:adhoc.md         ← Current adhoc summary
+│   └── home:adhoc.md
+└── adhoc/                     ← Individual adhoc sessions (timestamped)
+    ├── 2026-01-29-14-32.md
+    ├── 2026-01-29-16-45.md
+    └── 2026-01-28-09-15.md
+```
+
+**On entering `/work adhoc`:**
+
+```
+SessionStart hook fires
+    ↓
+Loads ~/.claude/history/workspaces/work:adhoc.md
+    ↓
+Claude shows:
+
+"Recent adhoc sessions:
+ - 14:32 - Debugging why npm install hangs
+ - Yesterday - Testing new tmux config
+ - 2 days ago - Quick AWS CLI lookup
+
+Continue recent session or start fresh?"
+```
+
+**Commands:**
+
+```bash
+/adhoc                    # Enter adhoc, show recent sessions
+/adhoc continue           # Resume most recent
+/adhoc new                # Start fresh (still gets context saved)
+```
+
+### PAI Update Safety
+
+Extensions are additive bolt-ons to PAI, not modifications. Updates are validated before applying.
+
+**Extension Method:**
+
+| Extension | Method | Modifies PAI Core? |
+|-----------|--------|-------------------|
+| Custom hooks | Files in `~/.claude/hooks/` | No - additive |
+| Custom skills | Files in `~/.claude/skills/` | No - additive |
+| Environment variables | Set by workspace commands | No - PAI reads them |
+| History storage | Write to `~/.claude/history/` | No - uses existing structure |
+
+**Potential Breaking Changes:**
+
+| If PAI changes... | Risk |
+|-------------------|------|
+| Hook API (HookInput/HookOutput) | Hooks fail to execute |
+| History directory structure | Context files not found |
+| Skill loading mechanism | Skills not loaded |
+| Settings.json schema | Hook registration fails |
+
+**Update Validation (before applying PAI updates):**
+
+```
+1. Check PAI changelog for breaking changes
+2. Run interface compatibility tests:
+   - Hook API: SessionStart, SessionEnd, PreCompact still work
+   - History structure: workspaces/, tasks/, research/, adhoc/ exist
+   - Skill loading: markdown files in ~/.claude/skills/ load
+3. If incompatible → hold update, notify for manual review
+4. If compatible → apply, validate, rollback on failure
+```
+
+**Graceful Degradation:**
+
+Extensions fail safely - Claude still works, just without enhancements:
+
+| Failure | Behavior |
+|---------|----------|
+| Missing context file | Start fresh (warn, don't crash) |
+| Hook error | Continue session (log error) |
+| Skill not loaded | Claude works without skill (degraded) |
+| History write fails | Warn, session continues |
