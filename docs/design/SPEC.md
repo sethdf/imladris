@@ -312,7 +312,7 @@ Bidirectional sync between local system and external services. Captures all inpu
 │   ├── processing/
 │   ├── completed/
 │   └── failed/
-├── trash/                    ← Soft delete (30-day purge)
+├── trash/                    ← Soft delete (365-day purge)
 └── state/
     └── sync-state.json
 
@@ -335,6 +335,7 @@ status: in-progress
 zone: work
 actionable: true
 priority: P2
+tags: [auth, urgent, backend]
 created: 2026-01-25
 updated: 2026-01-28
 ---
@@ -367,9 +368,25 @@ CREATE TABLE items (
   updated_at TEXT
 );
 
+CREATE TABLE tags (
+  id INTEGER PRIMARY KEY,
+  name TEXT UNIQUE NOT NULL,
+  color TEXT,           -- hex color for UI
+  auto_rule TEXT        -- optional: regex or rule for auto-tagging
+);
+
+CREATE TABLE item_tags (
+  item_id TEXT REFERENCES items(id) ON DELETE CASCADE,
+  tag_id INTEGER REFERENCES tags(id) ON DELETE CASCADE,
+  source TEXT,          -- 'manual', 'auto', 'external' (synced from MS365/Gmail)
+  created_at TEXT,
+  PRIMARY KEY (item_id, tag_id)
+);
+
 CREATE INDEX idx_actionable ON items(zone, actionable);
 CREATE INDEX idx_source ON items(source);
 CREATE INDEX idx_timestamp ON items(timestamp);
+CREATE INDEX idx_item_tags ON item_tags(tag_id);
 ```
 
 ### 5.5 Sources
@@ -385,7 +402,53 @@ CREATE INDEX idx_timestamp ON items(timestamp);
 | home | Calendar | Google Calendar | syncToken | 5 min |
 | home | Chat | Telegram | getUpdates | 60s |
 
-### 5.6 Triage
+### 5.6 Email Sync Parameters
+
+**Initial Sync (first run):**
+
+| Parameter | Value | Reason |
+|-----------|-------|--------|
+| Lookback | 365 days | Full year of context |
+| Folders | Inbox + Sent | Sent needed for conversation context |
+| Batch size | 100 messages/request | API pagination |
+
+**Ongoing Sync:**
+
+| Parameter | Value | Method |
+|-----------|-------|--------|
+| MS365 | Delta query | `/messages/delta` tracks changes |
+| Gmail | history.list | historyId tracks changes |
+| Interval | 5 min | Balance freshness vs API limits |
+
+**What syncs:**
+
+| Field | Synced | Notes |
+|-------|--------|-------|
+| Subject, From, To, CC | Yes | Core metadata |
+| Body (text) | Yes | Needed for triage/search |
+| Body (HTML) | No | Text extracted only |
+| Attachments | Metadata only | Download on demand |
+| Categories/Labels | Yes | Mapped to tags |
+| Read status | Yes | Bidirectional sync |
+| Flag/Star | Yes | Bidirectional sync |
+
+**Retention:**
+
+| Classification | Retention |
+|----------------|-----------|
+| `actionable` | Forever |
+| `keep` | Forever |
+| `delete` | 365 days in trash, then purge |
+
+**Tag sync (bidirectional):**
+
+| Direction | Behavior |
+|-----------|----------|
+| Inbound | MS365 Categories / Gmail Labels → local tags |
+| Outbound | Local tag changes → sync to MS365/Gmail |
+| New tags | Created in both systems |
+
+### 5.7 Triage
 
 **Classification (ternary):**
 | Value | Meaning | Action |
@@ -400,7 +463,7 @@ CREATE INDEX idx_timestamp ON items(timestamp);
 
 **Override:** `/item mark <id> <classification>`
 
-### 5.7 Sync - Inbound
+### 5.8 Sync - Inbound
 
 Each poller:
 1. Gets auth token via `auth-keeper get <service>`
@@ -409,7 +472,7 @@ Each poller:
 4. Updates sync-state.json
 5. Triggers triage + index rebuild
 
-### 5.8 Sync - Outbound
+### 5.9 Sync - Outbound
 
 Write queue processor:
 1. Watches queue/pending/
@@ -418,14 +481,14 @@ Write queue processor:
 4. Sends to external API
 5. Moves to completed/ or failed/
 
-### 5.9 Slack Read/Write Split
+### 5.10 Slack Read/Write Split
 
 | Operation | Method |
 |-----------|--------|
 | Read (poll) | slackdump (browser session) |
 | Write (reply) | Slack Bot API (bot token) |
 
-### 5.10 Conflict Scenarios
+### 5.11 Conflict Scenarios
 
 | Conflict Type | Detection | Resolution |
 |---------------|-----------|------------|
@@ -437,21 +500,21 @@ Write queue processor:
 | Stale queue | Timestamp check | Review each item |
 | Field-level | Per-field diff | Auto-merge if disjoint |
 
-### 5.11 Item Completion
+### 5.12 Item Completion
 
 | Command | Behavior |
 |---------|----------|
 | `/task done` | Local complete only |
 | `/task close "notes"` | Local + external complete |
 
-### 5.12 Archive Policy
+### 5.13 Archive Policy
 
 | Item Type | Archive After |
 |-----------|---------------|
 | External (SDP, DevOps) | 90 days after completion |
 | Local-only (email, chat) | Never (keep forever) |
 
-### 5.13 Export to Personal VPS
+### 5.14 Export to Personal VPS
 
 ```bash
 datahub export --zone home --dest rsync://personal-vps/archive
@@ -461,7 +524,7 @@ datahub export --zone home --dest rsync://personal-vps/archive
 - Incremental: rsync handles
 - Schedule: Daily cron
 
-### 5.14 Attachments
+### 5.15 Attachments
 
 | Direction | Behavior |
 |-----------|----------|
@@ -639,6 +702,8 @@ Claude via Bedrock requires network. Offline mode is view-only (grep datahub).
 /search "query"              # Search all
 /search "query" --zone work  # Filter by zone
 /search "query" --source sdp # Filter by source
+/search "query" --tag urgent # Filter by tag
+/search --tag finance        # All items with tag (no text query)
 ```
 
 ### 7.5 Calendar Commands
@@ -693,6 +758,37 @@ aws --profile org-dev-admin ec2 describe-instances
 /sync status           # Sync queue status
 /sync retry            # Retry failed items
 ```
+
+### 7.10 Tag Commands
+
+```bash
+# View and manage tags
+/tag list                      # List all tags
+/tag list --item <id>          # Show tags for item
+/tag search <tag>              # Find items with tag
+
+# Apply tags
+/tag add <item-id> <tag>       # Add tag to item (syncs to external)
+/tag remove <item-id> <tag>    # Remove tag from item
+/tag bulk <tag> <query>        # Add tag to all items matching query
+
+# Manage tag definitions
+/tag create <name> [--color hex] [--rule regex]  # Create new tag
+/tag delete <name>             # Delete tag (removes from all items)
+/tag auto                      # Run auto-tagging rules on untagged items
+
+# External sync
+/tag sync                      # Force sync tags with MS365/Gmail
+```
+
+**Auto-tagging rules (optional):**
+
+| Tag | Rule Example |
+|-----|--------------|
+| `urgent` | Subject contains "urgent" or "asap" |
+| `finance` | From contains "@finance" |
+| `meeting` | Has calendar attachment |
+| `newsletter` | From matches known newsletter domains |
 
 ---
 
