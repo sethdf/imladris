@@ -530,7 +530,68 @@ When new BWS entry detected:
 3. auth-keeper renames to proper pattern
 4. User manually enters secret value in BWS
 
-### 6.6 Offline Limitation
+### 6.6 Cloud Account Registry
+
+BWS tracks accessible cloud accounts for discoverability:
+
+**AWS Accounts (BWS: `aws-accounts`):**
+
+```json
+[
+  {
+    "id": "111111111111",
+    "name": "prod",
+    "alias": "org-prod",
+    "roles": ["ReadOnlyAccess", "AdminAccess"],
+    "purpose": "Production environment",
+    "default_role": "ReadOnlyAccess"
+  },
+  {
+    "id": "222222222222",
+    "name": "dev",
+    "alias": "org-dev",
+    "roles": ["ReadOnlyAccess", "AdminAccess"],
+    "purpose": "Development/staging",
+    "default_role": "AdminAccess"
+  }
+]
+```
+
+**GCP Projects (BWS: `gcp-projects`):**
+
+```json
+[
+  {
+    "id": "my-project-123",
+    "name": "prod",
+    "purpose": "Production GCP"
+  }
+]
+```
+
+**AWS Access Model:**
+- Instance profile on host provides base credentials
+- Profile can assume roles in all registered accounts
+- No credential management needed - automatic via EC2 metadata
+- auth-keeper generates `~/.aws/config` from BWS registry
+
+**Generated AWS Config:**
+
+```ini
+[profile org-prod-readonly]
+role_arn = arn:aws:iam::111111111111:role/ReadOnlyAccess
+credential_source = Ec2InstanceMetadata
+
+[profile org-prod-admin]
+role_arn = arn:aws:iam::111111111111:role/AdminAccess
+credential_source = Ec2InstanceMetadata
+
+[profile org-dev-readonly]
+role_arn = arn:aws:iam::222222222222:role/ReadOnlyAccess
+credential_source = Ec2InstanceMetadata
+```
+
+### 6.7 Offline Limitation
 
 Claude via Bedrock requires network. Offline mode is view-only (grep datahub).
 
@@ -602,7 +663,28 @@ Claude via Bedrock requires network. Offline mode is view-only (grep datahub).
 /attachment download <att-id>  # Download attachment
 ```
 
-### 7.8 System Commands
+### 7.8 Cloud Commands
+
+```bash
+# AWS
+auth-keeper aws list                    # List all accessible accounts
+auth-keeper aws list --json             # JSON output for skills
+auth-keeper aws get <account>           # Assume role, set credentials
+auth-keeper aws get <account> --role Admin  # Specific role
+auth-keeper aws whoami                  # Current account/role context
+auth-keeper aws generate-config         # Regenerate ~/.aws/config from BWS
+
+# GCP
+auth-keeper gcp list                    # List all accessible projects
+auth-keeper gcp get <project>           # Set GOOGLE_CLOUD_PROJECT
+auth-keeper gcp whoami                  # Current project context
+
+# Direct AWS CLI usage (uses generated profiles)
+aws --profile org-prod-readonly s3 ls
+aws --profile org-dev-admin ec2 describe-instances
+```
+
+### 7.9 System Commands
 
 ```bash
 /auth status           # Auth overview
@@ -962,6 +1044,59 @@ Skills call Imladris CLI tools, never external APIs directly:
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+### Cloud Account Discoverability
+
+Skills need to know which cloud accounts are accessible without accessing credentials directly.
+
+**Problem:** Claude doesn't inherently know which AWS/GCP accounts exist or are accessible.
+
+**Solution:** Skills query auth-keeper CLI for account registry:
+
+```bash
+# Skill runs this to discover accounts
+auth-keeper aws list --json
+
+# Returns:
+{
+  "accounts": [
+    {
+      "id": "111111111111",
+      "name": "prod",
+      "alias": "org-prod",
+      "purpose": "Production environment",
+      "roles": ["ReadOnlyAccess", "AdminAccess"],
+      "default_role": "ReadOnlyAccess"
+    },
+    ...
+  ]
+}
+
+# Skill runs this to use a specific account
+auth-keeper aws get org-prod --role ReadOnly
+# Sets AWS_PROFILE=org-prod-readonly in environment
+```
+
+**Skill Pattern for Cloud Work:**
+
+```markdown
+## AWS Account Discovery
+
+Before any AWS operation:
+1. Run `auth-keeper aws list --json` to get accessible accounts
+2. Present accounts to user if ambiguous
+3. Run `auth-keeper aws get <account>` to set context
+4. Proceed with AWS CLI commands
+
+Never assume account IDs or hardcode credentials.
+```
+
+**Registry Updates:**
+
+When user gains/loses access to accounts:
+1. Update BWS secret (`aws-accounts` or `gcp-projects`)
+2. Run `auth-keeper aws generate-config`
+3. Skills automatically discover new accounts on next query
+
 ### Benefits
 
 | Benefit | How |
@@ -971,3 +1106,4 @@ Skills call Imladris CLI tools, never external APIs directly:
 | Flexibility | AI layer can be customized without breaking core |
 | Reliability | Critical sync logic is deterministic |
 | Upgradability | Can update skills without touching host code |
+| Discoverability | Skills query host for available resources |
