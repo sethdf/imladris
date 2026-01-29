@@ -622,10 +622,111 @@ auth-keeper refresh work-sdp
 ### 6.5 Smart Discovery
 
 When new BWS entry detected:
-1. auth-keeper prompts: "What service is this for?"
-2. User provides: service name, zone, credential type
-3. auth-keeper renames to proper pattern
-4. User manually enters secret value in BWS
+
+```
+auth-keeper discover
+    ↓
+"New secret found: jira-api-token"
+    ↓
+Prompts: "What service is this for?"
+User: "Jira Cloud for work"
+    ↓
+Prompts: "Zone? (work/home)"
+User: "work"
+    ↓
+Renames to: work-jira-api-token
+    ↓
+Creates local integration task (see below)
+```
+
+**Auto-created integration task:**
+
+When a new service is registered, automatically create a local-only task to build the integration:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  New service "jira" registered in work zone                     │
+│                                                                 │
+│  Creates datahub item:                                          │
+│    id: local-integrate-jira-{timestamp}                         │
+│    source: local                                                │
+│    type: integration-task                                       │
+│    title: "Build integration for jira"                          │
+│    zone: work                                                   │
+│    triage: actionable                                           │
+│                                                                 │
+│  With checklist:                                                │
+│    □ Create poller (lib/pollers/jira.ts)                        │
+│    □ Create CLI commands (auth-keeper jira ...)                 │
+│    □ Create PAI skill (/pai skill create jira)                  │
+│    □ Add to datahub sources table                               │
+│    □ Test sync cycle                                            │
+│    □ Document in CLAUDE.md                                      │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Integration task template:**
+
+```markdown
+---
+id: local-integrate-jira-20260129
+source: local
+type: integration-task
+title: Build integration for jira
+zone: work
+triage: actionable
+priority: P2
+created: 2026-01-29
+---
+
+## New Service Detected
+
+Service `jira` was added to BWS registry. Build the integration.
+
+## Checklist
+
+- [ ] **Poller**: Create `lib/pollers/jira.ts`
+  - Fetch issues assigned to me
+  - Map to datahub item format
+  - Handle pagination and rate limits
+
+- [ ] **CLI**: Add to auth-keeper
+  - `auth-keeper get work-jira` - get valid token
+  - `auth-keeper setup work-jira` - initial OAuth flow (if needed)
+
+- [ ] **Skill**: Create PAI skill
+  - `/pai skill create jira`
+  - Commands: /jira list, /jira show, /jira comment
+  - Triage rules for Jira notifications
+
+- [ ] **Datahub**: Update sources
+  - Add to Section 5.5 Sources table
+  - Define field sync matrix (Appendix A)
+
+- [ ] **Test**: Verify full cycle
+  - Poller fetches items
+  - Triage classifies correctly
+  - Commands work in Claude
+
+- [ ] **Document**: Update CLAUDE.md
+  - Add service to auth-keeper examples
+  - Note any service-specific quirks
+
+## Reference
+
+- BWS secret: `work-jira-api-token`
+- API docs: (add link)
+- Auth type: (API token / OAuth / etc.)
+```
+
+**Why local-only:**
+
+| Aspect | Reason |
+|--------|--------|
+| No SDP sync | Meta-task about building Imladris itself |
+| Stays in datahub | Findable, trackable like other work |
+| Auto-created | No friction to capture the work needed |
+| Checklist included | Don't forget any integration pieces |
 
 ### 6.6 Cloud Account Registry
 
