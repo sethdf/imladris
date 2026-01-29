@@ -749,6 +749,14 @@ All stateful data lives on the LUKS-encrypted data volume (`/data`). Root volume
 │   │   └── (same structure)
 │   └── tasks/
 │
+├── repos/                      ← zone-based git repos (ghq)
+│   ├── work/
+│   │   └── github.com/
+│   │       └── work-org/...
+│   └── home/
+│       └── github.com/
+│           └── sethdf/...
+│
 ├── calendar/
 │   └── merged.sqlite
 │
@@ -757,8 +765,6 @@ All stateful data lives on the LUKS-encrypted data volume (`/data`). Root volume
 │   ├── memory/
 │   ├── skills/
 │   └── projects/
-│
-├── repos/                      ← ~/repos symlinked here
 │
 ├── ssh/                        ← ~/.ssh symlinked here
 │
@@ -794,7 +800,8 @@ All stateful data lives on the LUKS-encrypted data volume (`/data`). Root volume
 | Claude sessions | `/data/claude/` | ✓ |
 | PAI memory/skills | `/data/claude/memory/`, `/data/claude/skills/` | ✓ |
 | SSH keys | `/data/ssh/` | ✓ |
-| Git repos | `/data/repos/` | ✓ |
+| Git repos (work) | `/data/repos/work/` | ✓ |
+| Git repos (home) | `/data/repos/home/` | ✓ |
 | BWS token cache | `/data/config/bws/` | ✓ |
 | slackdump auth | `/data/config/slackdump/` | ✓ |
 | Auth token cache | `/data/config/auth-keeper/` | ✓ |
@@ -809,6 +816,107 @@ All stateful data lives on the LUKS-encrypted data volume (`/data`). Root volume
 | Packages | Rebuildable |
 | OS | Rebuildable |
 | Temp files | Ephemeral by nature |
+
+### 8.5 Update Service
+
+Automatic updates with rollback on failure.
+
+**Components Updated:**
+
+| Component | Source | Frequency |
+|-----------|--------|-----------|
+| Claude Code | npm (@anthropic-ai/claude-code) | Daily |
+| PAI | GitHub (danielmiessler/PAI) | Daily |
+| Spec Kit | GitHub (github/spec-kit) | Daily |
+| MCP servers | npm (@modelcontextprotocol/*) | Daily |
+| Skills repos | GitHub (curu-skills, anthropics/skills) | Daily |
+| Nix packages | nixpkgs | Weekly |
+
+**Workflow:**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  update-service (systemd timer, daily 03:00)                    │
+│                                                                 │
+│  For each component with update available:                      │
+│    1. Snapshot current state                                    │
+│    2. Apply update                                              │
+│    3. Run validation tests                                      │
+│    4. If tests fail → rollback → notify failure                 │
+│    5. If tests pass → notify success                            │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Validation Tests:**
+
+| Component | Validation |
+|-----------|------------|
+| Claude Code | `claude --version`, basic prompt test |
+| PAI | Skills load without error |
+| Spec Kit | CLI health check |
+| MCP servers | Health check endpoints |
+| Nix | `nix build` succeeds |
+
+**Notifications:** Via configured channel (SimpleX, Telegram, or status dashboard)
+
+**Rollback:** Each component uses appropriate rollback:
+- Nix: `nix profile rollback`
+- npm: Previous version pinned in lockfile
+- Git repos: `git checkout` to previous commit
+
+### 8.6 Repository Structure
+
+Zone-based repository organization using `ghq`.
+
+**Directory Structure:**
+
+```
+/data/repos/
+├── work/
+│   └── github.com/
+│       ├── work-org/
+│       │   ├── project-alpha/
+│       │   └── project-beta/
+│       └── azure.com/
+│           └── work-org/
+│               └── devops-repo/
+│
+└── home/
+    └── github.com/
+        ├── sethdf/
+        │   ├── imladris/
+        │   ├── curu-skills/
+        │   └── personal-projects/
+        └── danielmiessler/
+            └── PAI/
+```
+
+**ghq Configuration:**
+
+```bash
+# Workspace sets GHQ_ROOT based on zone
+# In work zone:
+export GHQ_ROOT=/data/repos/work
+ghq get github.com/work-org/project
+
+# In home zone:
+export GHQ_ROOT=/data/repos/home
+ghq get github.com/sethdf/imladris
+```
+
+**Workspace Integration:**
+
+| Zone | GHQ_ROOT | Effect |
+|------|----------|--------|
+| work | `/data/repos/work` | `ghq list` shows only work repos |
+| home | `/data/repos/home` | `ghq list` shows only home repos |
+
+**Benefits:**
+
+- Repos physically separated by zone
+- Can export home zone to personal VPS independently
+- `ghq list | fzf` shows contextually relevant repos
+- No accidental work on wrong repo in wrong zone
 
 ---
 
@@ -975,6 +1083,68 @@ status: implementing
 /verify                    # Check acceptance criteria
 /spec status               # Show current spec state
 /spec list                 # List active specs in workspace
+```
+
+### 10.7 Git Automation
+
+Git commits and pushes happen automatically. Never think about "did I commit?" or "did I push?"
+
+**Architecture:**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  While working (continuous)                                     │
+│                                                                 │
+│  File change detected (debounce 30s)                            │
+│      ↓                                                          │
+│  Auto-commit to wip/{spec-id}                                   │
+│      ↓                                                          │
+│  Auto-push to GitHub                                            │
+│                                                                 │
+│  Invisible. You never think about this.                         │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  On /verify pass                                                │
+│                                                                 │
+│  Squash WIP commits → single clean commit                       │
+│      ↓                                                          │
+│  Merge to main                                                  │
+│      ↓                                                          │
+│  Push main to GitHub                                            │
+│      ↓                                                          │
+│  Delete WIP branch (local + remote)                             │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**What this guarantees:**
+
+| Concern | Handled |
+|---------|---------|
+| Work committed | Always (every 30s after change) |
+| Work pushed to GitHub | Always (after every commit) |
+| Work safe if instance dies | Yes, on GitHub |
+| Git history clean | Yes, squashed on `/verify` |
+| Manual git commands needed | Never (unless you want to) |
+
+**Implementation:**
+
+- `gitwatch` daemon per active repo
+- Hooks into Spec Kit `/verify` for squash-merge
+- WIP branch naming: `wip/{spec-id}` (e.g., `wip/feature-auth`)
+- Commit messages: auto-generated with timestamp + changed files
+
+**Branch flow:**
+
+```
+main ─────────────────────────────────●─────────────
+                                      ↑
+                                      │ squash merge
+                                      │
+wip/feature-auth ──●──●──●──●──●──●──┘
+                   ↑  ↑  ↑  ↑  ↑  ↑
+                   auto-commits (invisible)
 ```
 
 ---
