@@ -694,10 +694,10 @@ Service `jira` was added to BWS registry. Build the integration.
   - `auth-keeper get work-jira` - get valid token
   - `auth-keeper setup work-jira` - initial OAuth flow (if needed)
 
-- [ ] **Skill**: Create PAI skill
-  - `/pai skill create jira`
-  - Commands: /jira list, /jira show, /jira comment
-  - Triage rules for Jira notifications
+- [ ] **Skill**: Create PAI skill via `CreateSkill`
+  - "Create a skill for Jira integration with list, show, comment"
+  - Outputs: /jira list, /jira show, /jira comment
+  - Add triage rules for Jira notifications
 
 - [ ] **Datahub**: Update sources
   - Add to Section 5.5 Sources table
