@@ -1955,22 +1955,39 @@ Imladris 2.0 builds around PAI (Personal AI Infrastructure):
 
 **PAI Skills for Imladris:**
 
+| Category | Skills |
+|----------|--------|
+| **Integration** (thin routing) | One skill per Windmill module |
+| **AI Processing** | Triage, SpecAssist, TaskContext, Comms |
+
+**Integration skills** — one per Windmill folder:
+
+| Skill | Routes To | Purpose |
+|-------|-----------|---------|
+| SDP | `f/sdp/*` | ServiceDesk Plus tickets |
+| MS365 | `f/ms365/*` | Email, calendar |
+| Slack | `f/slack/*` | Messages |
+| AWS | `f/aws/*` | Cross-account, S3 |
+| Ramp | `f/ramp/*` | Expenses |
+| Securonix | `f/securonix/*` | Security alerts |
+| Ops | `f/ops/*` | Backups, maintenance |
+
+**AI Processing skills:**
+
 | Skill | Purpose |
 |-------|---------|
-| **Windmill** | Routes ALL external API calls through Windmill scripts |
-| **Triage** | Batch classification (actionable/keep/delete) |
-| **SpecAssist** | Help write clear specifications |
-| **TaskContext** | Summarize/restore workspace context |
-| **Comms** | Draft replies for email/chat |
+| Triage | Batch classification |
+| SpecAssist | Spec writing |
+| TaskContext | Context summarization |
+| Comms | Reply drafting |
 
-**Note:** The Windmill skill replaces per-service skills. Instead of separate skills for SDP, MS365, Slack, etc., one Windmill skill routes all requests to the appropriate Windmill script.
+**Pattern:** Each integration skill is ~20 lines of routing. Logic lives in Windmill scripts.
 
 ```
-Before: User → SDP skill → SDP API
-        User → MS365 skill → Graph API
-        User → Slack skill → Slack API
-
-After:  User → Windmill skill → Windmill → Any API
+User: "show my SDP tickets"
+  → SDP skill (routing)
+  → Windmill f/sdp/get-tickets.ts (logic)
+  → Returns data
 ```
 
 ---
@@ -1992,14 +2009,13 @@ Deterministic functionality that must work identically every time:
 
 | Component | Implementation | Why Host |
 |-----------|----------------|----------|
-| Pollers | Bun | Deterministic sync logic |
-| Queue processor | Bun | Deterministic write handling |
-| Auth-keeper | Shell/Bun | Security-sensitive token management |
+| Windmill scripts | Bun/Python | Deterministic sync/API logic |
 | Workspace commands | Shell | Deterministic tmux control |
 | Status TUI | Python | Deterministic display |
-| Index rebuild | Bun | Deterministic SQL operations |
 | Datahub CLI | Bun | Deterministic data operations |
-| Conflict detection | Bun | Deterministic comparison |
+| Bootstrap | Shell | System initialization |
+
+**Note:** Pollers, queue processor, and auth-keeper are now Windmill scripts, not separate components.
 
 ### AI Layer (Curu-skills)
 
@@ -3415,7 +3431,153 @@ def main():
 
 **Rule of thumb:** Start with TypeScript. Switch to Python only if you're fighting the language or missing critical libraries.
 
-### H.6 Poller Migration Example
+### H.6 Windmill Best Practices
+
+#### Folder Organization
+
+Use folder-based paths with clear ownership:
+
+```
+f/                          # Shared folders
+├── sdp/                    # ServiceDesk Plus
+│   ├── sync.ts
+│   ├── get-tickets.ts
+│   └── update-ticket.ts
+├── ms365/                  # Microsoft 365
+├── aws/                    # AWS operations
+├── ops/                    # Backups, maintenance
+└── triage/                 # AI processing
+
+u/                          # User-specific (if needed)
+└── admin/
+    └── debug-scripts/
+```
+
+#### Variables vs Resources vs Secrets
+
+| Type | Use For | Example |
+|------|---------|---------|
+| **Variable** | Simple config strings | `sdp-base-url`, `default-zone` |
+| **Secret** | API keys, tokens (encrypted) | `sdp-api-token`, `telegram-bot-token` |
+| **Resource** | Structured + OAuth (auto-refresh) | `ms365-oauth`, `slack-oauth`, `postgres-db` |
+
+```typescript
+// Variable (simple string)
+const baseUrl = await wmill.getVariable("f/sdp/base-url");
+
+// Secret (encrypted, audit-logged)
+const token = await wmill.getVariable("f/sdp/api-token");  // same API, marked secret in UI
+
+// Resource (structured, OAuth auto-refresh)
+const ms365 = await wmill.getResource("f/ms365/oauth");
+const accessToken = ms365.token;  // Always valid, Windmill refreshes
+```
+
+#### Error Handling
+
+**Per-script retry policy** (in metadata YAML):
+
+```yaml
+# sync.script.yaml
+retry:
+  max_attempts: 3
+  exponential_delay:
+    base_ms: 1000
+    multiplier: 2
+    max_ms: 60000
+```
+
+**Workspace-level error handler** — notify on any failure:
+
+```typescript
+// f/ops/error-handler.ts
+// Set as workspace error handler in Settings
+
+export async function main(error: {
+    job_id: string;
+    path: string;
+    error: string;
+}) {
+    await sendTelegramMessage(`❌ Job failed: ${error.path}\n${error.error}`);
+}
+```
+
+**Flow error handling:**
+
+```yaml
+# flow.yaml
+error_handler:
+  path: f/ops/error-handler
+
+steps:
+  - id: fetch
+    script: f/sdp/sync
+    retry:
+      max_attempts: 3
+    continue_on_error: false  # Stop flow if this fails
+
+  - id: notify
+    script: f/ops/send-summary
+    continue_on_error: true   # Don't fail flow if notification fails
+```
+
+#### Git Sync
+
+**Pull without secrets** (for version control):
+
+```bash
+wmill sync pull --skip-secrets --skip-resources
+```
+
+**Folder structure after sync:**
+
+```
+windmill/
+├── f/
+│   ├── sdp/
+│   │   ├── sync.ts
+│   │   └── sync.script.yaml
+│   └── ...
+├── wmill.yaml
+└── .gitignore           # Exclude secrets
+```
+
+**Git workflow:**
+
+```
+1. Edit locally (VS Code + Windmill extension)
+2. Test in Windmill UI
+3. wmill sync push
+4. Commit to git
+```
+
+#### Naming Conventions
+
+| Item | Pattern | Example |
+|------|---------|---------|
+| Scripts | `{action}.ts` or `{action}-{noun}.ts` | `sync.ts`, `get-tickets.ts` |
+| Flows | `{process}-flow` | `full-sync-flow` |
+| Variables | `{service}-{item}` | `sdp-base-url` |
+| Secrets | `{service}-{credential}` | `sdp-api-token` |
+| Resources | `{service}-{type}` | `ms365-oauth` |
+
+#### Timeouts
+
+Set appropriate timeouts per script:
+
+| Script Type | Timeout |
+|-------------|---------|
+| Quick queries | 30s |
+| Sync operations | 5m |
+| Batch processing | 15m |
+| Backups | 30m |
+
+```yaml
+# sync.script.yaml
+timeout_s: 300  # 5 minutes
+```
+
+### H.7 Poller Migration Example
 
 **Current (sdp-poller.ts):**
 
@@ -3454,7 +3616,7 @@ export async function main() {
 
 Retry/backoff handled by Windmill, not custom code.
 
-### H.7 New Capabilities
+### H.8 New Capabilities
 
 **Webhooks for real-time:**
 
@@ -3505,7 +3667,7 @@ steps:
     depends_on: [approve]
 ```
 
-### H.8 Windmill as Integration Gateway
+### H.9 Windmill as Integration Gateway
 
 **Core principle:** Claude/PAI never calls external APIs directly. All external communication routes through Windmill.
 
@@ -3563,7 +3725,7 @@ steps:
 | Rate limit management | Windmill concurrency controls |
 | Adding new source | Just add scripts, skill routes automatically |
 
-### H.9 Interactive vs Scheduled Access
+### H.10 Interactive vs Scheduled Access
 
 For **scheduled syncs**, all calls go through Windmill—latency doesn't matter.
 
@@ -3660,7 +3822,7 @@ export async function main() {
 - Uses Graph API with cached token
 ```
 
-### H.10 Why Windmill
+### H.11 Why Windmill
 
 | Factor | Windmill |
 |--------|----------|
@@ -3674,45 +3836,79 @@ export async function main() {
 | Languages | Bun, Python, Go, Bash |
 | Open source | AGPLv3, no vendor lock-in |
 
-### H.11 PAI Skill: Windmill
+### H.12 PAI Skills: One Per Windmill Module
 
-Single skill routes all external API requests through Windmill:
+**Pattern:** One thin skill per Windmill script folder. Each skill routes requests to its module's scripts.
 
-```markdown
-# Skill: Windmill
+**Skill structure:**
 
-All external API calls route through Windmill scripts.
-Never call external APIs directly from Claude.
-
-## Script Discovery
-Scripts organized by source: scripts/{source}/{action}.ts
-Use Windmill API to list available scripts.
-
-## Triggers
-- "get ramp expenses" → run scripts/ramp/get-expenses
-- "securonix alerts" → run scripts/securonix/get-alerts
-- "update SDP-1234" → run scripts/sdp/update-ticket {id: "1234", ...}
-- "sync all sources" → run flows/full-sync
-- "check job status" → GET /api/jobs/list
-- "show failures" → GET /api/jobs/list?status=failure
-
-## API Patterns
-# Run script and get result
-POST /api/w/main/jobs/run_wait_result/p/scripts/ramp/get-expenses
-Body: { "args": { "since": "2026-01-01" } }
-
-# Check job status
-GET /api/w/main/jobs/{job_id}
-
-# List scheduled jobs
-GET /api/w/main/schedules/list
-
-## Example Usage
-User: "run the securonix sync now"
-Claude: Triggering pollers/securonix... ✓ Completed in 3.2s, synced 47 alerts.
+```
+Windmill scripts/          PAI Skills (thin routing)
+├── f/sdp/            →    SDP skill
+├── f/ms365/          →    MS365 skill
+├── f/slack/          →    Slack skill
+├── f/aws/            →    AWS skill
+├── f/ramp/           →    Ramp skill
+├── f/securonix/      →    Securonix skill
+├── f/ops/            →    Ops skill
+└── f/triage/         →    (uses Triage skill, not routing)
 ```
 
-### H.12 Implementation Plan
+**Example skill template:**
+
+```markdown
+# Skill: SDP
+
+Routes SDP requests to Windmill scripts in f/sdp/.
+
+## Scripts Available
+- f/sdp/sync.ts - Scheduled sync (don't call directly)
+- f/sdp/get-tickets.ts - List tickets
+- f/sdp/get-ticket.ts - Get single ticket
+- f/sdp/update-ticket.ts - Update ticket
+
+## Triggers
+- "sdp tickets" → run f/sdp/get-tickets
+- "show SDP-1234" → run f/sdp/get-ticket {id: "1234"}
+- "update SDP-1234 status to resolved" → run f/sdp/update-ticket {id: "1234", status: "resolved"}
+- "sync sdp" → run f/sdp/sync
+
+## API Pattern
+POST /api/w/main/jobs/run_wait_result/p/f/sdp/get-tickets
+Body: { "args": { "status": "open" } }
+```
+
+**Why skill-per-module:**
+
+| Aspect | One Giant Skill | Skill Per Module |
+|--------|-----------------|------------------|
+| Size | Grows unbounded | ~20 lines each |
+| Maintenance | Hard to find things | Clear ownership |
+| Adding source | Edit huge file | Add new skill |
+| Conflicts | Possible | Isolated |
+
+**Skill inventory:**
+
+| Skill | Module | Purpose |
+|-------|--------|---------|
+| SDP | f/sdp/ | ServiceDesk Plus tickets |
+| MS365 | f/ms365/ | Email, calendar |
+| Slack | f/slack/ | Messages |
+| AWS | f/aws/ | Cross-account, S3, etc. |
+| Ramp | f/ramp/ | Expenses |
+| Securonix | f/securonix/ | Security alerts |
+| Ops | f/ops/ | Backups, sync, maintenance |
+| Triage | (built-in) | AI classification |
+
+**Adding new integration:**
+
+```
+1. Create Windmill scripts: f/newservice/*.ts
+2. Create thin PAI skill: NewService skill (~20 lines)
+3. Done
+```
+
+### H.13 Implementation Plan
 
 | Phase | Scope |
 |-------|-------|
@@ -3724,7 +3920,7 @@ Claude: Triggering pollers/securonix... ✓ Completed in 3.2s, synced 47 alerts.
 | 6 | Add new sources (Ramp, Securonix, etc.) |
 | 7 | Enable webhooks for real-time sources |
 
-### H.13 Unified Scheduler
+### H.14 Unified Scheduler
 
 **Principle:** All application-level scheduled tasks run in Windmill. systemd only handles bootstrap/system services.
 
@@ -3791,7 +3987,7 @@ scripts/
     └── update-*.ts      (on-demand)
 ```
 
-### H.14 Decision
+### H.15 Decision
 
 **Adopted: Windmill as unified scheduler and integration gateway.**
 
