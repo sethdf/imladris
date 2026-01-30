@@ -409,7 +409,7 @@ type: request
 title: Fix auth module
 status: in-progress
 zone: work
-triage: actionable
+triage: act
 priority: P2
 tags: [auth, urgent, backend]
 created: 2026-01-25
@@ -435,7 +435,7 @@ Assigned to @seth
 | `source` | string | `sdp`, `ms365`, `gmail`, `slack`, `devops`, `adhoc`, etc. |
 | `type` | string | `request`, `task`, `email`, `message`, `work-item`, etc. |
 | `zone` | string | `work`, `home` |
-| `triage` | string | `actionable`, `keep`, `delete` |
+| `triage` | string | `act`, `keep`, `delete` |
 | `priority` | string | `P0`, `P1`, `P2`, `P3` (optional) |
 | `tags` | array | Tag names |
 
@@ -447,7 +447,7 @@ CREATE TABLE items (
   source TEXT NOT NULL,          -- 'sdp', 'ms365', 'gmail', etc.
   type TEXT,                     -- 'request', 'email', 'message', etc.
   zone TEXT NOT NULL,            -- 'work', 'home'
-  triage TEXT DEFAULT 'keep',    -- 'actionable', 'keep', 'delete'
+  triage TEXT DEFAULT 'keep',    -- 'act', 'keep', 'delete'
   status TEXT,
   priority TEXT,
   timestamp TEXT,
@@ -524,7 +524,7 @@ CREATE INDEX idx_item_tags ON item_tags(tag_id);
 
 | Classification | Retention |
 |----------------|-----------|
-| `actionable` | Forever |
+| `act` | Forever |
 | `keep` | Forever |
 | `delete` | 365 days in trash, then purge |
 
@@ -541,7 +541,7 @@ CREATE INDEX idx_item_tags ON item_tags(tag_id);
 **Classification (ternary):**
 | Value | Meaning | Action |
 |-------|---------|--------|
-| `actionable` | Needs user action | Surfaces in workspace |
+| `act` | Needs user action | Surfaces in workspace |
 | `keep` | Reference/archive | Stored, searchable |
 | `delete` | Noise/irrelevant | Moved to trash |
 
@@ -852,7 +852,7 @@ Claude via Bedrock requires network. Offline mode is view-only (grep datahub).
 ```bash
 /inbox                 # Show actionable in current workspace
 /item show <id>        # View item details
-/item mark <id> <class># Override triage (actionable/keep/delete)
+/item mark <id> <class># Override triage (act/keep/delete)
 /item done <id>        # Mark item complete
 ```
 
@@ -2597,9 +2597,9 @@ Comms mode is for **batch processing** communications - not staying in it all da
 
 | Source | Item Type | Triage Filter |
 |--------|-----------|---------------|
-| MS365/Gmail | Email | `triage: actionable` (needs reply/action) |
-| Slack | Thread/DM | `triage: actionable` (needs response) |
-| Telegram | Message | `triage: actionable` (needs response) |
+| MS365/Gmail | Email | `triage: act` (needs reply/action) |
+| Slack | Thread/DM | `triage: act` (needs response) |
+| Telegram | Message | `triage: act` (needs response) |
 
 **Workflow:**
 
@@ -2694,11 +2694,11 @@ Claude drafts reply
 
 **Triage Integration:**
 
-Most emails are auto-triaged to `keep` (reference) not `actionable`. Only items that genuinely need your response appear in comms inbox.
+Most emails are auto-triaged to `keep` (reference) not `act`. Only items that genuinely need your response appear in comms inbox.
 
 | Triage Result | Examples | Where It Goes |
 |---------------|----------|---------------|
-| `actionable` | Direct questions, requests, approvals | Comms inbox |
+| `act` | Direct questions, requests, approvals | Comms inbox |
 | `keep` | CC'd emails, FYIs, receipts | Archive (searchable) |
 | `delete` | Spam, newsletters (if unwanted) | Trash |
 
