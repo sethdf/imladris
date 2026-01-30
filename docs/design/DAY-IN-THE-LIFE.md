@@ -578,7 +578,7 @@ Dashboard shows:
 | Morning startup | Check 5+ services manually for what's urgent | Dashboard shows priority at a glance |
 | Context switch | "Where was I?" 15-20 min recovery | Instant restore with `/task resume` |
 | Cross-service query | Auth to each service, run separate queries | Single command, parallel fetch via Windmill |
-| Adding data source | Days of custom coding, systemd, etc. | 1-2 hours with templates and patterns |
+| Adding data source | Days of custom coding, systemd, etc. | ~45 min with codegen + consolidation |
 | Zone switch | Mental overhead, risk of mixing contexts | `/home` or `/work`, auto-save current |
 | Pause/resume | Manual notes, lost state, files half-open | Automatic context capture |
 | Multi-calendar | Check both calendars, manual blocking | Automatic bidirectional sync |
@@ -602,7 +602,7 @@ Dashboard shows:
 
 2. **Triage accuracy:** What if triage marks something as 'keep' that should be 'act'? Is the override flow (`/item mark`) discoverable enough?
 
-3. **New source friction:** The Ramp integration took 1.5 hours. Could it be faster with better templates or a wizard?
+3. **New source friction:** ✓ Resolved: OpenAPI codegen for scaffolding, then consolidate into focused scripts. ~45 min.
 
 4. **Cross-zone search:** Currently defaults to current zone. Is that right, or should `/search` always be global with explicit zone filter?
 

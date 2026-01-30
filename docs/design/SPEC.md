@@ -3949,11 +3949,53 @@ Body: { "args": { "status": "open" } }
 
 **Adding new integration:**
 
+Use OpenAPI codegen for scaffolding, then consolidate into focused scripts.
+
 ```
-1. Create Windmill scripts: f/newservice/*.ts
-2. Create thin Curu skill (PAI): NewService skill (~20 lines)
-3. Done
+Step 1: Scaffold (understand the API quickly)
+─────────────────────────────────────────────
+bunx @windmill-labs/openapi-codegen-cli \
+  --schemaUrl "https://api.newservice.com/openapi.json" \
+  --outputDir "./f/newservice/_generated" \
+  --resourceTypeName "newservice" \
+  --authKind "bearer"
+
+Step 2: Add credential
+─────────────────────────────────────────────
+- Add API key/token to BWS: work-newservice-api-key
+- Run f/ops/bws-sync.ts to populate Windmill
+
+Step 3: Consolidate (reduce AI thinking)
+─────────────────────────────────────────────
+Write focused scripts that group operations by user intent:
+
+f/newservice/
+├── sync.ts          # Scheduled poller
+├── query.ts         # Consolidated query interface
+├── update.ts        # Write operations (if bidirectional)
+└── _generated/      # Reference only, not called by skills
+
+Step 4: Create thin skill
+─────────────────────────────────────────────
+# Skill: NewService
+
+- f/newservice/query.ts - All queries (list, get, search)
+- f/newservice/update.ts - Modifications
+- f/newservice/sync.ts - Scheduled, don't call
+
+Step 5: Test & schedule
+─────────────────────────────────────────────
+- Run sync.ts manually, verify datahub files created
+- Add schedule in Windmill UI
+- Verify skill routing works
 ```
+
+**Why consolidate?** PAI principle: reduce AI decision-making.
+
+- Bad: 50 auto-generated scripts → Claude must explore, reason, choose
+- Good: 3 focused scripts → deterministic routing, fewer tokens
+
+**Time estimate:** ~45 min (codegen: 5 min, consolidate: 25 min, skill: 5 min, test: 10 min)
 
 ### H.13 Implementation Plan
 
