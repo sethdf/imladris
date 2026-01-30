@@ -3421,47 +3421,57 @@ steps:
 | SQLite index | Same rebuild after writes |
 | Chat Gateway | Could trigger Windmill flows via webhook |
 
-### H.8 Trade-offs
+### H.8 Why Windmill
 
-**Pros:**
-- Dramatically simpler to add new sources
-- Better visibility (Web UI)
-- No custom retry/queue code
-- Webhook support enables real-time
-- Multi-language (use Python where better libs exist)
-- Job history and audit trail built-in
+| Factor | Windmill |
+|--------|----------|
+| Footprint | ~150MB steady state (Rust backend) |
+| Performance | 26M tasks/month on single $5 worker |
+| API | Full REST API for PAI skill integration |
+| Adding sources | Script + schedule = done |
+| Monitoring | Built-in web UI |
+| Retries | Configurable policies, no custom code |
+| Webhooks | Native support for real-time |
+| Languages | Bun, Python, Go, Bash |
+| Open source | AGPLv3, no vendor lock-in |
 
-**Cons:**
-- Additional container (~500MB RAM)
-- Postgres dependency (but small footprint)
-- Learning curve for Windmill concepts
-- Another system to secure/update
-- Slight vendor coupling (mitigated: open source, scripts portable)
+### H.9 PAI Skill: WindmillOps
 
-### H.9 Migration Path
+The Windmill API enables a PAI skill for Claude to manage orchestration:
+
+```markdown
+# Skill: WindmillOps
+
+## Triggers
+- "check job status" → GET /api/w/{workspace}/jobs/list
+- "run the ramp sync" → POST /api/w/{workspace}/jobs/run_script_by_path
+- "show failed jobs" → GET /api/w/{workspace}/jobs/list?status=failure
+- "disable slack poller" → POST /api/w/{workspace}/schedules/disable
+
+## Example Usage
+User: "run the securonix sync now"
+Claude: Triggering pollers/securonix... ✓ Completed in 3.2s, synced 47 alerts.
+```
+
+### H.10 Implementation Plan
 
 | Phase | Scope |
 |-------|-------|
-| 1 | Deploy Windmill alongside existing timers |
-| 2 | Migrate one low-risk poller (e.g., telegram) |
-| 3 | Validate monitoring, retries, logs |
-| 4 | Migrate remaining pollers one by one |
-| 5 | Remove systemd timers, queue processor |
-| 6 | Enable webhooks where supported |
+| 1 | Add Windmill to docker-compose, deploy |
+| 2 | Create WindmillOps PAI skill |
+| 3 | Migrate pollers (telegram, sdp, ms365, etc.) |
+| 4 | Remove systemd timers, custom queue |
+| 5 | Add new sources (Ramp, Securonix, etc.) |
+| 6 | Enable webhooks for real-time sources |
 
-### H.10 Decision
+### H.11 Decision
 
-**Recommendation:** Proceed with Windmill.
+**Adopted: Windmill as orchestration layer.**
 
-Given:
-- Many more data sources planned
-- Current approach requires custom code per source
-- Monitoring/visibility is poor
-- Webhook support enables real-time (Slack, GitHub, etc.)
-- Resource overhead is acceptable (500MB of 16GB)
-
-**Next steps:**
-1. Add Windmill to docker-compose
-2. Spike: migrate telegram poller
-3. Evaluate UX of adding new source via Windmill vs current
-4. Decide go/no-go based on spike
+Rationale:
+- Many data sources planned — Windmill makes adding each trivial
+- Small footprint (~150MB) with excellent performance (Rust)
+- Full API enables PAI skill integration
+- Built-in monitoring eliminates custom dashboard work
+- Webhook support enables real-time where available
+- Scripts remain portable (just TypeScript/Python)
