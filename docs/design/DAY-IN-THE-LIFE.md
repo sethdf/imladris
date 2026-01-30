@@ -4,52 +4,9 @@
 
 ---
 
-## 7:45 AM — Morning Startup (from phone, still in bed)
+## 8:15 AM — Morning Startup
 
-**Scenario:** Quick check before getting up. Using Chat Gateway from iOS.
-
-```
-Me (Telegram): /c what's urgent today?
-
-Curu: Checking your inbox...
-
-Work (3 items):
-• SDP-1234: Server down in prod — P0, assigned to you 2h ago
-• Email from boss: "Need Q3 budget by EOD" — flagged urgent
-• Slack DM from Sarah: "Can you review my PR when you get a chance?"
-
-Home (1 item):
-• Email from dentist: Appointment reminder tomorrow 2pm
-
-The P0 ticket looks critical. Want me to pull details?
-
-Me: yes
-
-Curu: SDP-1234: "Production API returning 500 errors"
-- Opened: 5:43 AM by monitoring
-- Impact: Customer-facing API
-- Notes: "Nagios alert triggered. On-call acknowledged but needs escalation."
-- Last activity: 6:12 AM
-
-Should I check the AWS logs for this service?
-
-Me: /last
-```
-
-**✓ Friction reduced:**
-- Didn't need to SSH, open laptop, or context switch
-- Triage already classified items by priority
-- Could have drilled into AWS from bed (but chose not to)
-
-**⚠ Potential pain point:**
-- Chat Gateway adds latency (~2-3s per response)
-- Complex multi-step work is clunky via chat
-
----
-
-## 8:30 AM — Actually Starting Work
-
-**Scenario:** SSH in, pick up the P0 ticket.
+**Scenario:** Start of day. SSH in, see what's waiting.
 
 ```bash
 $ ssh imladris
@@ -100,13 +57,15 @@ Claude runs multiple Windmill scripts in parallel:
 - `f/slack/search.ts` → searches for related messages
 
 **✓ Friction reduced:**
-- Context from morning chat session available
+- Dashboard shows priority at a glance — no checking 5 different services
+- Previous session context (auth refactor) remembered automatically
 - Multi-service queries without manual auth
-- Parallel execution
+- Parallel execution across AWS, Slack
 
 **⚠ Potential pain point:**
 - AWS session fetch adds ~200ms before first API call
 - If CloudWatch has lots of data, could be slow
+- Dashboard assumes polling ran overnight — if instance was stopped, data is stale
 
 ---
 
@@ -616,33 +575,37 @@ Dashboard shows:
 
 | Scenario | Old Pain | New Flow |
 |----------|----------|----------|
-| Morning check | Open laptop, SSH, check 5 services | Telegram one-liner |
-| Context switch | "Where was I?" 15-20 min recovery | Instant with saved context |
-| Cross-service query | Manual auth to each service | Single command, parallel fetch |
-| Adding data source | Days of custom coding | 2-3 hours with templates |
-| Zone switch | Mental overhead, risk of mixing | One command, auto-save |
-| Pause/resume | Manual notes, lost state | Automatic capture |
-| Multi-calendar | Check both, manual blocking | Automatic bidirectional |
+| Morning startup | Check 5+ services manually for what's urgent | Dashboard shows priority at a glance |
+| Context switch | "Where was I?" 15-20 min recovery | Instant restore with `/task resume` |
+| Cross-service query | Auth to each service, run separate queries | Single command, parallel fetch via Windmill |
+| Adding data source | Days of custom coding, systemd, etc. | 1-2 hours with templates and patterns |
+| Zone switch | Mental overhead, risk of mixing contexts | `/home` or `/work`, auto-save current |
+| Pause/resume | Manual notes, lost state, files half-open | Automatic context capture |
+| Multi-calendar | Check both calendars, manual blocking | Automatic bidirectional sync |
+| Interruptions | Lose thread, forget what was pending | Resume exactly where you left off |
 
 ### ⚠ Pain Points Identified
 
 | Issue | Impact | Possible Fix |
 |-------|--------|--------------|
-| Chat Gateway latency (2-3s) | Minor annoyance for quick checks | Accept as tradeoff for mobility |
-| Manual API key retrieval | Context switch to browser | Can't fix (vendor limitation) |
-| HR system not integrated | Manual lookup for headcount | Add as data source (same pattern as Ramp) |
-| AWS session fetch latency | 200ms before first call | Cache sessions longer? |
-| Initial sync can be slow | 2+ min for large datasets | Progress indicator, background job |
+| Manual API key retrieval | Context switch to browser for new sources | Can't fix (vendor limitation) |
+| Missing data source (HR) | Manual lookup for some data | Add as source (same pattern as Ramp) |
+| AWS session fetch latency | 200ms before first API call | Cache sessions longer, or accept it |
+| Initial sync can be slow | 2+ min for large datasets | Progress indicator, run in background |
+| Instance stopped overnight | Stale data on morning startup | Keep instance running, or quick catch-up sync |
 | No offline access | Can't work without connection | Out of scope (cloud-first design) |
+| Triage misclassification | Item marked 'keep' should be 'act' | `/item mark` override exists, but discoverable? |
 
 ### 🔍 Questions Raised
 
-1. **Chat Gateway depth:** How much complex work should be supported via chat? Current design is "triage and quick queries only" — is that right?
+1. **Context save granularity:** Currently saves on explicit pause/switch. Should there be auto-save every N minutes for crash recovery?
 
-2. **Context save granularity:** Currently saves on pause/switch. Should there be auto-save every N minutes?
+2. **Triage accuracy:** What if triage marks something as 'keep' that should be 'act'? Is the override flow (`/item mark`) discoverable enough?
 
-3. **Triage accuracy:** What if triage marks something as 'keep' that should be 'act'? Need easy override flow.
+3. **New source friction:** The Ramp integration took 1.5 hours. Could it be faster with better templates or a wizard?
 
-4. **New source friction:** The Ramp integration took 1.5 hours. Could it be faster with better templates?
+4. **Cross-zone search:** Currently defaults to current zone. Is that right, or should `/search` always be global with explicit zone filter?
 
-5. **Cross-zone search:** Currently defaults to current zone. Is that right, or should /search always be global with zone filter?
+5. **Standup/meeting interrupts:** The pause/resume worked well. What about recurring meetings — should there be a "meeting mode" that auto-pauses?
+
+6. **Dashboard freshness:** What if pollers failed overnight? Should dashboard show "last successful sync" timestamps prominently?
