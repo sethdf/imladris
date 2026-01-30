@@ -300,18 +300,36 @@ tmux session: main
 └── window 10: home:adhoc
 ```
 
-### 4.3 Zone Switching
+### 4.3 Window Lifecycle
+
+**All 11 windows pre-created on startup.** Rationale:
+- Cloud host rarely restarts (~2GB RAM is negligible)
+- Instant switching between any mode/zone
+- No startup lag on first zone entry
+- Claude Code sessions warm and ready
+
+**On `workspace-init`:**
+1. Creates all 11 windows
+2. Starts Claude Code in each (windows 1-10)
+3. Starts dashboard TUI in window 0
+4. Loads last context for each workspace
+
+**On reboot (rare):**
+- systemd runs `workspace-init` after LUKS unlock
+- All windows recreated, contexts restored from saved state
+
+### 4.4 Zone Switching
 
 - `/work` → switches to work:comms (default mode)
 - `/home` → switches to home:comms (default mode)
 - `/work tasks` → switches to work:tasks
 - On zone switch: Claude auto-summarizes current context
 
-### 4.4 Pane Structure
+### 4.5 Pane Structure
 
 Freeform. Single pane default (Claude), split as needed.
 
-### 4.5 Visual Signaling
+### 4.6 Visual Signaling
 
 | Element | Work Zone | Home Zone |
 |---------|-----------|-----------|
@@ -319,7 +337,7 @@ Freeform. Single pane default (Claude), split as needed.
 | Pane border | Blue | Green |
 | Prompt prefix | `[work:tasks]` | `[home:comms]` |
 
-### 4.6 Status Bar
+### 4.7 Status Bar
 
 ```
 Normal:
@@ -333,7 +351,7 @@ Auth problem:
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-### 4.7 Status Dashboard (Window 0)
+### 4.8 Status Dashboard (Window 0)
 
 TUI showing:
 - All workspaces with actionable counts
@@ -344,6 +362,67 @@ TUI showing:
 
 Auto-refresh: 30 seconds
 Implementation: Python + rich/textual
+
+### 4.9 Keyboard Navigation
+
+Multiple navigation methods available:
+
+**Window Numbers (built-in):**
+
+| Keys | Destination |
+|------|-------------|
+| `Ctrl-b 0` | status |
+| `Ctrl-b 1` | work:comms |
+| `Ctrl-b 2` | work:tasks |
+| `Ctrl-b 3` | work:projects |
+| `Ctrl-b 4` | work:research |
+| `Ctrl-b 5` | work:adhoc |
+| `Ctrl-b 6` | home:comms |
+| `Ctrl-b 7` | home:tasks |
+| `Ctrl-b 8` | home:projects |
+| `Ctrl-b 9` | home:research |
+| `Alt-0` | home:adhoc (window 10) |
+
+**Named Shortcuts (custom bindings):**
+
+```tmux
+# Zone jumps
+bind-key W select-window -t 1    # Work (comms)
+bind-key H select-window -t 6    # Home (comms)
+bind-key S select-window -t 0    # Status
+
+# Mode jumps (within current zone)
+bind-key C run-shell "tmux select-window -t $(tmux display -p '#{?#{==:#{window_index},#{e|<:6,#{window_index}}},1,6}')"   # comms
+bind-key T run-shell "tmux select-window -t $(tmux display -p '#{?#{==:#{window_index},#{e|<:6,#{window_index}}},2,7}')"   # tasks
+```
+
+**Fuzzy Finder (fzf integration):**
+
+```tmux
+bind-key f display-popup -E "tmux list-windows -F '#I: #W' | fzf --reverse | cut -d: -f1 | xargs tmux select-window -t"
+```
+
+| Keys | Action |
+|------|--------|
+| `Ctrl-b f` | Open fuzzy window picker |
+| Type `work` | Filters to work windows |
+| Type `tasks` | Filters to tasks mode |
+| Enter | Switch to selected window |
+
+**Slash Commands (from within Claude):**
+
+```bash
+/work           # Switch to work:comms
+/work tasks     # Switch to work:tasks
+/home           # Switch to home:comms
+/status         # Switch to window 0
+```
+
+**Recommended usage:**
+- Quick jumps: `Ctrl-b 0-9` for memorized positions
+- Zone switch: `Ctrl-b W` or `Ctrl-b H`
+- Discovery: `Ctrl-b f` when unsure
+- From Claude: `/work tasks` for contextual switch with auto-save
 
 ---
 
@@ -797,7 +876,106 @@ Creates local integration task in datahub
 
 One place to add (Windmill). One skill routes all (Windmill Curu skill (PAI)).
 
-### 6.7 Cloud Account Registry
+### 6.7 Credential Setup Wizard
+
+Interactive wizard for first-time setup and adding new services.
+
+**Run:** `imladris-setup` or `f/ops/credential-wizard.ts`
+
+**Flow:**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  IMLADRIS CREDENTIAL WIZARD                                     │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  Step 1: BWS Access                                             │
+│  ─────────────────                                              │
+│  Enter BWS access token: ****************************           │
+│  ✓ Connected to BWS                                             │
+│                                                                 │
+│  Step 2: Service Registry                                       │
+│  ────────────────────────                                       │
+│  Reading known services from BWS...                             │
+│                                                                 │
+│  Found in BWS:                 Status in Windmill:              │
+│  ──────────────────────────────────────────────────             │
+│  work-sdp-api-token            ✓ Synced                         │
+│  work-ms365-client-id          ✓ Synced                         │
+│  work-ms365-client-secret      ✓ Synced                         │
+│  work-slack-token              ✓ Synced                         │
+│  home-telegram-bot-token       ✓ Synced                         │
+│  home-google-client-id         ⚠ Missing in Windmill            │
+│                                                                 │
+│  Step 3: Sync Missing                                           │
+│  ────────────────────                                           │
+│  Sync home-google-client-id to Windmill? [Y/n]: y               │
+│  ✓ Synced                                                       │
+│                                                                 │
+│  Step 4: Add New Services                                       │
+│  ────────────────────────                                       │
+│  Add a new service? [y/N]: y                                    │
+│                                                                 │
+│  Available templates:                                           │
+│  1. API Key service (Ramp, Securonix, etc.)                    │
+│  2. OAuth2 service (MS365, Google, Slack)                      │
+│  3. AWS cross-account                                           │
+│  4. Custom                                                      │
+│                                                                 │
+│  Select [1-4]: 1                                                │
+│                                                                 │
+│  Service name: ramp                                             │
+│  Zone [work/home]: work                                         │
+│  API key: ****************************                          │
+│                                                                 │
+│  Creating:                                                      │
+│    BWS: work-ramp-api-key                                       │
+│    Windmill variable: work-ramp-api-key                         │
+│    Integration task: local-integrate-ramp-{timestamp}           │
+│                                                                 │
+│  ✓ Done. Run /task list to see integration checklist.           │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**What it does:**
+
+| Step | Action |
+|------|--------|
+| 1. BWS Access | Validates BWS token, caches to `/data/.bws-token` |
+| 2. Service Registry | Reads all `{zone}-{service}-*` secrets from BWS |
+| 3. Sync Missing | Compares BWS to Windmill, syncs any gaps |
+| 4. Add New | Prompts for new services, creates in both BWS and Windmill |
+
+**OAuth services (MS365, Google, Slack):**
+
+For OAuth, wizard provides links and instructions:
+
+```
+Service: ms365
+Type: OAuth2 (Service Principal)
+
+Required steps:
+1. Go to: https://portal.azure.com → App Registrations
+2. Create new registration: "imladris-ms365"
+3. Add API permissions: Mail.Read, Mail.Send, Calendar.Read
+4. Create client secret
+5. Enter values below:
+
+   Tenant ID: ___________________________
+   Client ID: ___________________________
+   Client Secret: ___________________________
+
+Creating Windmill OAuth2 resource...
+✓ work-ms365 resource created
+
+Test connection? [Y/n]: y
+✓ Successfully connected to MS365 Graph API
+```
+
+**Run on first setup and whenever adding new services.**
+
+### 6.8 Cloud Account Registry
 
 BWS tracks accessible cloud accounts for discoverability:
 
@@ -858,7 +1036,7 @@ role_arn = arn:aws:iam::222222222222:role/ReadOnlyAccess
 credential_source = Ec2InstanceMetadata
 ```
 
-### 6.8 Offline Limitation
+### 6.9 Offline Limitation
 
 Claude via Bedrock requires network. Offline mode is view-only (grep datahub).
 
@@ -3429,6 +3607,28 @@ systemd.services.windmill-worker = {
 - Windmill server: ~100MB RAM
 - Windmill worker: ~50MB RAM + script overhead
 - Total: ~200MB baseline
+
+**Windmill UI Access:**
+
+| Access From | URL | Auth |
+|-------------|-----|------|
+| Tailscale network | `http://imladris:8000` | None (trusted network) |
+| SSH tunnel | `ssh -L 8000:localhost:8000 imladris` | SSH key |
+
+**Rationale:** Tailscale provides authentication at the network layer. If you're on the Tailscale network, you've already authenticated. No additional Windmill auth required.
+
+**Nix configuration:**
+
+```nix
+# Bind to Tailscale interface (not just localhost)
+systemd.services.windmill-server.environment = {
+  BASE_URL = "http://imladris:8000";
+  LISTEN_ADDR = "0.0.0.0:8000";  # Tailscale interface
+};
+
+# Firewall: only allow from Tailscale
+networking.firewall.interfaces."tailscale0".allowedTCPPorts = [ 8000 ];
+```
 
 ### H.5 Script Language Guidelines
 
