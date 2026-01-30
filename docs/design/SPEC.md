@@ -146,7 +146,7 @@ Imladris 2.0 is a personal cloud workstation for:
 │  │  Each window: Claude Code session (PAI)                       │   │
 │  └─────────────────────────────────────────────────────────────┘   │
 │                              │                                      │
-│                   PAI skills call Windmill API                      │
+│                   Curu skills (PAI) call Windmill API                      │
 │                              │                                      │
 │                              ▼                                      │
 │  ┌─────────────────────────────────────────────────────────────┐   │
@@ -213,7 +213,7 @@ Everything else runs in Windmill.
 | auth-keeper.sh (~1800 lines) | Windmill OAuth resources |
 | Custom queue processor | Windmill job queue |
 | systemd timers (app-level) | Windmill schedules |
-| Per-service PAI skills | Single Windmill skill |
+| Per-service Curu skills (PAI) | Single Windmill skill |
 | Custom status/monitoring | Windmill UI |
 | Scattered retry logic | Windmill policies |
 
@@ -264,7 +264,7 @@ User Interface:
             ▼
      Workspaces (Claude sessions)
             │
-            │ PAI skill triggers Windmill
+            │ Curu skill (PAI) triggers Windmill
             └──────────────────────────────────────►
 ```
 
@@ -545,7 +545,7 @@ CREATE INDEX idx_item_tags ON item_tags(tag_id);
 | `keep` | Reference/archive | Stored, searchable |
 | `delete` | Noise/irrelevant | Moved to trash |
 
-**Engine:** Claude batch triage (PAI skill pattern)
+**Engine:** Claude batch triage (Curu skill (PAI) pattern)
 
 **Timing:** After each poll
 
@@ -734,7 +734,7 @@ Creates local integration task in datahub
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**Simplified checklist** (no auth-keeper, no separate PAI skill):
+**Simplified checklist** (no auth-keeper, no separate Curu skill (PAI)):
 
 ```markdown
 ## Checklist for new integration: jira
@@ -752,7 +752,7 @@ Creates local integration task in datahub
 - [ ] **Document**: Update CLAUDE.md
 ```
 
-One place to add (Windmill). One skill routes all (Windmill PAI skill).
+One place to add (Windmill). One skill routes all (Windmill Curu skill (PAI)).
 
 ### 6.6 Cloud Account Registry
 
@@ -980,7 +980,7 @@ Declarative configuration for:
 - Shell (zsh)
 - Packages (git, tmux, bun, etc.)
 - Claude Code
-- PAI skills
+- Curu skills (PAI)
 - Dotfiles
 
 ### 8.4 Storage Layout
@@ -1358,7 +1358,7 @@ All coding work uses [Spec Kit](https://github.com/github/spec-kit) (GitHub's sp
 | Layer | Tool | Purpose |
 |-------|------|---------|
 | **What to build** | Spec Kit | Requirements, constraints, acceptance criteria |
-| **How Claude behaves** | PAI Skills | Execution patterns, response formats |
+| **How Claude behaves** | Curu Skills (PAI) | Execution patterns, response formats |
 | **Project context** | CLAUDE.md | Repository-specific rules and conventions |
 | **External data** | MCP | Structured connections to APIs and services |
 
@@ -1371,7 +1371,7 @@ User request
 Spec Kit (/specify)     ← Define WHAT
     │
     ▼
-PAI Skills              ← Define HOW (patterns, methodology)
+Curu Skills (PAI)              ← Define HOW (patterns, methodology)
     │
     ▼
 Claude Code execution   ← Do the work
@@ -1953,7 +1953,7 @@ Imladris 2.0 builds around PAI (Personal AI Infrastructure):
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**PAI Skills for Imladris:**
+**Curu Skills (PAI) for Imladris:**
 
 | Category | Skills |
 |----------|--------|
@@ -3808,7 +3808,7 @@ export async function main() {
 
 **Rule of thumb:** If you might issue 10+ commands in a session, get credentials and call directly. If it's occasional queries, route through Windmill for the audit trail.
 
-**PAI skill handles both patterns:**
+**Curu skill (PAI) handles both patterns:**
 
 ```markdown
 # In Windmill skill
@@ -3828,7 +3828,7 @@ export async function main() {
 |--------|----------|
 | Footprint | ~150MB steady state (Rust backend) |
 | Performance | 26M tasks/month on single $5 worker |
-| API | Full REST API for PAI skill integration |
+| API | Full REST API for Curu skill (PAI) integration |
 | Adding sources | Script + schedule = done |
 | Monitoring | Built-in web UI |
 | Retries | Configurable policies, no custom code |
@@ -3836,14 +3836,14 @@ export async function main() {
 | Languages | Bun, Python, Go, Bash |
 | Open source | AGPLv3, no vendor lock-in |
 
-### H.12 PAI Skills: One Per Windmill Module
+### H.12 Curu Skills (PAI): One Per Windmill Module
 
 **Pattern:** One thin skill per Windmill script folder. Each skill routes requests to its module's scripts.
 
 **Skill structure:**
 
 ```
-Windmill scripts/          PAI Skills (thin routing)
+Windmill scripts/          Curu Skills (PAI) (thin routing)
 ├── f/sdp/            →    SDP skill
 ├── f/ms365/          →    MS365 skill
 ├── f/slack/          →    Slack skill
@@ -3904,7 +3904,7 @@ Body: { "args": { "status": "open" } }
 
 ```
 1. Create Windmill scripts: f/newservice/*.ts
-2. Create thin PAI skill: NewService skill (~20 lines)
+2. Create thin Curu skill (PAI): NewService skill (~20 lines)
 3. Done
 ```
 
@@ -3913,7 +3913,7 @@ Body: { "args": { "status": "open" } }
 | Phase | Scope |
 |-------|-------|
 | 1 | Add Windmill to docker-compose, deploy |
-| 2 | Create WindmillOps PAI skill |
+| 2 | Create WindmillOps Curu skill (PAI) |
 | 3 | Migrate pollers (telegram, sdp, ms365, etc.) |
 | 4 | Migrate all scheduled tasks (backups, sync, cleanup) |
 | 5 | Remove systemd timers |
@@ -3996,7 +3996,7 @@ Rationale:
 - Consistent monitoring, logging, retry policies
 - Many data sources planned — Windmill makes adding each trivial
 - Small footprint (~150MB) with excellent performance (Rust)
-- Full API enables PAI skill integration
+- Full API enables Curu skill (PAI) integration
 - Built-in monitoring eliminates custom dashboard work
 - Webhook support enables real-time where available
 - Scripts remain portable (just TypeScript/Python)
