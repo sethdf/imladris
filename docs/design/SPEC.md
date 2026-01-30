@@ -306,6 +306,108 @@ Imladris is built **on top of PAI** (Personal AI Infrastructure), not alongside 
 
 **Future-proofing:** When PAI adds new features (e.g., Granular Model Routing), imladris will adopt them rather than maintaining parallel implementations.
 
+### 3.6 PAI Agent Usage
+
+PAI provides agent skill packs for complex reasoning. Imladris uses these **as PAI intended** - agents are the last resort in PAI's decision hierarchy:
+
+```
+Goal → Code → CLI → Prompts → Agents
+ ↑                              ↑
+ Most preferred          Last resort
+```
+
+**PAI Principle 14 - Agent Personalities:**
+> "Different work needs different approaches. Research wants breadth. Implementation wants depth. Review wants criticism."
+
+#### Available PAI Agent Packs
+
+| PAI Skill Pack | Purpose | When Imladris Uses It |
+|----------------|---------|----------------------|
+| `pai-agents-skill` | Dynamic agent composition | Open-ended research in `/research` zone |
+| `pai-council-skill` | Multi-agent debate | Low-confidence triage decisions |
+| `pai-redteam-skill` | Adversarial analysis (32 agents) | Security review of Windmill scripts |
+
+#### Integration Points
+
+**1. Triage Escalation (pai-council-skill)**
+
+Single-pass triage handles most items. Council only for ambiguous cases:
+
+```
+Thread arrives → Single-pass triage → Confidence ≥ 70%? → Done
+                                            ↓ No
+                                     Invoke pai-council-skill:
+                                     - Urgency perspective
+                                     - Context perspective
+                                     - False-positive perspective
+                                            ↓
+                                     Consensus → Final classification
+```
+
+This follows PAI's "Scaffolding > Model" principle - good context (thread-based) handles most cases, agents only when needed.
+
+**2. Research Mode (pai-agents-skill)**
+
+When explicitly entering research, PAI's agent composition helps breadth exploration:
+
+```bash
+# In /research zone, explicit invocation
+/research "evaluate windmill alternatives"
+```
+
+PAI spawns agents per its personality mapping:
+- Breadth-researcher: survey options
+- Comparison-builder: structured analysis
+- Risk-assessor: identify concerns
+
+Results consolidated by PAI, not custom imladris code.
+
+**3. Security Review (pai-redteam-skill)**
+
+Before deploying new Windmill scripts, invoke PAI's adversarial agents:
+
+```bash
+/review f/sdp/sync.ts
+```
+
+PAI's 32 redteam agents examine:
+- Credential handling
+- Error propagation
+- Rate limit compliance
+- Idempotency guarantees
+
+#### What Imladris Does NOT Do
+
+| Anti-pattern | Why Avoided |
+|--------------|-------------|
+| Custom agent framework | PAI provides agent packs |
+| Agents for simple queries | Use direct Windmill calls |
+| Agents for deterministic sync | Scripts are sufficient |
+| Agents for clear triage | Single-pass handles 70%+ |
+
+#### Invocation Pattern
+
+Agents are invoked through PAI's skill system, not custom imladris code:
+
+```bash
+# PAI skill invocation (imladris just calls PAI)
+pai council "Should this thread be P1 or P2? Context: {thread_summary}"
+pai redteam "Review this script for security issues: {script_content}"
+pai agents research "Survey options for {topic}"
+```
+
+Imladris provides:
+- **Triggers**: Confidence thresholds, explicit commands, zone context
+- **Context**: Thread summaries, script content, research topics
+- **Integration**: Results flow back to triage DB, commit hooks, research notes
+
+PAI provides:
+- **Agent orchestration**: Spawning, coordination, consolidation
+- **Personality mapping**: Which agents for which task types
+- **Response formatting**: Structured output
+
+This separation ensures PAI upgrades to agent capabilities automatically benefit imladris.
+
 ---
 
 ## 4. Workspaces
