@@ -553,21 +553,23 @@ CREATE INDEX idx_item_tags ON item_tags(tag_id);
 
 ### 5.8 Sync - Inbound
 
-Each poller:
-1. Gets auth token via `auth-keeper get <service>`
+Each Windmill poller script (`f/{service}/sync.ts`):
+1. Gets credentials from Windmill variables/resources
 2. Fetches delta/changes since last sync
 3. Writes/updates flat files
 4. Updates sync-state.json
 5. Triggers triage + index rebuild
 
+Windmill handles retries, logging, and error notification.
+
 ### 5.9 Sync - Outbound
 
-Write queue processor:
-1. Watches queue/pending/
-2. Routes by service to handler
+Windmill on-demand scripts (`f/{service}/update-*.ts`):
+1. Triggered by Curu skill or CLI command
+2. Reads local item state
 3. Checks for conflicts (timestamp compare)
 4. Sends to external API
-5. Moves to completed/ or failed/
+5. Updates local item with result
 
 ### 5.10 Slack Read/Write Split
 
@@ -634,7 +636,7 @@ datahub export --zone home --dest rsync://personal-vps/archive
 │                                                                 │
 │   BWS ──sync──▶ Windmill Variables                             │
 │                                                                 │
-│   scripts/bootstrap/bws-to-windmill.ts                         │
+│   f/ops/bws-to-windmill.ts                         │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -643,7 +645,7 @@ datahub export --zone home --dest rsync://personal-vps/archive
 │                                                                 │
 │   OAuth tokens: Windmill resources (auto-refresh)              │
 │   API keys: Windmill variables (static)                        │
-│   AWS roles: On-demand STS assume (scripts/aws/get-session.ts) │
+│   AWS roles: On-demand STS assume (f/aws/get-session.ts) │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -705,7 +707,7 @@ Windmill UI shows all credential status.
 Windmill scheduled script detects new BWS entries:
 
 ```
-scripts/ops/bws-sync.ts (runs every 30 min)
+f/ops/bws-sync.ts (runs every 30 min)
     ↓
 "New secret found: jira-api-token"
     ↓
@@ -727,7 +729,7 @@ Creates local integration task in datahub
 │    title: "Build integration for jira"                          │
 │                                                                 │
 │  With checklist:                                                │
-│    □ Create Windmill scripts (scripts/jira/*.ts)                │
+│    □ Create Windmill scripts (f/jira/*.ts)                │
 │    □ Add schedule for sync                                      │
 │    □ Test via Windmill UI                                       │
 │    □ Document in CLAUDE.md                                      │
@@ -740,9 +742,9 @@ Creates local integration task in datahub
 ## Checklist for new integration: jira
 
 - [ ] **Scripts**: Create in Windmill
-  - `scripts/jira/sync.ts` - scheduled poller
-  - `scripts/jira/get-issue.ts` - on-demand query
-  - `scripts/jira/update-issue.ts` - write-back
+  - `f/jira/sync.ts` - scheduled poller
+  - `f/jira/get-issue.ts` - on-demand query
+  - `f/jira/update-issue.ts` - write-back
 
 - [ ] **Schedule**: Add in Windmill UI
   - `jira/sync.ts` → `*/5 * * * *`
@@ -797,7 +799,7 @@ BWS tracks accessible cloud accounts for discoverability:
 - Instance profile on host provides base credentials
 - Profile can assume roles in all registered accounts
 - No credential management needed - automatic via EC2 metadata
-- auth-keeper generates `~/.aws/config` from BWS registry
+- Windmill script `f/ops/aws-config-gen.ts` generates `~/.aws/config` from BWS
 
 **Generated AWS Config:**
 
@@ -891,32 +893,31 @@ Claude via Bedrock requires network. Offline mode is view-only (grep datahub).
 
 ### 7.8 Cloud Commands
 
-```bash
-# AWS
-auth-keeper aws list                    # List all accessible accounts
-auth-keeper aws list --json             # JSON output for skills
-auth-keeper aws get <account>           # Assume role, set credentials
-auth-keeper aws get <account> --role Admin  # Specific role
-auth-keeper aws whoami                  # Current account/role context
-auth-keeper aws generate-config         # Regenerate ~/.aws/config from BWS
+Cloud access via Windmill scripts and generated AWS config:
 
-# GCP
-auth-keeper gcp list                    # List all accessible projects
-auth-keeper gcp get <project>           # Set GOOGLE_CLOUD_PROJECT
-auth-keeper gcp whoami                  # Current project context
+```bash
+# AWS (via Curu skill → Windmill)
+/aws list                               # List all accessible accounts
+/aws session <account>                  # Get temp credentials for interactive use
+/aws session <account> --role Admin     # Specific role
+/aws whoami                             # Current account/role context
 
 # Direct AWS CLI usage (uses generated profiles)
 aws --profile org-prod-readonly s3 ls
 aws --profile org-dev-admin ec2 describe-instances
+
+# GCP (via Curu skill → Windmill)
+/gcp list                               # List all accessible projects
+/gcp session <project>                  # Set up project context
 ```
 
 ### 7.9 System Commands
 
 ```bash
-/auth status           # Auth overview
-/auth refresh <service># Refresh token
-/sync status           # Sync queue status
-/sync retry            # Retry failed items
+/ops status            # Windmill job overview
+/ops failures          # Show failed jobs
+/ops run <script>      # Trigger Windmill script manually
+/sync status           # Sync status across all sources
 ```
 
 ### 7.10 Tag Commands
@@ -1213,9 +1214,9 @@ ghq get github.com/sethdf/imladris
 ### 9.5 Auth Issue
 
 1. Status bar shows `⚠ sdp auth`
-2. `auth-keeper status` - details
-3. `auth-keeper refresh work-sdp`
-4. Or `auth-keeper setup work-sdp` if refresh fails
+2. Check Windmill UI → Resources for token status
+3. OAuth tokens auto-refresh; if expired, re-authenticate in Windmill UI
+4. For API keys, update in BWS → run `f/ops/bws-sync.ts`
 
 ### 9.6 First-Time Setup (Bootstrap Guide)
 
@@ -1244,15 +1245,16 @@ Complete setup in this exact order. Each step depends on previous steps.
 **Phase 3: Authentication Setup**
 
 ```
-Order matters - some services depend on others.
+All auth configured in Windmill UI (http://localhost:8000).
 
-11. auth-keeper setup work-ms365        ← Service principal + cert
-12. auth-keeper setup work-sdp          ← OAuth2 (uses browser)
-13. auth-keeper setup work-devops       ← PAT (manual entry)
-14. auth-keeper setup work-slack        ← slackdump browser auth
-15. auth-keeper setup home-google       ← OAuth2 (uses browser)
-16. auth-keeper setup home-telegram     ← Bot token (manual entry)
-17. auth-keeper status                  ← Verify all green
+11. Add API keys to BWS (work-sdp-api-token, etc.)
+12. Run f/ops/bws-sync.ts to populate Windmill variables
+13. For OAuth services, create Resources in Windmill:
+    - work-ms365: OAuth2 resource (service principal)
+    - work-slack: OAuth2 resource
+    - home-google: OAuth2 resource
+14. For static tokens, verify Windmill variables populated
+15. Check Windmill UI → Resources/Variables for green status
 ```
 
 **Phase 4: Initial Sync**
@@ -3292,14 +3294,14 @@ All sensitive operations logged to `/data/logs/audit.jsonl`:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ Windmill (Docker container)                                 │
+│ Windmill (native via Nix/systemd)                           │
 │   ┌─────────────────────────────────────────────────────┐  │
 │   │ Server (Rust) + Workers + Postgres                   │  │
 │   │                                                       │  │
 │   │ Schedules:           Scripts:                        │  │
-│   │   sdp: */5 * * * *     pollers/sdp.ts               │  │
-│   │   ms365: */5 * * * *   pollers/ms365.ts             │  │
-│   │   slack: * * * * *     pollers/slack.ts             │  │
+│   │   sdp: */5 * * * *     f/sdp/sync.ts                │  │
+│   │   ms365: */5 * * * *   f/ms365/sync.ts              │  │
+│   │   slack: * * * * *     f/slack/sync.ts              │  │
 │   │                                                       │  │
 │   │ Built-in: retries, backoff, logging, UI             │  │
 │   └─────────────────────────────────────────────────────┘  │
@@ -3403,7 +3405,7 @@ Aligns with PAI, fast startup, consistent codebase.
 **Script templates:**
 
 ```typescript
-// TypeScript (default) - scripts/sdp/sync.ts
+// TypeScript (default) - f/sdp/sync.ts
 import * as wmill from "windmill-client";
 
 export async function main() {
@@ -3418,7 +3420,7 @@ export async function main() {
 ```
 
 ```python
-# Python (when needed) - scripts/aws/org-accounts.py
+# Python (when needed) - f/aws/org-accounts.py
 import wmill
 import boto3
 
@@ -3759,7 +3761,7 @@ For **interactive work** (AI or human doing rapid-fire queries), Windmill acts a
 **Credential scripts:**
 
 ```typescript
-// scripts/aws/get-session.ts
+// f/aws/get-session.ts
 // Returns temporary credentials for interactive AWS work
 export async function main(account: string, role: string = "ReadOnly") {
     const roleArn = `arn:aws:iam::${account}:role/Imladris${role}`;
@@ -3912,8 +3914,8 @@ Body: { "args": { "status": "open" } }
 
 | Phase | Scope |
 |-------|-------|
-| 1 | Add Windmill to docker-compose, deploy |
-| 2 | Create WindmillOps Curu skill (PAI) |
+| 1 | Add Windmill to Nix config, deploy via systemd |
+| 2 | Create per-module Curu skills (PAI) |
 | 3 | Migrate pollers (telegram, sdp, ms365, etc.) |
 | 4 | Migrate all scheduled tasks (backups, sync, cleanup) |
 | 5 | Remove systemd timers |
@@ -3929,26 +3931,26 @@ Body: { "args": { "status": "open" } }
 | Task | Schedule | Script |
 |------|----------|--------|
 | **Data Pollers** | | |
-| SDP sync | `*/5 * * * *` | `pollers/sdp/sync.ts` |
-| MS365 mail sync | `*/5 * * * *` | `pollers/ms365/sync.ts` |
-| Gmail sync | `*/5 * * * *` | `pollers/gmail/sync.ts` |
-| Slack sync | `* * * * *` | `pollers/slack/sync.ts` |
-| Telegram sync | `* * * * *` | `pollers/telegram/sync.ts` |
-| DevOps sync | `*/5 * * * *` | `pollers/devops/sync.ts` |
-| Calendar sync | `*/15 * * * *` | `pollers/calendar/sync.ts` |
+| SDP sync | `*/5 * * * *` | `f/sdp/sync.ts` |
+| MS365 mail sync | `*/5 * * * *` | `f/ms365/sync.ts` |
+| Gmail sync | `*/5 * * * *` | `f/gmail/sync.ts` |
+| Slack sync | `* * * * *` | `f/slack/sync.ts` |
+| Telegram sync | `* * * * *` | `f/telegram/sync.ts` |
+| DevOps sync | `*/5 * * * *` | `f/devops/sync.ts` |
+| Calendar sync | `*/15 * * * *` | `f/calendar/sync.ts` |
 | **Backups** | | |
-| Stateful backup | `0 * * * *` (hourly) | `ops/backup-stateful.ts` |
-| S3 offsite sync | `0 6 * * *` (daily 6am) | `ops/backup-s3.ts` |
+| Stateful backup | `0 * * * *` (hourly) | `f/ops/backup-stateful.ts` |
+| S3 offsite sync | `0 6 * * *` (daily 6am) | `f/ops/backup-s3.ts` |
 | **Maintenance** | | |
-| Log cleanup | `0 3 * * *` (daily 3am) | `ops/log-cleanup.ts` |
-| Temp file cleanup | `0 4 * * *` (daily 4am) | `ops/temp-cleanup.ts` |
-| Index optimization | `0 5 * * 0` (weekly Sun) | `ops/index-optimize.ts` |
+| Log cleanup | `0 3 * * *` (daily 3am) | `f/ops/log-cleanup.ts` |
+| Temp file cleanup | `0 4 * * *` (daily 4am) | `f/ops/temp-cleanup.ts` |
+| Index optimization | `0 5 * * 0` (weekly Sun) | `f/ops/index-optimize.ts` |
 | **Sync** | | |
-| BWS → Windmill vars | `*/30 * * * *` | `ops/bws-sync.ts` |
-| Update check | `0 0 * * *` (midnight) | `ops/update-check.ts` |
-| Session git sync | `*/5 * * * *` | `ops/session-sync.ts` |
+| BWS → Windmill vars | `*/30 * * * *` | `f/ops/bws-sync.ts` |
+| Update check | `0 0 * * *` (midnight) | `f/ops/update-check.ts` |
+| Session git sync | `*/5 * * * *` | `f/ops/session-sync.ts` |
 | **Triage** | | |
-| Batch triage | `*/15 * * * *` | `triage/batch.ts` |
+| Batch triage | `*/15 * * * *` | `f/triage/batch.ts` |
 
 **Stays in systemd (bootstrap/system-level):**
 
@@ -3963,13 +3965,16 @@ Body: { "args": { "status": "open" } }
 **Directory structure in Windmill:**
 
 ```
-scripts/
-├── pollers/
-│   ├── sdp/
-│   ├── ms365/
-│   ├── gmail/
-│   ├── slack/
-│   └── ...
+f/                              # Shared folder (Windmill convention)
+├── sdp/
+│   ├── sync.ts                 # Scheduled poller
+│   ├── get-tickets.ts          # On-demand query
+│   └── update-ticket.ts        # Write-back
+├── ms365/
+├── gmail/
+├── slack/
+├── aws/
+│   └── get-session.ts          # Interactive credentials
 ├── ops/
 │   ├── backup-stateful.ts
 │   ├── backup-s3.ts
@@ -3977,14 +3982,8 @@ scripts/
 │   ├── bws-sync.ts
 │   ├── update-check.ts
 │   └── session-sync.ts
-├── triage/
-│   └── batch.ts
-├── aws/
-│   └── get-session.ts
-└── {source}/
-    ├── sync.ts          (scheduled)
-    ├── get-*.ts         (on-demand)
-    └── update-*.ts      (on-demand)
+└── triage/
+    └── batch.ts
 ```
 
 ### H.15 Decision
