@@ -617,18 +617,108 @@ CREATE INDEX idx_item_tags ON item_tags(tag_id);
 
 ### 5.7 Triage
 
+**Principle:** Accuracy and reliability over token efficiency. Always triage with full context.
+
 **Classification (ternary):**
+
 | Value | Meaning | Action |
 |-------|---------|--------|
 | `act` | Needs user action | Surfaces in workspace |
 | `keep` | Reference/archive | Stored, searchable |
 | `delete` | Noise/irrelevant | Moved to trash |
 
-**Engine:** Claude batch triage (Curu skill (PAI) pattern)
+#### Thread-Based Triage
 
-**Timing:** After each poll
+**Unit of triage is the thread/conversation, not individual messages.**
 
-**Override:** `/item mark <id> <classification>`
+Rationale: A message's meaning depends on conversation context. Can't accurately triage "Re: Q3 Budget" without seeing the original and prior replies.
+
+**Thread definition per source:**
+
+| Source | Thread = |
+|--------|----------|
+| Email | All messages with same `In-Reply-To` / `References` header |
+| Slack | Parent message + all replies |
+| SDP | Ticket + all notes/comments |
+| DevOps | Work item + all comments |
+| Telegram | Messages from same sender within 5-min window |
+| Calendar | Single event (no threading) |
+
+**Triage flow:**
+
+```
+New message arrives
+    ↓
+Identify thread_id (existing or new)
+    ↓
+Gather ALL messages in thread
+    ↓
+Send full thread to Claude for triage
+    ↓
+Store classification at thread level
+    ↓
+All messages inherit thread classification
+```
+
+**On thread update (new reply):**
+
+```
+New reply arrives in existing thread
+    ↓
+Re-triage ENTIRE thread (not just new message)
+    ↓
+Classification may change (e.g., keep → act)
+```
+
+No shortcuts. Always full context. Accuracy > tokens.
+
+#### Storage Model
+
+**Individual messages remain flat files (PAI principle):**
+
+```yaml
+# email-abc123.md
+---
+id: email-abc123
+thread_id: thread-xyz789      # Links to thread
+source: ms365
+type: email
+subject: "Re: Q3 Budget"
+from: boss@work.com
+date: 2026-01-30T09:00:00Z
+classification: act           # Inherited from thread
+---
+
+Message body here...
+```
+
+**Thread metadata stored separately:**
+
+```yaml
+# .threads/thread-xyz789.yaml
+thread_id: thread-xyz789
+source: ms365
+messages:
+  - email-abc121
+  - email-abc122
+  - email-abc123
+last_triage: 2026-01-30T09:15:00Z
+classification: act
+confidence: 0.92
+reason: "Boss requesting deliverable with EOD deadline"
+```
+
+**Benefits:**
+- Full context = better decisions
+- Auditable: `reason` field explains classification
+- Simple rule: always triage full thread
+- Messages remain individual files (greppable, portable)
+
+**Override:** `/item mark <id> <classification>` — overrides at thread level
+
+**Engine:** `f/triage/batch.ts` via Windmill (Curu skill pattern)
+
+**Schedule:** Every 15 min, processes all threads with new messages since last run
 
 ### 5.8 Sync - Inbound
 

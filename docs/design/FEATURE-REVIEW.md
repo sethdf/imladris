@@ -156,22 +156,18 @@ Add first-time OAuth flow documentation:
 
 ### Gaps / Questions
 
-| Issue | Question |
-|-------|----------|
-| **Triage prompt** | What's the actual prompt sent to Claude? |
-| **Confidence score** | Is there one? How used? |
-| **Feedback loop** | If user overrides, does system learn? |
-| **Batch size** | How many items per triage call? |
-| **Cost** | What's the token/API cost per day? |
-| **Triage history** | Can user see why something was classified? |
+| Issue | Status |
+|-------|--------|
+| **Triage prompt** | Still needed — what's the actual prompt? |
+| **Confidence score** | ✓ Defined — stored in thread metadata |
+| **Feedback loop** | v2 — not in scope for initial release |
+| **Batch size** | ✓ Resolved — thread-based, not count-based |
+| **Cost** | Accepted — accuracy > tokens |
+| **Triage history** | ✓ Defined — `reason` field in thread metadata |
 
 ### Recommendation
 
-Add triage implementation details:
-- Prompt template
-- Batch sizing strategy
-- Cost estimate per day
-- Confidence thresholds
+Remaining: Define the actual triage prompt template.
 
 ---
 
