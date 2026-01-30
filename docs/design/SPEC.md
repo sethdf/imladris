@@ -3492,7 +3492,104 @@ steps:
 | Rate limit management | Windmill concurrency controls |
 | Adding new source | Just add scripts, skill routes automatically |
 
-### H.8 Why Windmill
+### H.8 Interactive vs Scheduled Access
+
+For **scheduled syncs**, all calls go through Windmill—latency doesn't matter.
+
+For **interactive work** (AI or human doing rapid-fire queries), Windmill acts as a **credential provider** rather than a proxy:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Scheduled (background sync)                                     │
+│                                                                 │
+│   Windmill schedule → script → External API → datahub          │
+│   (latency doesn't matter, full audit trail)                   │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│ Interactive (AI or human)                                       │
+│                                                                 │
+│   Step 1: Get credentials                                       │
+│   Claude → Windmill → get-creds script → return token/creds    │
+│            └──────────── once ────────────┘                     │
+│                                                                 │
+│   Step 2: Use directly (no Windmill overhead)                  │
+│   Claude → External API (using cached creds)                   │
+│   Claude → External API                                        │
+│   Claude → External API                                        │
+│            └── rapid-fire, no 50ms overhead per call ──┘       │
+│                                                                 │
+│   Step 3: Re-fetch when expired                                │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Credential scripts:**
+
+```typescript
+// scripts/aws/get-session.ts
+// Returns temporary credentials for interactive AWS work
+export async function main(account: string, role: string = "ReadOnly") {
+    const roleArn = `arn:aws:iam::${account}:role/Imladris${role}`;
+    const creds = await sts.assumeRole({
+        RoleArn: roleArn,
+        RoleSessionName: "windmill-interactive",
+        DurationSeconds: 3600
+    });
+    return {
+        accessKeyId: creds.Credentials.AccessKeyId,
+        secretAccessKey: creds.Credentials.SecretAccessKey,
+        sessionToken: creds.Credentials.SessionToken,
+        expiration: creds.Credentials.Expiration,
+        region: "us-east-1"
+    };
+}
+
+// scripts/ms365/get-token.ts
+// Returns OAuth token for interactive MS365 work
+export async function main() {
+    const resource = await wmill.getResource("ms365_oauth");
+    return {
+        accessToken: resource.token,
+        expiration: resource.expires_at
+    };
+}
+
+// scripts/slack/get-token.ts
+export async function main() {
+    const resource = await wmill.getResource("slack_oauth");
+    return { token: resource.token };
+}
+```
+
+**Access patterns by service:**
+
+| Service | Scheduled Sync | Interactive Access |
+|---------|---------------|-------------------|
+| AWS | Through Windmill | Get creds → use directly |
+| MS365 (Graph API) | Through Windmill | Get token → use directly |
+| Gmail/GCal | Through Windmill | Get token → use directly |
+| Slack | Through Windmill | Get token → use directly |
+| SDP | Through Windmill | Through Windmill (low volume) |
+| Ramp | Through Windmill | Through Windmill (low volume) |
+| Securonix | Through Windmill | Get token → use directly |
+
+**Rule of thumb:** If you might issue 10+ commands in a session, get credentials and call directly. If it's occasional queries, route through Windmill for the audit trail.
+
+**PAI skill handles both patterns:**
+
+```markdown
+# In Windmill skill
+
+## Interactive session setup
+- "aws session for prod" → get-session(account, role) → cache creds
+- "connect to ms365" → get-token() → cache token
+
+## Then use cached creds for direct calls
+- Uses AWS SDK with cached credentials
+- Uses Graph API with cached token
+```
+
+### H.9 Why Windmill
 
 | Factor | Windmill |
 |--------|----------|
@@ -3506,7 +3603,7 @@ steps:
 | Languages | Bun, Python, Go, Bash |
 | Open source | AGPLv3, no vendor lock-in |
 
-### H.9 PAI Skill: Windmill
+### H.10 PAI Skill: Windmill
 
 Single skill routes all external API requests through Windmill:
 
@@ -3544,7 +3641,7 @@ User: "run the securonix sync now"
 Claude: Triggering pollers/securonix... ✓ Completed in 3.2s, synced 47 alerts.
 ```
 
-### H.10 Implementation Plan
+### H.11 Implementation Plan
 
 | Phase | Scope |
 |-------|-------|
@@ -3555,7 +3652,7 @@ Claude: Triggering pollers/securonix... ✓ Completed in 3.2s, synced 47 alerts.
 | 5 | Add new sources (Ramp, Securonix, etc.) |
 | 6 | Enable webhooks for real-time sources |
 
-### H.11 Decision
+### H.12 Decision
 
 **Adopted: Windmill as orchestration layer.**
 
