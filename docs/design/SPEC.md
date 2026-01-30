@@ -186,7 +186,7 @@ Imladris 2.0 is a personal cloud workstation for:
 |-------|------------|
 | Infrastructure | Terraform (AWS) |
 | Configuration | Nix + home-manager |
-| Orchestration | Windmill (scheduling, retries, monitoring) |
+| Orchestration | Windmill native via Nix/systemd (scheduling, retries, monitoring) |
 | Runtime | Bun/Python (scripts in Windmill) |
 | AI | Claude Code via AWS Bedrock |
 | Framework | PAI (Personal AI Infrastructure) |
@@ -3278,48 +3278,60 @@ All sensitive operations logged to `/data/logs/audit.jsonl`:
 
 ### H.4 Deployment
 
-**Docker Compose (minimal):**
+**Native Deployment (Nix + systemd):**
 
-```yaml
-# docker-compose.windmill.yml
-services:
-  windmill-db:
-    image: postgres:16
-    volumes:
-      - windmill-db:/var/lib/postgresql/data
-    environment:
-      POSTGRES_PASSWORD: ${WINDMILL_DB_PASSWORD}
-      POSTGRES_DB: windmill
+No Docker required. Windmill is a Rust binary that runs natively.
 
-  windmill-server:
-    image: ghcr.io/windmill-labs/windmill:main
-    environment:
-      DATABASE_URL: postgres://postgres:${WINDMILL_DB_PASSWORD}@windmill-db/windmill
-      MODE: server
-    ports:
-      - "127.0.0.1:8000:8000"  # Tailscale only
-    depends_on:
-      - windmill-db
+```nix
+# nix/home.nix or system configuration
 
-  windmill-worker:
-    image: ghcr.io/windmill-labs/windmill:main
-    environment:
-      DATABASE_URL: postgres://postgres:${WINDMILL_DB_PASSWORD}@windmill-db/windmill
-      MODE: worker
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock  # For docker scripts
-    depends_on:
-      - windmill-db
+# Postgres for Windmill job queue
+services.postgresql = {
+  enable = true;
+  ensureDatabases = [ "windmill" ];
+  ensureUsers = [{
+    name = "windmill";
+    ensureDBOwnership = true;
+  }];
+};
 
-volumes:
-  windmill-db:
+# Windmill server
+systemd.services.windmill-server = {
+  description = "Windmill Server";
+  after = [ "postgresql.service" ];
+  wantedBy = [ "multi-user.target" ];
+  environment = {
+    DATABASE_URL = "postgres://windmill@localhost/windmill";
+    BASE_URL = "http://localhost:8000";
+  };
+  serviceConfig = {
+    ExecStart = "${pkgs.windmill}/bin/windmill --mode server";
+    Restart = "always";
+    User = "windmill";
+  };
+};
+
+# Windmill worker
+systemd.services.windmill-worker = {
+  description = "Windmill Worker";
+  after = [ "windmill-server.service" ];
+  wantedBy = [ "multi-user.target" ];
+  environment = {
+    DATABASE_URL = "postgres://windmill@localhost/windmill";
+  };
+  serviceConfig = {
+    ExecStart = "${pkgs.windmill}/bin/windmill --mode worker";
+    Restart = "always";
+    User = "windmill";
+  };
+};
 ```
 
-**Resource estimate:**
-- Postgres: ~200MB RAM
-- Server: ~100MB RAM
-- Worker: ~200MB RAM + script overhead
-- Total: ~500MB baseline (m7g.xlarge has 16GB)
+**Resource estimate (native, no container overhead):**
+- Postgres: ~50MB RAM
+- Windmill server: ~100MB RAM
+- Windmill worker: ~50MB RAM + script overhead
+- Total: ~200MB baseline
 
 ### H.5 Poller Migration Example
 
