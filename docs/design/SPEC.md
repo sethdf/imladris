@@ -3648,15 +3648,85 @@ Claude: Triggering pollers/securonix... ✓ Completed in 3.2s, synced 47 alerts.
 | 1 | Add Windmill to docker-compose, deploy |
 | 2 | Create WindmillOps PAI skill |
 | 3 | Migrate pollers (telegram, sdp, ms365, etc.) |
-| 4 | Remove systemd timers, custom queue |
-| 5 | Add new sources (Ramp, Securonix, etc.) |
-| 6 | Enable webhooks for real-time sources |
+| 4 | Migrate all scheduled tasks (backups, sync, cleanup) |
+| 5 | Remove systemd timers |
+| 6 | Add new sources (Ramp, Securonix, etc.) |
+| 7 | Enable webhooks for real-time sources |
 
-### H.12 Decision
+### H.12 Unified Scheduler
 
-**Adopted: Windmill as orchestration layer.**
+**Principle:** All application-level scheduled tasks run in Windmill. systemd only handles bootstrap/system services.
+
+**Tasks moving to Windmill:**
+
+| Task | Schedule | Script |
+|------|----------|--------|
+| **Data Pollers** | | |
+| SDP sync | `*/5 * * * *` | `pollers/sdp/sync.ts` |
+| MS365 mail sync | `*/5 * * * *` | `pollers/ms365/sync.ts` |
+| Gmail sync | `*/5 * * * *` | `pollers/gmail/sync.ts` |
+| Slack sync | `* * * * *` | `pollers/slack/sync.ts` |
+| Telegram sync | `* * * * *` | `pollers/telegram/sync.ts` |
+| DevOps sync | `*/5 * * * *` | `pollers/devops/sync.ts` |
+| Calendar sync | `*/15 * * * *` | `pollers/calendar/sync.ts` |
+| **Backups** | | |
+| Stateful backup | `0 * * * *` (hourly) | `ops/backup-stateful.ts` |
+| S3 offsite sync | `0 6 * * *` (daily 6am) | `ops/backup-s3.ts` |
+| **Maintenance** | | |
+| Log cleanup | `0 3 * * *` (daily 3am) | `ops/log-cleanup.ts` |
+| Temp file cleanup | `0 4 * * *` (daily 4am) | `ops/temp-cleanup.ts` |
+| Index optimization | `0 5 * * 0` (weekly Sun) | `ops/index-optimize.ts` |
+| **Sync** | | |
+| BWS → Windmill vars | `*/30 * * * *` | `ops/bws-sync.ts` |
+| Update check | `0 0 * * *` (midnight) | `ops/update-check.ts` |
+| Session git sync | `*/5 * * * *` | `ops/session-sync.ts` |
+| **Triage** | | |
+| Batch triage | `*/15 * * * *` | `triage/batch.ts` |
+
+**Stays in systemd (bootstrap/system-level):**
+
+| Service | Reason |
+|---------|--------|
+| `postgresql.service` | Windmill depends on it |
+| `windmill-server.service` | Core infrastructure |
+| `windmill-worker.service` | Core infrastructure |
+| `tailscaled.service` | Network access |
+| `luks-unlock` (oneshot) | Runs before Windmill |
+
+**Directory structure in Windmill:**
+
+```
+scripts/
+├── pollers/
+│   ├── sdp/
+│   ├── ms365/
+│   ├── gmail/
+│   ├── slack/
+│   └── ...
+├── ops/
+│   ├── backup-stateful.ts
+│   ├── backup-s3.ts
+│   ├── log-cleanup.ts
+│   ├── bws-sync.ts
+│   ├── update-check.ts
+│   └── session-sync.ts
+├── triage/
+│   └── batch.ts
+├── aws/
+│   └── get-session.ts
+└── {source}/
+    ├── sync.ts          (scheduled)
+    ├── get-*.ts         (on-demand)
+    └── update-*.ts      (on-demand)
+```
+
+### H.13 Decision
+
+**Adopted: Windmill as unified scheduler and integration gateway.**
 
 Rationale:
+- Single pane of glass for all scheduled tasks
+- Consistent monitoring, logging, retry policies
 - Many data sources planned — Windmill makes adding each trivial
 - Small footprint (~150MB) with excellent performance (Rust)
 - Full API enables PAI skill integration
