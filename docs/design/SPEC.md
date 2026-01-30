@@ -3344,7 +3344,55 @@ systemd.services.windmill-worker = {
 - Windmill worker: ~50MB RAM + script overhead
 - Total: ~200MB baseline
 
-### H.5 Poller Migration Example
+### H.5 Script Language Guidelines
+
+**Default: TypeScript (Bun)**
+
+Aligns with PAI, fast startup, consistent codebase.
+
+**Exception: Python when library is significantly better**
+
+| Use Case | Language | Reason |
+|----------|----------|--------|
+| HTTP API integrations | TypeScript | Simple fetch, consistent |
+| Datahub read/write | TypeScript | Matches PAI stack |
+| Ops scripts (backup, cleanup) | TypeScript | Consistency |
+| AWS complex operations | Python | boto3 maturity |
+| Data processing (if needed) | Python | pandas/numpy |
+| ML/AI operations | Python | Library ecosystem |
+
+**Script templates:**
+
+```typescript
+// TypeScript (default) - scripts/sdp/sync.ts
+import * as wmill from "windmill-client";
+
+export async function main() {
+    const token = await wmill.getVariable("sdp_api_token");
+    const resp = await fetch("https://sdp.example.com/api/v3/requests", {
+        headers: { "Authorization": `Bearer ${token}` }
+    });
+    const data = await resp.json();
+    await writeToDatahub(data.requests);
+    return { synced: data.requests.length };
+}
+```
+
+```python
+# Python (when needed) - scripts/aws/org-accounts.py
+import wmill
+import boto3
+
+def main():
+    session = boto3.Session()
+    org = session.client("organizations")
+    accounts = org.list_accounts()["Accounts"]
+    return {"accounts": accounts}
+```
+
+**Rule of thumb:** Start with TypeScript. Switch to Python only if you're fighting the language or missing critical libraries.
+
+### H.6 Poller Migration Example
 
 **Current (sdp-poller.ts):**
 
@@ -3383,7 +3431,7 @@ export async function main() {
 
 Retry/backoff handled by Windmill, not custom code.
 
-### H.6 New Capabilities
+### H.7 New Capabilities
 
 **Webhooks for real-time:**
 
@@ -3434,7 +3482,7 @@ steps:
     depends_on: [approve]
 ```
 
-### H.7 Windmill as Integration Gateway
+### H.8 Windmill as Integration Gateway
 
 **Core principle:** Claude/PAI never calls external APIs directly. All external communication routes through Windmill.
 
@@ -3492,7 +3540,7 @@ steps:
 | Rate limit management | Windmill concurrency controls |
 | Adding new source | Just add scripts, skill routes automatically |
 
-### H.8 Interactive vs Scheduled Access
+### H.9 Interactive vs Scheduled Access
 
 For **scheduled syncs**, all calls go through Windmill—latency doesn't matter.
 
@@ -3589,7 +3637,7 @@ export async function main() {
 - Uses Graph API with cached token
 ```
 
-### H.9 Why Windmill
+### H.10 Why Windmill
 
 | Factor | Windmill |
 |--------|----------|
@@ -3603,7 +3651,7 @@ export async function main() {
 | Languages | Bun, Python, Go, Bash |
 | Open source | AGPLv3, no vendor lock-in |
 
-### H.10 PAI Skill: Windmill
+### H.11 PAI Skill: Windmill
 
 Single skill routes all external API requests through Windmill:
 
@@ -3641,7 +3689,7 @@ User: "run the securonix sync now"
 Claude: Triggering pollers/securonix... ✓ Completed in 3.2s, synced 47 alerts.
 ```
 
-### H.11 Implementation Plan
+### H.12 Implementation Plan
 
 | Phase | Scope |
 |-------|-------|
@@ -3653,7 +3701,7 @@ Claude: Triggering pollers/securonix... ✓ Completed in 3.2s, synced 47 alerts.
 | 6 | Add new sources (Ramp, Securonix, etc.) |
 | 7 | Enable webhooks for real-time sources |
 
-### H.12 Unified Scheduler
+### H.13 Unified Scheduler
 
 **Principle:** All application-level scheduled tasks run in Windmill. systemd only handles bootstrap/system services.
 
@@ -3720,7 +3768,7 @@ scripts/
     └── update-*.ts      (on-demand)
 ```
 
-### H.13 Decision
+### H.14 Decision
 
 **Adopted: Windmill as unified scheduler and integration gateway.**
 
