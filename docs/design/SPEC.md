@@ -270,6 +270,42 @@ User Interface:
 
 **Key principle:** Claude/PAI never calls external APIs directly. All external communication routes through Windmill scripts.
 
+### 3.5 PAI Alignment
+
+Imladris is built **on top of PAI** (Personal AI Infrastructure), not alongside it. We use PAI's systems, not parallel implementations.
+
+**PAI Systems We Use:**
+
+| PAI System | How Imladris Uses It |
+|------------|---------------------|
+| **TELOS** | Zone-specific goals stored in GOALS.md, PROJECTS.md |
+| **Memory (Hot/Warm/Cold)** | Context save/restore uses PAI's 3-tier memory |
+| **Hook System** | Event handling via PAI's 8 lifecycle hooks |
+| **Skill System** | Curu skills follow PAI skill format |
+| **Security System** | PAI hooks validate commands before execution |
+| **User/System Separation** | Imladris configs in USER/, upgrades don't break |
+
+**PAI Principles We Follow:**
+
+| Principle | Application |
+|-----------|-------------|
+| Scaffolding > Model | Thread-based triage with good context beats model upgrades |
+| Code Before Prompts | Windmill scripts are deterministic where possible |
+| Deterministic Infrastructure | Templates, patterns, flat files over probabilistic |
+| Foundational Algorithm | Observe → Think → Plan → Build → Execute → Verify → Learn |
+
+**What Imladris Adds (Not in PAI):**
+
+| Addition | Purpose |
+|----------|---------|
+| Datahub | Multi-source message aggregation |
+| Thread-based triage | Conversation context for classification |
+| Workspaces/Zones | work/home separation in tmux |
+| Windmill | Scheduled polling, credential management |
+| Bidirectional sync | Write-back to external systems |
+
+**Future-proofing:** When PAI adds new features (e.g., Granular Model Routing), imladris will adopt them rather than maintaining parallel implementations.
+
 ---
 
 ## 4. Workspaces
