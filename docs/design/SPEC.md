@@ -146,6 +146,21 @@ Imladris 2.0 is a personal cloud workstation for:
 │  │  Each window: Claude Code session (PAI)                       │   │
 │  └─────────────────────────────────────────────────────────────┘   │
 │                              │                                      │
+│                   PAI skills call Windmill API                      │
+│                              │                                      │
+│                              ▼                                      │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │ Windmill (native via Nix/systemd) ◄── Integration Gateway    │   │
+│  │                                                               │   │
+│  │  Scheduled:  pollers/* (sync data → datahub)                 │   │
+│  │  On-demand:  queries/* (adhoc lookups, triggered by PAI)     │   │
+│  │  Webhooks:   real-time events from external systems          │   │
+│  │                                                               │   │
+│  │  ALL external API calls go through Windmill scripts          │   │
+│  │  Credentials: Windmill variables (synced from BWS)           │   │
+│  │  Built-in: retries, rate limits, logging, audit              │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+│                              │                                      │
 │                              ▼                                      │
 │  ┌─────────────────────────────────────────────────────────────┐   │
 │  │ Datahub                                                      │   │
@@ -155,29 +170,13 @@ Imladris 2.0 is a personal cloud workstation for:
 │  │  ~/home/datahub/index.sqlite                                 │   │
 │  │  ~/calendar/merged.sqlite (read-only combined view)          │   │
 │  └─────────────────────────────────────────────────────────────┘   │
-│                              │                                      │
-│                              ▼                                      │
-│  ┌─────────────────────────────────────────────────────────────┐   │
-│  │ Windmill (Docker)                                            │   │
-│  │  Schedules: */5 (ms365, sdp, devops, gmail, gcal)           │   │
-│  │             */1 (slack, telegram)                            │   │
-│  │  Built-in: retries, backoff, monitoring UI                   │   │
-│  │  Webhooks: real-time for supported sources                   │   │
-│  └─────────────────────────────────────────────────────────────┘   │
-│                              │                                      │
-│                              ▼                                      │
-│  ┌─────────────────────────────────────────────────────────────┐   │
-│  │ Auth-keeper                                                  │   │
-│  │  BWS as registry (source of truth)                           │   │
-│  │  Auto-discovery of new services                              │   │
-│  │  Lazy token refresh                                          │   │
-│  └─────────────────────────────────────────────────────────────┘   │
 │                                                                     │
 └─────────────────────────────────────────────────────────────────────┘
-         │
-         │ Tailscale VPN (no public ports)
-         ▼
-    External Systems: SDP, MS365, DevOps, Slack, Gmail, GCal, Telegram
+                              │
+                              │ Tailscale VPN (no public ports)
+                              ▼
+    External Systems: SDP, MS365, DevOps, Slack, Gmail, GCal,
+                      Telegram, Ramp, Securonix, etc.
 ```
 
 ### 3.2 Technology Stack
@@ -186,37 +185,49 @@ Imladris 2.0 is a personal cloud workstation for:
 |-------|------------|
 | Infrastructure | Terraform (AWS) |
 | Configuration | Nix + home-manager |
-| Orchestration | Windmill native via Nix/systemd (scheduling, retries, monitoring) |
+| Integration Gateway | Windmill (all external API calls routed here) |
 | Runtime | Bun/Python (scripts in Windmill) |
 | AI | Claude Code via AWS Bedrock |
 | Framework | PAI (Personal AI Infrastructure) |
 | Storage | Flat files (markdown) + SQLite index |
-| Secrets | Bitwarden Secrets Manager (BWS) |
+| Secrets | BWS → Windmill variables |
 | Access | Tailscale SSH only |
 
 ### 3.3 Data Flow
 
 ```
-External Systems
-      │
-      ▼ (Windmill: schedules + webhooks)
-Datahub (flat files)
-      │
-      ▼ (after each poll)
-Triage (Claude batch classification)
-      │
-      ▼
-Index (SQLite, derived)
-      │
-      ▼
-Workspaces (Claude sessions)
-      │
-      ▼ (user actions)
-Queue (pending writes)
-      │
-      ▼ (queue processor)
-External Systems
+                    External Systems
+                          ▲
+                          │
+                          │ ALL external API calls
+                          │
+                          ▼
+┌─────────────────────────────────────────────────┐
+│              Windmill (Gateway)                  │
+│                                                  │
+│   Inbound:   scheduled pollers → datahub        │
+│   Outbound:  on-demand scripts ← PAI triggers   │
+│   Webhooks:  real-time events → datahub         │
+└─────────────────────────────────────────────────┘
+                          │
+            ┌─────────────┴─────────────┐
+            ▼                           ▼
+     Datahub (files)            Direct responses
+            │                   (adhoc queries)
+            ▼
+     Triage (Claude)
+            │
+            ▼
+     Index (SQLite)
+            │
+            ▼
+     Workspaces (Claude sessions)
+            │
+            │ PAI skill triggers Windmill
+            └──────────────────────────────────────►
 ```
+
+**Key principle:** Claude/PAI never calls external APIs directly. All external communication routes through Windmill scripts.
 
 ---
 
@@ -3423,15 +3434,63 @@ steps:
     depends_on: [approve]
 ```
 
-### H.7 Integration Points
+### H.7 Windmill as Integration Gateway
 
-| Component | Integration |
-|-----------|-------------|
-| Auth-keeper | Scripts call `auth-keeper` for tokens, or use Windmill variables |
-| BWS | Sync BWS secrets → Windmill variables on startup |
-| Datahub | Scripts write to same flat files (unchanged) |
-| SQLite index | Same rebuild after writes |
-| Chat Gateway | Could trigger Windmill flows via webhook |
+**Core principle:** Claude/PAI never calls external APIs directly. All external communication routes through Windmill.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Claude / PAI                                                    │
+│                                                                 │
+│  "get ramp expenses"         "update SDP-1234"                 │
+│  "check securonix alerts"    "send slack message"              │
+│           │                           │                         │
+│           └───────────┬───────────────┘                         │
+│                       ▼                                         │
+│              Windmill skill                                     │
+│         (routes to appropriate script)                          │
+└─────────────────────────────────────────────────────────────────┘
+                        │
+                        ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ Windmill                                                        │
+│                                                                 │
+│  scripts/                                                       │
+│    ramp/get-expenses.ts        (on-demand)                     │
+│    ramp/sync.ts                (scheduled: 0 */6 * * *)        │
+│    securonix/get-alerts.ts     (on-demand)                     │
+│    securonix/sync.ts           (scheduled: */5 * * * *)        │
+│    sdp/get-ticket.ts           (on-demand)                     │
+│    sdp/update-ticket.ts        (on-demand)                     │
+│    sdp/sync.ts                 (scheduled: */5 * * * *)        │
+│    slack/send-message.ts       (on-demand)                     │
+│    slack/sync.ts               (scheduled: * * * * *)          │
+│                                                                 │
+│  All credentials in Windmill variables (synced from BWS)       │
+└─────────────────────────────────────────────────────────────────┘
+                        │
+                        ▼
+                 External APIs
+```
+
+**Script categories:**
+
+| Category | Trigger | Purpose |
+|----------|---------|---------|
+| `*/sync.ts` | Scheduled | Periodic data pull → datahub |
+| `*/get-*.ts` | On-demand | Adhoc queries, return data directly |
+| `*/update-*.ts` | On-demand | Write-back to external system |
+| `*/send-*.ts` | On-demand | Outbound messages |
+
+**Benefits of gateway pattern:**
+
+| Concern | Solution |
+|---------|----------|
+| Credentials scattered | All in Windmill variables |
+| Inconsistent error handling | Windmill retry policies |
+| No audit trail | Windmill job history |
+| Rate limit management | Windmill concurrency controls |
+| Adding new source | Just add scripts, skill routes automatically |
 
 ### H.8 Why Windmill
 
@@ -3447,18 +3506,38 @@ steps:
 | Languages | Bun, Python, Go, Bash |
 | Open source | AGPLv3, no vendor lock-in |
 
-### H.9 PAI Skill: WindmillOps
+### H.9 PAI Skill: Windmill
 
-The Windmill API enables a PAI skill for Claude to manage orchestration:
+Single skill routes all external API requests through Windmill:
 
 ```markdown
-# Skill: WindmillOps
+# Skill: Windmill
+
+All external API calls route through Windmill scripts.
+Never call external APIs directly from Claude.
+
+## Script Discovery
+Scripts organized by source: scripts/{source}/{action}.ts
+Use Windmill API to list available scripts.
 
 ## Triggers
-- "check job status" → GET /api/w/{workspace}/jobs/list
-- "run the ramp sync" → POST /api/w/{workspace}/jobs/run_script_by_path
-- "show failed jobs" → GET /api/w/{workspace}/jobs/list?status=failure
-- "disable slack poller" → POST /api/w/{workspace}/schedules/disable
+- "get ramp expenses" → run scripts/ramp/get-expenses
+- "securonix alerts" → run scripts/securonix/get-alerts
+- "update SDP-1234" → run scripts/sdp/update-ticket {id: "1234", ...}
+- "sync all sources" → run flows/full-sync
+- "check job status" → GET /api/jobs/list
+- "show failures" → GET /api/jobs/list?status=failure
+
+## API Patterns
+# Run script and get result
+POST /api/w/main/jobs/run_wait_result/p/scripts/ramp/get-expenses
+Body: { "args": { "since": "2026-01-01" } }
+
+# Check job status
+GET /api/w/main/jobs/{job_id}
+
+# List scheduled jobs
+GET /api/w/main/schedules/list
 
 ## Example Usage
 User: "run the securonix sync now"
