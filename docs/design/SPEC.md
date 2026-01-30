@@ -158,10 +158,11 @@ Imladris 2.0 is a personal cloud workstation for:
 │                              │                                      │
 │                              ▼                                      │
 │  ┌─────────────────────────────────────────────────────────────┐   │
-│  │ Pollers (systemd timers)              Queue Processor        │   │
-│  │  5 min: ms365, sdp, devops,           Unified with handlers  │   │
-│  │         gmail, gcal                   Retries, conflict      │   │
-│  │  60s:   slack, telegram               detection              │   │
+│  │ Windmill (Docker)                                            │   │
+│  │  Schedules: */5 (ms365, sdp, devops, gmail, gcal)           │   │
+│  │             */1 (slack, telegram)                            │   │
+│  │  Built-in: retries, backoff, monitoring UI                   │   │
+│  │  Webhooks: real-time for supported sources                   │   │
 │  └─────────────────────────────────────────────────────────────┘   │
 │                              │                                      │
 │                              ▼                                      │
@@ -185,7 +186,8 @@ Imladris 2.0 is a personal cloud workstation for:
 |-------|------------|
 | Infrastructure | Terraform (AWS) |
 | Configuration | Nix + home-manager |
-| Runtime | Bun (pollers, scripts - aligns with PAI) |
+| Orchestration | Windmill (scheduling, retries, monitoring) |
+| Runtime | Bun/Python (scripts in Windmill) |
 | AI | Claude Code via AWS Bedrock |
 | Framework | PAI (Personal AI Infrastructure) |
 | Storage | Flat files (markdown) + SQLite index |
@@ -197,7 +199,7 @@ Imladris 2.0 is a personal cloud workstation for:
 ```
 External Systems
       │
-      ▼ (pollers, every 5min/60s)
+      ▼ (Windmill: schedules + webhooks)
 Datahub (flat files)
       │
       ▼ (after each poll)
@@ -3195,3 +3197,271 @@ All sensitive operations logged to `/data/logs/audit.jsonl`:
 # Allow all outbound
 -A OUTPUT -j ACCEPT
 ```
+
+---
+
+## Appendix H: Windmill Orchestration
+
+### H.1 Overview
+
+[Windmill](https://www.windmill.dev/) is an open-source workflow engine that could replace the custom systemd timers + queue processor architecture. This appendix explores the benefits and trade-offs.
+
+**Why consider Windmill:**
+- Many more data sources planned
+- Each source currently needs: systemd timer + script + queue handler + retry logic
+- Windmill provides all of this out of the box
+
+### H.2 Current vs Windmill Architecture
+
+**Current:**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ systemd timers                                              │
+│   ├── sdp-poller.timer (5min)                              │
+│   ├── ms365-poller.timer (5min)                            │
+│   ├── slack-poller.timer (60s)                             │
+│   └── ... (one per source)                                 │
+└─────────────────────────────────────────────────────────────┘
+          │
+          ▼
+┌─────────────────────────────────────────────────────────────┐
+│ Bun scripts (custom)                                        │
+│   ├── lib/pollers/sdp.ts                                   │
+│   ├── lib/pollers/ms365.ts                                 │
+│   └── lib/queue/processor.ts  ← custom retry/backoff       │
+└─────────────────────────────────────────────────────────────┘
+          │
+          ▼
+┌─────────────────────────────────────────────────────────────┐
+│ Datahub (flat files + SQLite)                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**With Windmill:**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Windmill (Docker container)                                 │
+│   ┌─────────────────────────────────────────────────────┐  │
+│   │ Server (Rust) + Workers + Postgres                   │  │
+│   │                                                       │  │
+│   │ Schedules:           Scripts:                        │  │
+│   │   sdp: */5 * * * *     pollers/sdp.ts               │  │
+│   │   ms365: */5 * * * *   pollers/ms365.ts             │  │
+│   │   slack: * * * * *     pollers/slack.ts             │  │
+│   │                                                       │  │
+│   │ Built-in: retries, backoff, logging, UI             │  │
+│   └─────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+          │
+          ▼
+┌─────────────────────────────────────────────────────────────┐
+│ Datahub (flat files + SQLite)  [unchanged]                 │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### H.3 Feature Comparison
+
+| Feature | Current (systemd) | Windmill |
+|---------|-------------------|----------|
+| Scheduling | systemd timers | Built-in cron |
+| Retries | Custom per-script | Built-in with policies |
+| Backoff | Custom per-script | Configurable |
+| Monitoring | journalctl | Web UI dashboard |
+| Adding new source | timer + script + handler | Just add script |
+| Error visibility | Grep logs | UI with alerts |
+| Webhooks | Custom endpoint | Built-in |
+| Flows | Manual chaining | Visual composer |
+| Approval gates | N/A | Built-in |
+| Language support | Bun only | Bun, Python, Go, Bash |
+
+### H.4 Deployment
+
+**Docker Compose (minimal):**
+
+```yaml
+# docker-compose.windmill.yml
+services:
+  windmill-db:
+    image: postgres:16
+    volumes:
+      - windmill-db:/var/lib/postgresql/data
+    environment:
+      POSTGRES_PASSWORD: ${WINDMILL_DB_PASSWORD}
+      POSTGRES_DB: windmill
+
+  windmill-server:
+    image: ghcr.io/windmill-labs/windmill:main
+    environment:
+      DATABASE_URL: postgres://postgres:${WINDMILL_DB_PASSWORD}@windmill-db/windmill
+      MODE: server
+    ports:
+      - "127.0.0.1:8000:8000"  # Tailscale only
+    depends_on:
+      - windmill-db
+
+  windmill-worker:
+    image: ghcr.io/windmill-labs/windmill:main
+    environment:
+      DATABASE_URL: postgres://postgres:${WINDMILL_DB_PASSWORD}@windmill-db/windmill
+      MODE: worker
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock  # For docker scripts
+    depends_on:
+      - windmill-db
+
+volumes:
+  windmill-db:
+```
+
+**Resource estimate:**
+- Postgres: ~200MB RAM
+- Server: ~100MB RAM
+- Worker: ~200MB RAM + script overhead
+- Total: ~500MB baseline (m7g.xlarge has 16GB)
+
+### H.5 Poller Migration Example
+
+**Current (sdp-poller.ts):**
+
+```typescript
+// lib/pollers/sdp.ts
+import { fetchRequests, writeToDatahub } from './common';
+
+async function poll() {
+    try {
+        const requests = await fetchRequests();
+        await writeToDatahub(requests);
+    } catch (e) {
+        // Custom retry logic
+        await sleep(exponentialBackoff(retryCount));
+        // ...
+    }
+}
+```
+
+**Windmill version:**
+
+```typescript
+// windmill script: pollers/sdp
+// Schedule: */5 * * * *
+// Retry policy: 3 attempts, exponential backoff
+
+import * as wmill from "windmill-client";
+
+export async function main() {
+    const sdpToken = await wmill.getVariable("sdp_api_token");
+    const requests = await fetchRequests(sdpToken);
+    await writeToDatahub(requests);
+    return { synced: requests.length };
+}
+```
+
+Retry/backoff handled by Windmill, not custom code.
+
+### H.6 New Capabilities
+
+**Webhooks for real-time:**
+
+Instead of polling Slack every 60s, receive events instantly:
+
+```typescript
+// windmill webhook: slack-events
+// Triggered by: Slack Event API
+
+export async function main(event: SlackEvent) {
+    if (event.type === "message") {
+        await writeToDatahub(event);
+    }
+}
+```
+
+**Flows for complex ingestion:**
+
+```yaml
+# windmill flow: full-sync
+summary: Complete sync of all sources
+steps:
+  - id: sdp
+    script: pollers/sdp
+  - id: ms365
+    script: pollers/ms365
+    parallel: true
+  - id: slack
+    script: pollers/slack
+    parallel: true
+  - id: triage
+    script: triage/batch
+    depends_on: [sdp, ms365, slack]
+```
+
+**Approval gates for sensitive ops:**
+
+```typescript
+// windmill flow: admin-action
+steps:
+  - id: request
+    script: prepare-admin-action
+  - id: approve
+    type: approval
+    timeout: 1h
+  - id: execute
+    script: execute-admin-action
+    depends_on: [approve]
+```
+
+### H.7 Integration Points
+
+| Component | Integration |
+|-----------|-------------|
+| Auth-keeper | Scripts call `auth-keeper` for tokens, or use Windmill variables |
+| BWS | Sync BWS secrets → Windmill variables on startup |
+| Datahub | Scripts write to same flat files (unchanged) |
+| SQLite index | Same rebuild after writes |
+| Chat Gateway | Could trigger Windmill flows via webhook |
+
+### H.8 Trade-offs
+
+**Pros:**
+- Dramatically simpler to add new sources
+- Better visibility (Web UI)
+- No custom retry/queue code
+- Webhook support enables real-time
+- Multi-language (use Python where better libs exist)
+- Job history and audit trail built-in
+
+**Cons:**
+- Additional container (~500MB RAM)
+- Postgres dependency (but small footprint)
+- Learning curve for Windmill concepts
+- Another system to secure/update
+- Slight vendor coupling (mitigated: open source, scripts portable)
+
+### H.9 Migration Path
+
+| Phase | Scope |
+|-------|-------|
+| 1 | Deploy Windmill alongside existing timers |
+| 2 | Migrate one low-risk poller (e.g., telegram) |
+| 3 | Validate monitoring, retries, logs |
+| 4 | Migrate remaining pollers one by one |
+| 5 | Remove systemd timers, queue processor |
+| 6 | Enable webhooks where supported |
+
+### H.10 Decision
+
+**Recommendation:** Proceed with Windmill.
+
+Given:
+- Many more data sources planned
+- Current approach requires custom code per source
+- Monitoring/visibility is poor
+- Webhook support enables real-time (Slack, GitHub, etc.)
+- Resource overhead is acceptable (500MB of 16GB)
+
+**Next steps:**
+1. Add Windmill to docker-compose
+2. Spike: migrate telegram poller
+3. Evaluate UX of adding new source via Windmill vs current
+4. Decide go/no-go based on spike
