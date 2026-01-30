@@ -1069,7 +1069,7 @@ All stateful data lives on the LUKS-encrypted data volume (`/data`). Root volume
 ├── config/
 │   ├── bws/
 │   ├── slackdump/
-│   ├── auth-keeper/
+│   ├── windmill/
 │   └── tmux/
 │
 └── backups/                    ← local backup staging
@@ -1102,7 +1102,7 @@ All stateful data lives on the LUKS-encrypted data volume (`/data`). Root volume
 | Git repos (home) | `/data/repos/home/` | ✓ |
 | BWS token cache | `/data/config/bws/` | ✓ |
 | slackdump auth | `/data/config/slackdump/` | ✓ |
-| Auth token cache | `/data/config/auth-keeper/` | ✓ |
+| Windmill data | `/data/config/windmill/` | ✓ |
 | Sync queue | `/data/*/datahub/queue/` | ✓ |
 | tmux resurrect | `/data/config/tmux/` | ✓ |
 
@@ -1327,7 +1327,7 @@ All auth configured in Windmill UI (http://localhost:8000).
 |-------|---------|----------|
 | LUKS mounted | `mount \| grep /data` | `/dev/mapper/hall-of-fire on /data` |
 | BWS accessible | `bws-get test` | No error |
-| All auth valid | `auth-keeper status` | All services green |
+| All auth valid | Windmill UI → Resources | All resources green |
 | Datahub populated | `datahub stats` | Item counts > 0 |
 | Workspaces ready | `tmux list-windows` | 11 windows |
 
@@ -1337,7 +1337,7 @@ All auth configured in Windmill UI (http://localhost:8000).
 |---------|----------|
 | LUKS won't unlock | Check passphrase, verify BWS keyfile exists |
 | Auth setup fails | Check BWS secrets exist with correct names |
-| Initial sync hangs | Check auth-keeper status for that service |
+| Initial sync hangs | Check Windmill UI → Runs for that service |
 | Triage errors | Check Claude/Bedrock connectivity |
 
 **Time Estimate:**
@@ -2105,7 +2105,7 @@ Skills call Imladris CLI tools, never external APIs directly:
 │  datahub query --actionable     ← Read items                    │
 │  datahub write --note "..."     ← Write to queue                │
 │  datahub triage --batch         ← Trigger triage                │
-│  auth-keeper get <service>      ← (internal only)               │
+│  Windmill API                   ← Credentials (internal only)   │
 │                                                                 │
 │                    │                                            │
 │                    ▼                                            │
@@ -2119,11 +2119,11 @@ Skills need to know which cloud accounts are accessible without accessing creden
 
 **Problem:** Claude doesn't inherently know which AWS/GCP accounts exist or are accessible.
 
-**Solution:** Skills query auth-keeper CLI for account registry:
+**Solution:** Skills call Windmill script to get account registry:
 
 ```bash
-# Skill runs this to discover accounts
-auth-keeper aws list --json
+# Skill calls Windmill to discover accounts
+curl -s http://localhost:8000/api/w/main/jobs/run_wait_result/f/aws/list-accounts | jq
 
 # Returns:
 {
@@ -2140,9 +2140,10 @@ auth-keeper aws list --json
   ]
 }
 
-# Skill runs this to use a specific account
-auth-keeper aws get org-prod --role ReadOnly
-# Sets AWS_PROFILE=org-prod-readonly in environment
+# Skill calls Windmill to get session credentials
+curl -s http://localhost:8000/api/w/main/jobs/run_wait_result/f/aws/get-session \
+  -d '{"account": "org-prod", "role": "ReadOnly"}'
+# Returns temporary credentials for direct AWS CLI use
 ```
 
 **Skill Pattern for Cloud Work:**
@@ -2151,10 +2152,10 @@ auth-keeper aws get org-prod --role ReadOnly
 ## AWS Account Discovery
 
 Before any AWS operation:
-1. Run `auth-keeper aws list --json` to get accessible accounts
+1. Call `f/aws/list-accounts` via Windmill API
 2. Present accounts to user if ambiguous
-3. Run `auth-keeper aws get <account>` to set context
-4. Proceed with AWS CLI commands
+3. Call `f/aws/get-session` to get temporary credentials
+4. Proceed with AWS CLI commands using returned credentials
 
 Never assume account IDs or hardcode credentials.
 ```
@@ -2163,7 +2164,7 @@ Never assume account IDs or hardcode credentials.
 
 When user gains/loses access to accounts:
 1. Update BWS secret (`aws-accounts` or `gcp-projects`)
-2. Run `auth-keeper aws generate-config`
+2. Run `f/ops/bws-sync.ts` (or wait for scheduled sync)
 3. Skills automatically discover new accounts on next query
 
 ### Benefits
@@ -3093,9 +3094,9 @@ Browser session expires approximately every 30 days.
 ```
 slackdump returns auth error
     ↓
-auth-keeper marks work-slack as expired
+Windmill marks f/slack/sync as failed
     ↓
-Status bar shows ⚠ slack auth
+Status bar shows ⚠ slack auth (via Windmill webhook)
     ↓
 Slack poller pauses (others continue)
 ```
@@ -3103,13 +3104,14 @@ Slack poller pauses (others continue)
 **Recovery:**
 
 ```bash
-auth-keeper setup work-slack    # Opens browser for re-auth
-# Follow Slack OAuth flow
-# slackdump captures new session
-auth-keeper status              # Verify green
+# Re-run slackdump auth in browser
+slackdump auth
+# Update Windmill variable with new session
+# Or wait for next f/ops/bws-sync.ts if stored in BWS
+# Check Windmill UI → Resources for green status
 ```
 
-**Proactive:** Warning at 25 days since last auth.
+**Proactive:** Windmill script checks session age, warns at 25 days.
 
 ### Search Across Zones
 
@@ -3199,7 +3201,7 @@ Beyond status bar, critical errors notify via:
 | Credential | Location | Protection |
 |------------|----------|------------|
 | BWS access token | `/data/config/bws/token` | LUKS + file permissions (600) |
-| OAuth refresh tokens | `/data/config/auth-keeper/tokens.json` | LUKS + encrypted at rest (age) |
+| OAuth refresh tokens | Windmill PostgreSQL | LUKS (DB on /data) + Windmill encryption |
 | slackdump session | `/data/config/slackdump/` | LUKS + file permissions |
 | SSH keys | `/data/ssh/` | LUKS + file permissions (600) |
 | AWS credentials | None (instance profile) | IAM only |
@@ -3231,9 +3233,10 @@ Instance compromise = access to all AWS accounts in registry.
 **Admin access flow:**
 
 ```bash
-auth-keeper aws get org-prod --role Admin
-# Prompts: "Admin access to org-prod. Reason?"
-# User enters: "Deploying hotfix for auth bug"
+# Via Windmill API (skill calls this)
+curl -s http://localhost:8000/api/w/main/jobs/run_wait_result/f/aws/get-session \
+  -d '{"account": "org-prod", "role": "Admin", "reason": "Deploying hotfix for auth bug"}'
+# Reason required for Admin role
 # Logged to audit trail
 # Session limited to 1 hour
 ```
