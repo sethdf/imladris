@@ -651,7 +651,48 @@ datahub export --zone home --dest rsync://personal-vps/archive
 
 **Eliminated:** auth-keeper.sh (~1800 lines). Windmill replaces it entirely.
 
-### 6.2 Secret Naming Convention
+### 6.2 Bootstrap Chain
+
+BWS token is the ONE credential that exists outside Windmill - it's the root of the trust chain.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Bootstrap Chain (on startup/reboot)                             │
+│                                                                 │
+│ 1. LUKS unlock                                                  │
+│    - Passphrase (interactive) + keyfile (from BWS cache)       │
+│    - Decrypts /data volume                                      │
+│                                                                 │
+│ 2. BWS token loaded                                             │
+│    - /data/.bws-token persisted on encrypted volume            │
+│    - Created during first-time setup, survives reboots         │
+│                                                                 │
+│ 3. systemd starts Windmill                                      │
+│    - windmill-worker.service has EnvironmentFile=/data/.env    │
+│    - /data/.env contains BWS_ACCESS_TOKEN                       │
+│                                                                 │
+│ 4. Initial sync runs                                            │
+│    - f/ops/bws-sync.ts triggers on Windmill startup            │
+│    - Pulls all secrets from BWS → Windmill variables           │
+│                                                                 │
+│ 5. Windmill now self-sufficient                                 │
+│    - All credentials available as variables/resources          │
+│    - Scheduled sync every 30min keeps them fresh               │
+│    - OAuth resources handle their own refresh cycles           │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Bootstrap files on encrypted volume:**
+
+| File | Purpose |
+|------|---------|
+| `/data/.bws-token` | BWS access token (root credential) |
+| `/data/.env` | Environment file for systemd services |
+| `/data/.luks-keyfile` | LUKS keyfile (cached from BWS) |
+
+**First-time setup creates these files.** Subsequent reboots only need LUKS passphrase.
+
+### 6.3 Secret Naming Convention
 
 ```
 {zone}-{service}-{item}
@@ -664,7 +705,7 @@ home-google-client-id
 home-telegram-bot-token
 ```
 
-### 6.3 Auth Types by Service
+### 6.4 Auth Types by Service
 
 | System | Auth Type | Windmill Handles |
 |--------|-----------|------------------|
@@ -676,7 +717,7 @@ home-telegram-bot-token
 | Telegram | Bot token | Static variable (never expires) |
 | AWS | STS AssumeRole | On-demand via script |
 
-### 6.4 Windmill Credential Access
+### 6.5 Windmill Credential Access
 
 **In scripts:**
 
@@ -702,7 +743,7 @@ const creds = await wmill.runScript("aws/get-session", {
 
 Windmill UI shows all credential status.
 
-### 6.5 Smart Discovery
+### 6.6 Smart Discovery
 
 Windmill scheduled script detects new BWS entries:
 
@@ -756,7 +797,7 @@ Creates local integration task in datahub
 
 One place to add (Windmill). One skill routes all (Windmill Curu skill (PAI)).
 
-### 6.6 Cloud Account Registry
+### 6.7 Cloud Account Registry
 
 BWS tracks accessible cloud accounts for discoverability:
 
@@ -817,7 +858,7 @@ role_arn = arn:aws:iam::222222222222:role/ReadOnlyAccess
 credential_source = Ec2InstanceMetadata
 ```
 
-### 6.7 Offline Limitation
+### 6.8 Offline Limitation
 
 Claude via Bedrock requires network. Offline mode is view-only (grep datahub).
 
@@ -3373,6 +3414,7 @@ systemd.services.windmill-worker = {
   };
   serviceConfig = {
     ExecStart = "${pkgs.windmill}/bin/windmill --mode worker";
+    EnvironmentFile = "/data/.env";  # Contains BWS_ACCESS_TOKEN
     Restart = "always";
     User = "windmill";
   };
