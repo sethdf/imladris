@@ -185,15 +185,56 @@ Imladris 2.0 is a personal cloud workstation for:
 |-------|------------|
 | Infrastructure | Terraform (AWS) |
 | Configuration | Nix + home-manager |
-| Integration Gateway | Windmill (all external API calls routed here) |
+| Integration Gateway | Windmill (APIs, credentials, scheduling, monitoring) |
 | Runtime | Bun/Python (scripts in Windmill) |
 | AI | Claude Code via AWS Bedrock |
 | Framework | PAI (Personal AI Infrastructure) |
 | Storage | Flat files (markdown) + SQLite index |
-| Secrets | BWS → Windmill variables |
+| Secrets | BWS (bootstrap only → Windmill variables) |
 | Access | Tailscale SSH only |
 
-### 3.3 Data Flow
+### 3.3 Simplified Component Model
+
+**Only 4 systemd services:**
+
+| Service | Purpose |
+|---------|---------|
+| `postgresql` | Windmill job queue |
+| `windmill-server` | API + UI |
+| `windmill-worker` | Script execution |
+| `tailscaled` | Network access |
+
+Everything else runs in Windmill.
+
+**Eliminated components:**
+
+| Removed | Replaced By |
+|---------|-------------|
+| auth-keeper.sh (~1800 lines) | Windmill OAuth resources |
+| Custom queue processor | Windmill job queue |
+| systemd timers (app-level) | Windmill schedules |
+| Per-service PAI skills | Single Windmill skill |
+| Custom status/monitoring | Windmill UI |
+| Scattered retry logic | Windmill policies |
+
+**What remains:**
+
+```
+Bootstrap:
+  systemd → postgres → windmill → tailscale
+  luks-unlock (oneshot, pre-boot)
+  bws-to-windmill.ts (one-time secret sync)
+
+Runtime:
+  Windmill handles everything else
+
+User Interface:
+  tmux + workspaces
+  Claude Code + PAI
+  One Windmill skill (routes all external calls)
+```
+
+### 3.4 Data Flow
 
 ```
                     External Systems
@@ -583,9 +624,30 @@ datahub export --zone home --dest rsync://personal-vps/archive
 
 ## 6. Authentication
 
-### 6.1 BWS as Registry
+### 6.1 Simplified Auth Model
 
-BWS (Bitwarden Secrets Manager) is the single source of truth for all services requiring authentication.
+**BWS is bootstrap-only.** On startup, secrets sync to Windmill variables. Windmill handles all runtime credential management.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Bootstrap (once on startup)                                     │
+│                                                                 │
+│   BWS ──sync──▶ Windmill Variables                             │
+│                                                                 │
+│   scripts/bootstrap/bws-to-windmill.ts                         │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ Runtime (Windmill handles everything)                           │
+│                                                                 │
+│   OAuth tokens: Windmill resources (auto-refresh)              │
+│   API keys: Windmill variables (static)                        │
+│   AWS roles: On-demand STS assume (scripts/aws/get-session.ts) │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Eliminated:** auth-keeper.sh (~1800 lines). Windmill replaces it entirely.
 
 ### 6.2 Secret Naming Convention
 
@@ -595,152 +657,102 @@ BWS (Bitwarden Secrets Manager) is the single source of truth for all services r
 Examples:
 work-ms365-tenant-id
 work-ms365-client-id
-work-ms365-certificate
-work-sdp-client-id
-work-sdp-refresh-token
+work-sdp-api-token
 home-google-client-id
 home-telegram-bot-token
 ```
 
 ### 6.3 Auth Types by Service
 
-| System | Auth Type | Refresh |
-|--------|-----------|---------|
-| work-ms365 | Service Principal + Certificate | Auto |
-| work-sdp | OAuth2 (Zoho) | Auto (refresh token) |
-| work-devops | PAT | Manual (warn on expiry) |
-| work-slack | slackdump (browser session) | Manual re-auth |
-| home-google | OAuth2 | Auto (refresh token) |
-| home-telegram | Bot token | Never expires |
+| System | Auth Type | Windmill Handles |
+|--------|-----------|------------------|
+| MS365 | OAuth2 (Service Principal) | ✓ Auto-refresh via resource |
+| SDP | OAuth2 (Zoho) | ✓ Auto-refresh via resource |
+| DevOps | PAT | Static variable (warn on expiry) |
+| Slack | OAuth2 | ✓ Auto-refresh via resource |
+| Google | OAuth2 | ✓ Auto-refresh via resource |
+| Telegram | Bot token | Static variable (never expires) |
+| AWS | STS AssumeRole | On-demand via script |
 
-### 6.4 auth-keeper Interface
+### 6.4 Windmill Credential Access
 
-```bash
-# Get valid token (refreshes if needed)
-auth-keeper get work-ms365
-auth-keeper get work-sdp
+**In scripts:**
 
-# Status of all services
-auth-keeper status
+```typescript
+// API keys (static)
+const token = await wmill.getVariable("work-sdp-api-token");
 
-# Discover new secrets in BWS
-auth-keeper discover
+// OAuth tokens (auto-refreshed)
+const resource = await wmill.getResource("work-ms365");
+const accessToken = resource.token;  // Always valid
 
-# Initial setup
-auth-keeper setup work-ms365
-
-# Force refresh
-auth-keeper refresh work-sdp
+// AWS (on-demand assume)
+const creds = await wmill.runScript("aws/get-session", {
+    account: "prod",
+    role: "ReadOnly"
+});
 ```
+
+**No more:**
+- `auth-keeper get work-ms365`
+- `auth-keeper refresh work-sdp`
+- `auth-keeper status`
+
+Windmill UI shows all credential status.
 
 ### 6.5 Smart Discovery
 
-When new BWS entry detected:
+Windmill scheduled script detects new BWS entries:
 
 ```
-auth-keeper discover
+scripts/ops/bws-sync.ts (runs every 30 min)
     ↓
 "New secret found: jira-api-token"
     ↓
-Prompts: "What service is this for?"
-User: "Jira Cloud for work"
+Creates Windmill variable
     ↓
-Prompts: "Zone? (work/home)"
-User: "work"
-    ↓
-Renames to: work-jira-api-token
-    ↓
-Creates local integration task (see below)
+Creates local integration task in datahub
 ```
 
 **Auto-created integration task:**
 
-When a new service is registered, automatically create a local-only task to build the integration:
-
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  New service "jira" registered in work zone                     │
+│  New service "jira" detected in BWS                             │
 │                                                                 │
 │  Creates datahub item:                                          │
 │    id: local-integrate-jira-{timestamp}                         │
 │    source: local                                                │
 │    type: integration-task                                       │
 │    title: "Build integration for jira"                          │
-│    zone: work                                                   │
-│    triage: actionable                                           │
 │                                                                 │
 │  With checklist:                                                │
-│    □ Create poller (lib/pollers/jira.ts)                        │
-│    □ Create CLI commands (auth-keeper jira ...)                 │
-│    □ Create PAI skill (/pai skill create jira)                  │
-│    □ Add to datahub sources table                               │
-│    □ Test sync cycle                                            │
+│    □ Create Windmill scripts (scripts/jira/*.ts)                │
+│    □ Add schedule for sync                                      │
+│    □ Test via Windmill UI                                       │
 │    □ Document in CLAUDE.md                                      │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**Integration task template:**
+**Simplified checklist** (no auth-keeper, no separate PAI skill):
 
 ```markdown
----
-id: local-integrate-jira-20260129
-source: local
-type: integration-task
-title: Build integration for jira
-zone: work
-triage: actionable
-priority: P2
-created: 2026-01-29
----
+## Checklist for new integration: jira
 
-## New Service Detected
+- [ ] **Scripts**: Create in Windmill
+  - `scripts/jira/sync.ts` - scheduled poller
+  - `scripts/jira/get-issue.ts` - on-demand query
+  - `scripts/jira/update-issue.ts` - write-back
 
-Service `jira` was added to BWS registry. Build the integration.
+- [ ] **Schedule**: Add in Windmill UI
+  - `jira/sync.ts` → `*/5 * * * *`
 
-## Checklist
-
-- [ ] **Poller**: Create `lib/pollers/jira.ts`
-  - Fetch issues assigned to me
-  - Map to datahub item format
-  - Handle pagination and rate limits
-
-- [ ] **CLI**: Add to auth-keeper
-  - `auth-keeper get work-jira` - get valid token
-  - `auth-keeper setup work-jira` - initial OAuth flow (if needed)
-
-- [ ] **Skill**: Create PAI skill via `CreateSkill`
-  - "Create a skill for Jira integration with list, show, comment"
-  - Outputs: /jira list, /jira show, /jira comment
-  - Add triage rules for Jira notifications
-
-- [ ] **Datahub**: Update sources
-  - Add to Section 5.5 Sources table
-  - Define field sync matrix (Appendix A)
-
-- [ ] **Test**: Verify full cycle
-  - Poller fetches items
-  - Triage classifies correctly
-  - Commands work in Claude
+- [ ] **Test**: Run manually in Windmill UI
 
 - [ ] **Document**: Update CLAUDE.md
-  - Add service to auth-keeper examples
-  - Note any service-specific quirks
-
-## Reference
-
-- BWS secret: `work-jira-api-token`
-- API docs: (add link)
-- Auth type: (API token / OAuth / etc.)
 ```
 
-**Why local-only:**
-
-| Aspect | Reason |
-|--------|--------|
-| No SDP sync | Meta-task about building Imladris itself |
-| Stays in datahub | Findable, trackable like other work |
-| Auto-created | No friction to capture the work needed |
-| Checklist included | Don't forget any integration pieces |
+One place to add (Windmill). One skill routes all (Windmill PAI skill).
 
 ### 6.6 Cloud Account Registry
 
@@ -1941,14 +1953,25 @@ Imladris 2.0 builds around PAI (Personal AI Infrastructure):
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**New PAI Skills for Imladris:**
+**PAI Skills for Imladris:**
 
 | Skill | Purpose |
 |-------|---------|
+| **Windmill** | Routes ALL external API calls through Windmill scripts |
 | **Triage** | Batch classification (actionable/keep/delete) |
 | **SpecAssist** | Help write clear specifications |
 | **TaskContext** | Summarize/restore workspace context |
 | **Comms** | Draft replies for email/chat |
+
+**Note:** The Windmill skill replaces per-service skills. Instead of separate skills for SDP, MS365, Slack, etc., one Windmill skill routes all requests to the appropriate Windmill script.
+
+```
+Before: User → SDP skill → SDP API
+        User → MS365 skill → Graph API
+        User → Slack skill → Slack API
+
+After:  User → Windmill skill → Windmill → Any API
+```
 
 ---
 
