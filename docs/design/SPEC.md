@@ -4521,47 +4521,32 @@ Rationale:
 
 ### I.1 Purpose
 
-MCP (Model Context Protocol) servers extend Claude Code's capabilities by connecting it to external tools, APIs, and data sources. For imladris, MCP servers serve two primary purposes:
+MCP (Model Context Protocol) servers extend Claude Code's capabilities by connecting it to external tools, APIs, and data sources.
 
-1. **Code Quality** - Reduce coding mistakes through structured reasoning and pre-commit analysis
-2. **Context Accuracy** - Ensure Claude uses up-to-date documentation and API references
+**Guiding principle:** MCP servers should provide **external data or deterministic tooling**, not duplicate PAI's reasoning capabilities.
 
-### I.2 Recommended MCP Servers
+### I.2 MCP vs PAI Boundary
 
-| MCP Server | Purpose | Priority |
-|------------|---------|----------|
-| **Sequential Thinking** | Structured step-by-step reasoning before coding | High |
-| **Lucidity** | Pre-commit code quality analysis (10 dimensions) | High |
-| **Context7** | Real-time documentation and API references | Medium |
-| **Deep Code Reasoning** | Performance analysis, memory leak detection | Low |
+| Capability | Handled By | Rationale |
+|------------|------------|-----------|
+| Structured reasoning | PAI (Foundational Algorithm) | Observe → Think → Plan → Build → Execute → Verify → Learn |
+| Complex problem-solving | PAI (pai-agents-skill) | Agent packs for multi-perspective analysis |
+| Security/code review | PAI (pai-redteam-skill) | 32 adversarial agents for thorough review |
+| **External documentation** | **MCP (Context7)** | Real-time data, not reasoning |
+| **Deterministic code scanning** | **MCP (Lucidity)** | Automated analysis, not AI judgment |
 
-### I.3 Sequential Thinking MCP
+**What we avoid:** MCP servers that duplicate PAI's reasoning (e.g., Sequential Thinking, Deep Code Reasoning). These add complexity without benefit since PAI already provides structured thinking via skills and the Foundational Algorithm.
 
-Forces Claude to work through problems methodically rather than jumping directly to solutions.
+### I.3 Recommended MCP Servers
 
-**What it does:**
-- Breaks problems into discrete thinking steps
-- Enables revision and branching during reasoning
-- Maintains context across extended reasoning chains
-- Mirrors human cognitive patterns for complex problem-solving
-
-**When invoked:**
-- Complex architectural decisions
-- Debugging with multiple potential causes
-- Multi-file refactoring
-- Any problem where "think step by step" improves outcomes
-
-**Installation:**
-
-```bash
-claude mcp add sequential-thinking -- npx -y @modelcontextprotocol/server-sequential-thinking
-```
-
-**Source:** [github.com/modelcontextprotocol/servers/tree/main/src/sequentialthinking](https://github.com/modelcontextprotocol/servers/tree/main/src/sequentialthinking)
+| MCP Server | Purpose | Why It's Additive |
+|------------|---------|-------------------|
+| **Lucidity** | Pre-commit code quality analysis | Deterministic scanning (not AI reasoning) |
+| **Context7** | Real-time documentation/API references | External data source (not reasoning pattern) |
 
 ### I.4 Lucidity MCP
 
-AI-powered code quality analysis that reviews code before commits.
+Deterministic code quality analysis that reviews code before commits.
 
 **Quality dimensions analyzed:**
 
@@ -4625,30 +4610,7 @@ claude mcp add context7 -- npx -y @upstash/context7-mcp
 
 **Source:** [github.com/upstash/context7](https://github.com/upstash/context7)
 
-### I.6 Deep Code Reasoning MCP (Optional)
-
-Multi-model workflow for advanced code analysis and performance optimization.
-
-**Capabilities:**
-- Execution flow tracing
-- N+1 pattern detection
-- Memory leak identification
-- Hypothesis testing with evidence validation
-
-**When to use:**
-- Performance debugging
-- Memory profiling
-- Complex multi-file analysis
-
-**Installation:**
-
-```bash
-claude mcp add deep-code-reasoning -- npx -y deep-code-reasoning-mcp
-```
-
-**Source:** [github.com/haasonsaas/deep-code-reasoning-mcp](https://github.com/haasonsaas/deep-code-reasoning-mcp)
-
-### I.7 Configuration
+### I.6 Configuration
 
 **Config location:** `~/.claude/settings.json` (symlinked to `/data/claude/settings.json`)
 
@@ -4657,10 +4619,6 @@ claude mcp add deep-code-reasoning -- npx -y deep-code-reasoning-mcp
 ```json
 {
   "mcpServers": {
-    "sequential-thinking": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]
-    },
     "lucidity": {
       "command": "npx",
       "args": ["-y", "lucidity-mcp"]
@@ -4679,23 +4637,31 @@ claude mcp add deep-code-reasoning -- npx -y deep-code-reasoning-mcp
 claude mcp list
 ```
 
-### I.8 MCP Tool Search (Lazy Loading)
+### I.7 MCP Tool Search (Lazy Loading)
 
 Claude Code's MCP Tool Search enables lazy loading for MCP servers, reducing context usage by up to 95%. Servers are only loaded when their capabilities are needed.
 
 **Benefit:** Run multiple MCP servers without context overhead until they're actually invoked.
 
-### I.9 Integration with Spec Kit Workflow
+### I.8 Integration with Workflow
 
-MCP servers integrate naturally with the four-phase coding workflow:
-
-| Phase | MCP Server | Usage |
-|-------|------------|-------|
-| `/specify` | Sequential Thinking | Structure requirements gathering |
-| `/plan` | Sequential Thinking | Work through architectural options |
-| `/breakdown` | Sequential Thinking | Decompose into implementable units |
+| Phase | Tool | Usage |
+|-------|------|-------|
+| `/specify` | PAI skills | Structure requirements gathering |
+| `/plan` | PAI skills | Work through architectural options |
+| `/breakdown` | PAI skills | Decompose into implementable units |
 | `/implement` | Lucidity, Context7 | Quality checks, accurate APIs |
-| `/verify` | Lucidity | Final quality gate before merge |
+| `/verify` | Lucidity, pai-redteam-skill | Final quality gate before merge |
+
+### I.9 Excluded MCP Servers
+
+These MCP servers were evaluated and excluded to avoid duplicating PAI:
+
+| MCP Server | Why Excluded |
+|------------|--------------|
+| Sequential Thinking | PAI's Foundational Algorithm already provides structured reasoning |
+| Deep Code Reasoning | pai-redteam-skill covers code analysis with 32 agent perspectives |
+| Other "reasoning" MCPs | Single-thread Claude + PAI skills is the preferred pattern |
 
 ### I.10 Future Considerations
 
