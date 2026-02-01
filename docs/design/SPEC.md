@@ -4514,3 +4514,194 @@ Rationale:
 - Built-in monitoring eliminates custom dashboard work
 - Webhook support enables real-time where available
 - Scripts remain portable (just TypeScript/Python)
+
+---
+
+## Appendix I: MCP Servers
+
+### I.1 Purpose
+
+MCP (Model Context Protocol) servers extend Claude Code's capabilities by connecting it to external tools, APIs, and data sources. For imladris, MCP servers serve two primary purposes:
+
+1. **Code Quality** - Reduce coding mistakes through structured reasoning and pre-commit analysis
+2. **Context Accuracy** - Ensure Claude uses up-to-date documentation and API references
+
+### I.2 Recommended MCP Servers
+
+| MCP Server | Purpose | Priority |
+|------------|---------|----------|
+| **Sequential Thinking** | Structured step-by-step reasoning before coding | High |
+| **Lucidity** | Pre-commit code quality analysis (10 dimensions) | High |
+| **Context7** | Real-time documentation and API references | Medium |
+| **Deep Code Reasoning** | Performance analysis, memory leak detection | Low |
+
+### I.3 Sequential Thinking MCP
+
+Forces Claude to work through problems methodically rather than jumping directly to solutions.
+
+**What it does:**
+- Breaks problems into discrete thinking steps
+- Enables revision and branching during reasoning
+- Maintains context across extended reasoning chains
+- Mirrors human cognitive patterns for complex problem-solving
+
+**When invoked:**
+- Complex architectural decisions
+- Debugging with multiple potential causes
+- Multi-file refactoring
+- Any problem where "think step by step" improves outcomes
+
+**Installation:**
+
+```bash
+claude mcp add sequential-thinking -- npx -y @modelcontextprotocol/server-sequential-thinking
+```
+
+**Source:** [github.com/modelcontextprotocol/servers/tree/main/src/sequentialthinking](https://github.com/modelcontextprotocol/servers/tree/main/src/sequentialthinking)
+
+### I.4 Lucidity MCP
+
+AI-powered code quality analysis that reviews code before commits.
+
+**Quality dimensions analyzed:**
+
+| Dimension | What It Checks |
+|-----------|----------------|
+| Complexity | Cyclomatic complexity, nesting depth |
+| Security | Injection risks, credential exposure |
+| Performance | N+1 queries, unnecessary loops |
+| Test Coverage | Missing test cases |
+| Style | Consistency, naming conventions |
+| Duplication | Copy-paste code, DRY violations |
+| Error Handling | Unhandled exceptions, silent failures |
+| Documentation | Missing docstrings, unclear APIs |
+| Dependencies | Outdated packages, security vulnerabilities |
+| Maintainability | Code smells, technical debt |
+
+**Integration with Git automation:**
+
+```
+File change detected (debounce 30s)
+    ↓
+Lucidity analyzes changed files
+    ↓
+Issues found? → Block commit → Show issues
+    ↓
+No issues → Proceed with auto-commit
+```
+
+**Installation:**
+
+```bash
+claude mcp add lucidity -- npx -y lucidity-mcp
+```
+
+**Source:** [github.com/hyperb1iss/lucidity-mcp](https://github.com/hyperb1iss/lucidity-mcp)
+
+### I.5 Context7 MCP
+
+Provides real-time access to current documentation and API references.
+
+**Problem it solves:**
+- Claude's training data has a knowledge cutoff
+- APIs change, documentation updates
+- Using outdated patterns causes bugs
+
+**What it does:**
+- Fetches current version documentation on demand
+- Provides accurate API signatures and examples
+- Prevents "hallucinated" API calls that don't exist
+
+**When invoked:**
+- Working with external libraries/frameworks
+- Writing API integrations
+- Any code touching third-party dependencies
+
+**Installation:**
+
+```bash
+claude mcp add context7 -- npx -y @upstash/context7-mcp
+```
+
+**Source:** [github.com/upstash/context7](https://github.com/upstash/context7)
+
+### I.6 Deep Code Reasoning MCP (Optional)
+
+Multi-model workflow for advanced code analysis and performance optimization.
+
+**Capabilities:**
+- Execution flow tracing
+- N+1 pattern detection
+- Memory leak identification
+- Hypothesis testing with evidence validation
+
+**When to use:**
+- Performance debugging
+- Memory profiling
+- Complex multi-file analysis
+
+**Installation:**
+
+```bash
+claude mcp add deep-code-reasoning -- npx -y deep-code-reasoning-mcp
+```
+
+**Source:** [github.com/haasonsaas/deep-code-reasoning-mcp](https://github.com/haasonsaas/deep-code-reasoning-mcp)
+
+### I.7 Configuration
+
+**Config location:** `~/.claude/settings.json` (symlinked to `/data/claude/settings.json`)
+
+**Example configuration:**
+
+```json
+{
+  "mcpServers": {
+    "sequential-thinking": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]
+    },
+    "lucidity": {
+      "command": "npx",
+      "args": ["-y", "lucidity-mcp"]
+    },
+    "context7": {
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp"]
+    }
+  }
+}
+```
+
+**Verify installation:**
+
+```bash
+claude mcp list
+```
+
+### I.8 MCP Tool Search (Lazy Loading)
+
+Claude Code's MCP Tool Search enables lazy loading for MCP servers, reducing context usage by up to 95%. Servers are only loaded when their capabilities are needed.
+
+**Benefit:** Run multiple MCP servers without context overhead until they're actually invoked.
+
+### I.9 Integration with Spec Kit Workflow
+
+MCP servers integrate naturally with the four-phase coding workflow:
+
+| Phase | MCP Server | Usage |
+|-------|------------|-------|
+| `/specify` | Sequential Thinking | Structure requirements gathering |
+| `/plan` | Sequential Thinking | Work through architectural options |
+| `/breakdown` | Sequential Thinking | Decompose into implementable units |
+| `/implement` | Lucidity, Context7 | Quality checks, accurate APIs |
+| `/verify` | Lucidity | Final quality gate before merge |
+
+### I.10 Future Considerations
+
+| MCP Server | Purpose | Status |
+|------------|---------|--------|
+| Chrome DevTools | Web debugging, network analysis | Evaluate |
+| Playwright | Browser automation testing | Evaluate |
+| GitHub | PR/issue integration | Evaluate (vs gh CLI) |
+| Database | Direct SQL access | Evaluate (vs Windmill) |
