@@ -152,9 +152,8 @@ Imladris 2.0 is a personal cloud workstation for:
 │  ┌─────────────────────────────────────────────────────────────┐   │
 │  │ Windmill (native via Nix/systemd) ◄── Integration Gateway    │   │
 │  │                                                               │   │
-│  │  Scheduled:  pollers/* (sync data → datahub)                 │   │
+│  │  Scheduled:  pollers/* (sync data → datahub, 60s-15min)      │   │
 │  │  On-demand:  queries/* (adhoc lookups, triggered by PAI)     │   │
-│  │  Webhooks:   real-time events from external systems          │   │
 │  │                                                               │   │
 │  │  ALL external API calls go through Windmill scripts          │   │
 │  │  Credentials: Windmill variables (synced from BWS)           │   │
@@ -247,8 +246,8 @@ User Interface:
 │              Windmill (Gateway)                  │
 │                                                  │
 │   Inbound:   scheduled pollers → datahub        │
+│              (60s chat, 5min email/tickets)     │
 │   Outbound:  on-demand scripts ← PAI triggers   │
-│   Webhooks:  real-time events → datahub         │
 └─────────────────────────────────────────────────┘
                           │
             ┌─────────────┴─────────────┐
@@ -276,12 +275,10 @@ User Interface:
 graph TD
     subgraph External [External World]
         API[Cloud APIs<br/>SDP, MS365, Slack]
-        WH[Webhooks]
     end
 
     subgraph Gateway [Windmill Layer]
-        In_Fast[Ingest Webhook<br/>f/triage/ingest-webhook]
-        In_Batch[Scheduled Sync<br/>f/*/sync.ts]
+        Pollers[Scheduled Pollers<br/>f/*/sync.ts<br/>60s chat, 5min email]
         Out_Job[Outbound Jobs<br/>f/*/update-*.ts]
     end
 
@@ -296,11 +293,9 @@ graph TD
         end
     end
 
-    %% Inbound Flow
-    WH -->|Real-time| In_Fast
-    API -->|Poll| In_Batch
-    In_Fast --> DH
-    In_Batch --> DH
+    %% Inbound Flow (polling only)
+    API -->|Poll| Pollers
+    Pollers --> DH
     DH --> Lock
     Lock --> Files
 
@@ -893,59 +888,66 @@ Triage with 90% less tokens, equivalent accuracy
 
 **Summary caching:** Thread summaries stored in `.threads/thread-{id}.summary.md`, regenerated only when new messages arrive.
 
-#### Hybrid Triage Architecture
+#### Polling-Based Triage
 
-**Principle:** "Urgency requires immediacy; maintenance requires batching."
+**Principle:** Simplicity over milliseconds. Polling is easy to implement, debug, and monitor.
 
-**1. Fast Path (Event-Driven)**
+**Polling intervals by source urgency:**
 
-| Aspect | Detail |
-|--------|--------|
-| Triggers | Webhooks (Slack, SDP), VIP email (Outlook rules → webhook) |
-| Latency | < 10 seconds |
-| Job | `f/triage/ingest-webhook.ts` → `f/triage/single-item.ts` |
+| Source | Interval | Max Latency | Rationale |
+|--------|----------|-------------|-----------|
+| Slack | 60 sec | 0-60 sec | Real-time chat needs fast response |
+| Telegram | 60 sec | 0-60 sec | Direct messages are time-sensitive |
+| Email (MS365/Gmail) | 5 min | 0-5 min | Email is inherently async |
+| SDP | 5 min | 0-5 min | Tickets aren't instant |
+| DevOps | 5 min | 0-5 min | Work items aren't instant |
+| Calendar | 15 min | 0-15 min | Events don't change often |
 
-```
-Webhook event arrives
-    ↓
-Windmill trigger: f/triage/ingest-webhook.ts
-    ↓
-Creates inbox/item-{id}.md via dh write
-    ↓
-Triggers f/triage/single-item.ts (high priority)
-    ↓
-Claude classifies (act/keep/delete)
-    ↓
-If 'act': Push to Live queue → Status TUI updates immediately
-```
-
-**2. Slow Path (Scheduled)**
-
-| Aspect | Detail |
-|--------|--------|
-| Triggers | 15-minute cron |
-| Scope | Standard email, RSS, newsletters, missed webhooks |
-| Latency | 0-15 minutes |
-| Job | `f/triage/batch.ts` |
+**Triage flow:**
 
 ```
-Cron fires every 15 min
+Poller runs (per schedule)
     ↓
-f/triage/batch.ts queries for untriaged items
+f/{source}/sync.ts fetches new/changed items
     ↓
-Batch classification (grouped by source for efficiency)
+dh write → creates/updates flat files
+    ↓
+f/triage/batch.ts runs (every 5 min)
+    ↓
+Queries untriaged items
+    ↓
+Claude classifies threads (with sliding window for long ones)
     ↓
 Updates index.sqlite
+    ↓
+Status TUI refreshes on next poll
 ```
 
-**High-signal indicators (Fast Path triggers):**
+**Why polling-only:**
 
-| Source | Trigger Immediate Triage |
-|--------|-------------------------|
-| Slack | @mention, DM, thread reply to your message |
-| Telegram | Direct message (not group) |
-| Email | From VIP list, subject contains "urgent" |
-| SDP | Priority = P1 or P2, assigned to you |
+| Concern | Why It's Fine |
+|---------|---------------|
+| Latency | 60 sec for chat is acceptable; you're not a trading desk |
+| Missed messages | Polling catches everything; webhooks can fail silently |
+| Complexity | No webhook endpoints, auth, deduplication |
+| Debugging | Cron logs are trivial to inspect |
+
+**Windmill makes this trivial:**
+
+```typescript
+// f/slack/sync.ts - entire poller
+export async function main() {
+  const since = await getLastSyncTime('slack');
+  const messages = await slackClient.fetchSince(since);
+
+  for (const msg of messages) {
+    await dh.write({ source: 'slack', ...msg });
+  }
+
+  await setLastSyncTime('slack', new Date());
+}
+// Schedule in Windmill: * * * * * (every minute)
+```
 
 #### Storage Model
 
