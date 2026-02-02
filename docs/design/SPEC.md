@@ -2,8 +2,8 @@
 
 > A reproducible Linux cloud workstation that captures all inputs from life and work, surfaces actionable items, organizes by context (workspaces), and provides frictionless AI-assisted tools to act on them.
 
-**Version:** 0.1.0 (Draft)
-**Last Updated:** 2026-01-29
+**Version:** 0.2.0
+**Last Updated:** 2026-02-02
 
 ---
 
@@ -269,6 +269,60 @@ User Interface:
 ```
 
 **Key principle:** Claude/PAI never calls external APIs directly. All external communication routes through Windmill scripts.
+
+#### Detailed Data Flow (Mermaid)
+
+```mermaid
+graph TD
+    subgraph External [External World]
+        API[Cloud APIs<br/>SDP, MS365, Slack]
+        WH[Webhooks]
+    end
+
+    subgraph Gateway [Windmill Layer]
+        In_Fast[Ingest Webhook<br/>f/triage/ingest-webhook]
+        In_Batch[Scheduled Sync<br/>f/*/sync.ts]
+        Out_Job[Outbound Jobs<br/>f/*/update-*.ts]
+    end
+
+    subgraph Host [Imladris Host]
+        DH[Datahub CLI<br/>dh]
+        Files[(Flat Files<br/>/data/work/datahub)]
+        Lock{flock}
+
+        subgraph Workspace [Tmux Session]
+            Claude[Claude Code + PAI]
+            ChatGW[Chat Gateway]
+        end
+    end
+
+    %% Inbound Flow
+    WH -->|Real-time| In_Fast
+    API -->|Poll| In_Batch
+    In_Fast --> DH
+    In_Batch --> DH
+    DH --> Lock
+    Lock --> Files
+
+    %% Interaction Flow
+    Files -->|Read Context| Claude
+    Claude -->|Write Context| Lock
+    Claude -->|Commands| DH
+    ChatGW -->|Prompts| Claude
+
+    %% Outbound Flow
+    DH -->|Queue Item| Out_Job
+    Out_Job -->|API Call| API
+```
+
+**Key components:**
+
+| Component | Role |
+|-----------|------|
+| Windmill | Gateway for all external API calls |
+| `dh` CLI | Single interface for datahub operations (used by humans + automation) |
+| `flock` | Prevents race conditions in parallel pane scenarios |
+| Flat files | Source of truth (greppable, portable) |
 
 ### 3.5 PAI Alignment
 
@@ -839,40 +893,59 @@ Triage with 90% less tokens, equivalent accuracy
 
 **Summary caching:** Thread summaries stored in `.threads/thread-{id}.summary.md`, regenerated only when new messages arrive.
 
-#### Micro-Triage for Urgent Sources
+#### Hybrid Triage Architecture
 
-The 15-minute batch window is too slow for time-sensitive channels.
+**Principle:** "Urgency requires immediacy; maintenance requires batching."
 
-**Webhook-triggered immediate triage:**
+**1. Fast Path (Event-Driven)**
+
+| Aspect | Detail |
+|--------|--------|
+| Triggers | Webhooks (Slack, SDP), VIP email (Outlook rules → webhook) |
+| Latency | < 10 seconds |
+| Job | `f/triage/ingest-webhook.ts` → `f/triage/single-item.ts` |
 
 ```
-Slack @mention or DM arrives
+Webhook event arrives
     ↓
-Windmill webhook receives event
+Windmill trigger: f/triage/ingest-webhook.ts
     ↓
-f/triage/micro.ts runs immediately
+Creates inbox/item-{id}.md via dh write
     ↓
-Single-thread triage (not batch)
+Triggers f/triage/single-item.ts (high priority)
     ↓
-If classified as 'act' + high-signal:
-  - Desktop notification
-  - Status bar update
+Claude classifies (act/keep/delete)
+    ↓
+If 'act': Push to Live queue → Status TUI updates immediately
 ```
 
-**High-signal indicators:**
+**2. Slow Path (Scheduled)**
+
+| Aspect | Detail |
+|--------|--------|
+| Triggers | 15-minute cron |
+| Scope | Standard email, RSS, newsletters, missed webhooks |
+| Latency | 0-15 minutes |
+| Job | `f/triage/batch.ts` |
+
+```
+Cron fires every 15 min
+    ↓
+f/triage/batch.ts queries for untriaged items
+    ↓
+Batch classification (grouped by source for efficiency)
+    ↓
+Updates index.sqlite
+```
+
+**High-signal indicators (Fast Path triggers):**
 
 | Source | Trigger Immediate Triage |
 |--------|-------------------------|
 | Slack | @mention, DM, thread reply to your message |
 | Telegram | Direct message (not group) |
 | Email | From VIP list, subject contains "urgent" |
-
-**Batch vs Micro:**
-
-| Mode | Trigger | Latency | Use Case |
-|------|---------|---------|----------|
-| Batch | Every 15 min | 0-15 min | Bulk processing, newsletters, FYI |
-| Micro | Webhook | < 30 sec | @mentions, DMs, urgent flags |
+| SDP | Priority = P1 or P2, assigned to you |
 
 #### Storage Model
 
@@ -992,6 +1065,81 @@ datahub export --zone home --dest rsync://personal-vps/archive
 | Inbound | Metadata only (filename, size, type) |
 | Download | On demand |
 | Outbound | v2 |
+
+### 5.16 Datahub CLI (`dh`)
+
+The `dh` tool is the unified local interface for all datahub operations. Both humans (via terminal) and automation (via Windmill/PAI) use this binary to ensure logic consistency.
+
+**Location:** `~/bin/dh` (compiled binary)
+**Implementation:** Bun (fast startup, single binary)
+
+**Core Commands:**
+
+| Command | Usage |
+|---------|-------|
+| `dh ls` | List items with rich filtering (zone, source, tags, status, triage) |
+| `dh read <id>` | Output item content (JSON or Markdown format) |
+| `dh write` | Create/update item (handles validation, ID generation, locking) |
+| `dh triage [--batch]` | Run classification (calls PAI for AI triage) |
+| `dh sync [source]` | Trigger Windmill sync jobs (manual override) |
+| `dh search <query>` | Full-text search across all items |
+| `dh queue` | Show pending outbound operations |
+
+**Why this matters:**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Single Source of Truth                                         │
+│                                                                 │
+│  User (terminal)  ──┐                                           │
+│                     ├──► dh binary ──► Flat files + SQLite     │
+│  Windmill scripts ──┤              ──► Queue management         │
+│                     │              ──► Validation               │
+│  PAI skills ────────┘              ──► Locking                  │
+│                                                                 │
+│  Everyone uses the same logic. No drift between manual and      │
+│  automated operations.                                          │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Examples:**
+
+```bash
+# List actionable items in work zone
+dh ls --zone work --triage act
+
+# Read item as JSON (for scripting)
+dh read sdp-123 --format json
+
+# Create new item (validates schema, generates ID, places in queue)
+dh write --source local --zone work --title "Investigate memory leak"
+
+# Trigger sync for specific source
+dh sync sdp
+
+# Search across all items
+dh search "authentication bug"
+```
+
+**Windmill integration:**
+
+```typescript
+// f/sdp/sync.ts
+import { DatahubCLI } from '../lib/dh';
+
+export async function main() {
+  const dh = new DatahubCLI();
+
+  for (const ticket of await fetchSDPTickets()) {
+    await dh.write({
+      id: `sdp-${ticket.id}`,
+      source: 'sdp',
+      zone: 'work',
+      ...ticket
+    });
+  }
+}
+```
 
 ---
 
@@ -2208,39 +2356,68 @@ send_telegram_message "$response"
 update_state pending=false
 ```
 
-### 11.6 Response Detection
+### 11.6 Response Detection (Sentinel Pattern)
 
-**Challenge:** Know when Claude has finished responding.
+**Challenge:** Know when Claude has finished responding. Hash-based stability detection is brittle (cursor blinks, network pauses, large outputs).
 
-**Solution:** Prompt pattern detection + output stability
+**Solution:** Explicit sentinel marker in shell prompt.
+
+**1. The Sentinel Prompt**
+
+Configure zsh prompt to emit a machine-readable marker after every command completion:
 
 ```bash
-# Claude Code shows prompt when ready for input
-# Detect by checking if output has stabilized
+# In ~/.zshrc
+PROMPT='%~ $ '
+RPROMPT=''
 
-wait_for_response() {
-    local target="$1"
-    local timeout=300  # 5 min
-    local elapsed=0
-    local interval=2
-    local last_hash=""
-
-    while [[ $elapsed -lt $timeout ]]; do
-        local content=$(tmux capture-pane -t "$target" -p)
-        local current_hash=$(echo "$content" | md5sum | cut -d' ' -f1)
-
-        # If content unchanged for 2 checks, assume done
-        if [[ "$current_hash" == "$last_hash" ]]; then
-            return 0
-        fi
-
-        last_hash="$current_hash"
-        sleep $interval
-        elapsed=$((elapsed + interval))
-    done
-    return 1  # Timeout
+# After each command, emit sentinel (hidden via color)
+precmd() {
+    echo -ne '\033[8m||IMLADRIS_ACK||\033[0m'
 }
 ```
+
+**2. The Detection Loop**
+
+```bash
+wait_for_response() {
+    local target="$1"
+    local timeout=300
+    local start_time=$(date +%s)
+
+    while true; do
+        # Capture only last 10 lines (efficient)
+        local tail=$(tmux capture-pane -t "$target" -p -S -10)
+
+        if [[ "$tail" == *"||IMLADRIS_ACK||"* ]]; then
+            return 0  # Response complete
+        fi
+
+        # Timeout check
+        local current_time=$(date +%s)
+        if (( current_time - start_time > timeout )); then
+            return 1  # Timeout
+        fi
+
+        sleep 0.5
+    done
+}
+```
+
+**3. Safety Valve**
+
+If sentinel is missed (crash, formatting error):
+
+```bash
+/c --force    # Manual release: reads buffer immediately, clears pending state
+```
+
+**Why this is better:**
+
+| Approach | Problem |
+|----------|---------|
+| Hash stability | Fails on cursor blink, typing pauses, large outputs |
+| Sentinel marker | Deterministic, instant detection, no false positives |
 
 ### 11.7 Security
 
@@ -2830,6 +3007,40 @@ export async function onSessionEnd(input: HookInput): Promise<HookOutput> {
 | Per-session JSONL | Each session writes to its own file |
 | Datahub items | Windmill handles via queue |
 
+**Merge strategy:**
+
+| Content Type | Strategy |
+|--------------|----------|
+| Logs/notes sections | Append-only (both panes' notes preserved) |
+| Current state summaries | Last-write-wins with `.bak` revision |
+| Metadata (timestamps, IDs) | Most recent value |
+
+```typescript
+// Merge with automatic backup
+async function writeContextWithMerge(file: string, newContent: ContextFile) {
+  const release = await lock(file, { retries: 5, stale: 5000 });
+
+  try {
+    const existing = fs.existsSync(file)
+      ? parseContext(fs.readFileSync(file, 'utf-8'))
+      : null;
+
+    // Backup before overwrite
+    if (existing) {
+      fs.writeFileSync(`${file}.bak`, JSON.stringify(existing));
+    }
+
+    const merged = existing
+      ? mergeContextFiles(existing, newContent)
+      : newContent;
+
+    fs.writeFileSync(file, formatContext(merged));
+  } finally {
+    await release();
+  }
+}
+```
+
 ### Intra-Session (Skills)
 
 Skills handle context within a session (no hooks fire):
@@ -3396,25 +3607,64 @@ Continue recent session or start fresh?"
 ```bash
 /adhoc                    # Enter adhoc, show recent sessions
 /adhoc continue           # Resume most recent
-/adhoc new "description"  # Start fresh → creates SDP General Task
-/adhoc close "notes"      # Mark complete in SDP + local
+/adhoc new "description"  # Start fresh (local draft)
+/adhoc promote            # Explicitly sync to SDP
+/adhoc close "notes"      # Close (syncs if promoted, archives if draft)
 ```
 
-**SDP General Task sync:**
+**Draft/Promote Lifecycle:**
+
+To prevent spamming SDP with micro-tasks ("testing grep arguments"), adhoc sessions start local-only and only sync when significant.
+
+```
+/adhoc new "testing grep arguments"
+    ↓
+Creates local-only item (type: adhoc-draft)
+    ↓
+Work proceeds...
+    ↓
+Promotion triggers (any of):
+  - Session active > 15 minutes
+  - User logs time: /task log 30m
+  - User adds note: /task note "found the issue"
+  - User explicitly: /adhoc promote
+    ↓
+Item updates to type: adhoc-task
+    ↓
+Syncs to SDP as General Task
+```
+
+**Promotion triggers:**
+
+| Trigger | Condition | Why |
+|---------|-----------|-----|
+| Time threshold | Session > 15 min active | Significant investment |
+| Logged time | `/task log` used | Worth tracking formally |
+| Notes added | `/task note` used | Has substance |
+| Explicit | `/adhoc promote` | User decides it's significant |
+
+**Cleanup (non-promoted drafts):**
+
+| Outcome | Behavior |
+|---------|----------|
+| Session ends < 15 min, no notes/time | Auto-archive locally, never syncs to SDP |
+| Archived drafts | Kept 30 days locally, then purged |
+| Can still search | `dh ls --type adhoc-draft` finds archived drafts |
+
+**SDP General Task sync (promoted items only):**
 
 | Direction | Behavior |
 |-----------|----------|
-| Create | `/adhoc new` → queues General Task creation in SDP |
+| Create | Promotion → queues General Task creation in SDP |
 | Update | `/task note` → syncs note to SDP task |
 | Complete | `/adhoc close` → marks SDP task complete |
 | Worklogs | `/task log` → syncs time to SDP task |
 
-**Why General Tasks for adhoc:**
-- Quick work still gets tracked
-- Findable later ("what was I doing last Tuesday?")
-- Time can be logged against it
-- Can be converted to full Request/Incident if it grows
-- No ceremony - just start working
+**Why this is better:**
+- Quick experiments don't pollute professional work log
+- Significant work still gets tracked
+- User controls when work becomes "official"
+- Findable later via local archive even if not promoted
 
 ### PAI Update Safety
 
