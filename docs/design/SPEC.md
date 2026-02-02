@@ -810,6 +810,70 @@ Classification may change (e.g., keep → act)
 
 No shortcuts. Always full context. Accuracy > tokens.
 
+#### Context Window Management
+
+For long threads (50+ messages), full-context triage becomes cost-prohibitive and may hit token limits.
+
+**Sliding Window Approach:**
+
+```
+Thread has 100 messages
+    ↓
+Generate thread summary (cached, updated on new messages)
+    ↓
+Send to Claude:
+  - Thread summary (who, what, key decisions)
+  - Last 10 messages (recent context)
+  - Metadata (participants, age, last activity)
+    ↓
+Triage with 90% less tokens, equivalent accuracy
+```
+
+**Thresholds:**
+
+| Thread Size | Strategy |
+|-------------|----------|
+| < 20 messages | Full thread (no summarization) |
+| 20-50 messages | Summary + last 10 messages |
+| > 50 messages | Summary + last 10 + key messages (mentions, decisions) |
+
+**Summary caching:** Thread summaries stored in `.threads/thread-{id}.summary.md`, regenerated only when new messages arrive.
+
+#### Micro-Triage for Urgent Sources
+
+The 15-minute batch window is too slow for time-sensitive channels.
+
+**Webhook-triggered immediate triage:**
+
+```
+Slack @mention or DM arrives
+    ↓
+Windmill webhook receives event
+    ↓
+f/triage/micro.ts runs immediately
+    ↓
+Single-thread triage (not batch)
+    ↓
+If classified as 'act' + high-signal:
+  - Desktop notification
+  - Status bar update
+```
+
+**High-signal indicators:**
+
+| Source | Trigger Immediate Triage |
+|--------|-------------------------|
+| Slack | @mention, DM, thread reply to your message |
+| Telegram | Direct message (not group) |
+| Email | From VIP list, subject contains "urgent" |
+
+**Batch vs Micro:**
+
+| Mode | Trigger | Latency | Use Case |
+|------|---------|---------|----------|
+| Batch | Every 15 min | 0-15 min | Bulk processing, newsletters, FYI |
+| Micro | Webhook | < 30 sec | @mentions, DMs, urgent flags |
+
 #### Storage Model
 
 **Individual messages remain flat files (PAI principle):**
@@ -2690,6 +2754,81 @@ export async function onPreCompact(input: HookInput): Promise<HookOutput> {
   return { continue: true };
 }
 ```
+
+### Context Lock (Race Condition Prevention)
+
+With parallel tmux panes (`/task split`), multiple Claude sessions may attempt to write to the same workspace context file simultaneously.
+
+**Problem:**
+
+```
+Pane 1 (sdp-123): auto-save triggers
+Pane 2 (sdp-456): auto-save triggers at same time
+    ↓
+Both write to work:tasks.md
+    ↓
+Last-write-wins → context from one pane lost
+```
+
+**Solution:** File-level advisory locks using `flock`:
+
+```typescript
+// ~/.claude/hooks/lib/context-lock.ts
+import { execSync } from 'child_process';
+import * as fs from 'fs';
+
+export async function withContextLock<T>(
+  file: string,
+  operation: () => Promise<T>
+): Promise<T> {
+  const lockFile = `${file}.lock`;
+  const fd = fs.openSync(lockFile, 'w');
+
+  try {
+    // Acquire exclusive lock (blocks if another process holds it)
+    execSync(`flock -x ${fd}`);
+    return await operation();
+  } finally {
+    // Release lock
+    fs.closeSync(fd);
+  }
+}
+
+// Usage in hooks:
+export async function onSessionEnd(input: HookInput): Promise<HookOutput> {
+  const workspace = process.env.WORKSPACE_NAME;
+  const workspaceFile = `~/.claude/history/workspaces/${workspace}.md`;
+
+  await withContextLock(workspaceFile, async () => {
+    const summary = generateSummary(input.transcript);
+    fs.writeFileSync(workspaceFile, formatWorkspaceContext(summary));
+  });
+
+  return { continue: true };
+}
+```
+
+**Lock behavior:**
+
+| Scenario | Behavior |
+|----------|----------|
+| Pane 1 writing, Pane 2 tries | Pane 2 blocks until Pane 1 finishes |
+| Lock held > 5 sec | Timeout, log warning, proceed anyway |
+| Process crashes while holding | Lock auto-released (flock behavior) |
+
+**Files that need locking:**
+
+| File | Why |
+|------|-----|
+| `workspaces/{workspace}.md` | Multiple panes in same workspace |
+| `tasks/{task-id}.md` | Same task open in split panes |
+
+**Files that don't need locking:**
+
+| File | Why |
+|------|-----|
+| Per-session JSONL | Each session writes to its own file |
+| Datahub items | Windmill handles via queue |
 
 ### Intra-Session (Skills)
 
