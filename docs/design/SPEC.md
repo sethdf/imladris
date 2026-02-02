@@ -353,6 +353,54 @@ Imladris is built **on top of PAI** (Personal AI Infrastructure), not alongside 
 | Windmill | Scheduled polling, credential management |
 | Bidirectional sync | Write-back to external systems |
 
+#### Architectural Clarifications
+
+**What Windmill IS:**
+- Integration gateway for external APIs (SDP, MS365, Slack, Gmail, etc.)
+- Scheduled poller running `f/{source}/sync.ts` scripts
+- Credential manager (OAuth refresh, API keys via variables)
+- On-demand query executor triggered by PAI skills
+
+**What Windmill is NOT:**
+- NOT an orchestrator for Claude Code
+- NOT driving Claude via tmux send-keys
+- NOT spawning background AI agents
+- NOT a replacement for human↔Claude interaction
+
+**The actual interaction flow:**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Human types in Claude Code (tmux workspace)                    │
+│      ↓                                                          │
+│  Claude reasons, decides to fetch external data                 │
+│      ↓                                                          │
+│  PAI skill calls Windmill API: "get my SDP tickets"             │
+│      ↓                                                          │
+│  Windmill executes f/sdp/get-tickets.ts                         │
+│      ↓                                                          │
+│  Results return to Claude via skill                             │
+│      ↓                                                          │
+│  Claude continues conversation with human                       │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Common misconception:** "Windmill orchestrates Claude Code via tmux"
+
+This is incorrect. The only place tmux send-keys is used is the **Chat Gateway** (Section 11) - a convenience feature for mobile access via Telegram. The core workflow is always human↔Claude interactive.
+
+| Component | Interaction Pattern |
+|-----------|---------------------|
+| Human ↔ Claude | Direct typing in tmux (interactive) |
+| Claude → Windmill | API calls via PAI skills (request/response) |
+| Windmill → External | Scheduled polling + on-demand queries (deterministic) |
+
+**Why this matters:**
+- No "terminal scraping" in the critical path
+- Windmill jobs are finite and deterministic
+- Claude Code runs interactively, not as a Windmill job
+- The system is NOT dependent on tmux send-keys reliability for core operations
+
 **Future-proofing:** When PAI adds new features (e.g., Granular Model Routing), imladris will adopt them rather than maintaining parallel implementations.
 
 ### 3.6 PAI Agent Usage
@@ -706,6 +754,32 @@ Assigned to @seth
 | `tags` | array | Tag names |
 
 ### 5.4 Index Schema
+
+**Critical: SQLite is a derived index, NOT the source of truth.**
+
+| Layer | Role | Concurrency |
+|-------|------|-------------|
+| Flat files (`items/*.md`) | Source of truth | `flock` per file |
+| SQLite (`index.sqlite`) | Fast queries, derived | Single-writer (batch triage) |
+
+**Why this matters:**
+
+| Concern | Mitigation |
+|---------|------------|
+| SQLite locking | Only `f/triage/batch.ts` writes to SQLite (single process) |
+| Data loss | Flat files survive SQLite corruption; rebuild with `dh reindex` |
+| Concurrent reads | SQLite handles concurrent reads fine (WAL mode) |
+| "Database is Locked" | Doesn't apply - we don't have multiple writers |
+
+**Rebuild from source of truth:**
+
+```bash
+# If index.sqlite corrupts, regenerate from flat files
+dh reindex --zone work
+dh reindex --zone home
+```
+
+The index exists for fast filtering (`dh ls --triage act --zone work`). The flat files are the canonical data that gets backed up, synced, and versioned.
 
 ```sql
 CREATE TABLE items (
@@ -1645,6 +1719,70 @@ Declarative configuration for:
 - Curu skills (PAI)
 - Dotfiles
 
+#### Claude Code Packaging (Known Friction)
+
+Claude Code is distributed via npm (`@anthropic-ai/claude-code`). NixOS's immutable store creates friction with npm global installs.
+
+**The problem:**
+
+| Approach | Issue |
+|----------|-------|
+| `npm install -g` | Fails on NixOS (can't write to immutable paths) |
+| Nix derivation | Maintenance overhead (rehash on every update) |
+| `~/.npm-global` | Works, but breaks declarative promise |
+
+**Recommended approach: Pragmatic imperative install**
+
+```nix
+# In home.nix - set up the environment
+home.sessionVariables = {
+  NPM_CONFIG_PREFIX = "$HOME/.npm-global";
+};
+
+home.sessionPath = [ "$HOME/.npm-global/bin" ];
+
+# Ensure Node.js version is pinned
+home.packages = with pkgs; [
+  nodejs_20  # Pin to specific version
+];
+```
+
+```bash
+# One-time setup (imperative, but contained)
+npm config set prefix ~/.npm-global
+npm install -g @anthropic-ai/claude-code
+```
+
+**Trade-offs accepted:**
+
+| Concern | Mitigation |
+|---------|------------|
+| Not declarative | Contained to ~/.npm-global, documented in CLAUDE.md |
+| Rollback doesn't work | Claude Code updates rarely break; can pin version |
+| Node version mismatch | Pin nodejs_20 in Nix, update both together |
+| Rebuilds lose it | Add to imladris-init.sh bootstrap |
+
+**Why not full Nix packaging:**
+
+| Factor | Reason to skip |
+|--------|----------------|
+| Update frequency | Claude Code updates weekly; constant rehashing |
+| Native bindings | Many npm deps use node-gyp; patchelf is fragile |
+| Maintenance cost | Time better spent on features than packaging |
+| Risk | Claude Code is well-tested; packaging bugs are self-inflicted |
+
+**Bootstrap recovery:**
+
+```bash
+# In imladris-init.sh
+if ! command -v claude &> /dev/null; then
+    echo "Installing Claude Code..."
+    npm install -g @anthropic-ai/claude-code
+fi
+```
+
+This ensures Claude Code is restored after system rebuild.
+
 ### 8.4 Storage Layout
 
 All stateful data lives on the LUKS-encrypted data volume (`/data`). Root volume is ephemeral/rebuildable.
@@ -2238,6 +2376,41 @@ echo "config.js:42" >> .gitleaks-allowlist
 ### 11.1 Purpose
 
 Continue Claude sessions from iOS via existing chat platforms. This is NOT a mobile app—it's a bridge from Telegram (which already has an iOS app) to Claude Code sessions running on imladris.
+
+#### Architectural Note: Convenience Feature
+
+**This is the ONLY place in imladris that uses tmux send-keys for automation.**
+
+| Core workflow | Chat Gateway |
+|---------------|--------------|
+| Human types directly in Claude Code | Telegram routes to Claude via tmux |
+| Deterministic, interactive | Best-effort, async |
+| Primary interface | Convenience for mobile |
+
+**Known limitations of tmux-based bridging:**
+
+| Limitation | Mitigation |
+|------------|------------|
+| Non-deterministic timing | Sentinel pattern (`\|\|IMLADRIS_ACK\|\|`) for completion detection |
+| Buffer overflow on large outputs | Truncation + `/last` command for full response |
+| No streaming | Poll-based with "thinking..." indicator |
+| Race conditions | Single-request queue; `/c --force` safety valve |
+
+**Why we accept these trade-offs:**
+
+| Factor | Reasoning |
+|--------|-----------|
+| Use frequency | Occasional mobile check-ins, not primary workflow |
+| Alternative cost | Building a proper mobile app is 100x more complex |
+| Failure impact | If it breaks, user SSHs in directly; no data loss |
+| Simplicity | ~200 lines of shell vs. custom iOS app |
+
+**If you need reliable programmatic Claude access:**
+- Use the Anthropic API directly
+- Use MCP for structured tool calls
+- Don't route through tmux
+
+The Chat Gateway exists because "good enough mobile access" beats "no mobile access."
 
 ### 11.2 Architecture
 
