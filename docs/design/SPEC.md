@@ -2369,6 +2369,92 @@ echo "config.js:42" >> .gitleaks-allowlist
 | Branch visible to collaborators | Secrets scanner prevents exposure |
 | Squash loses history | WIP history preserved locally in reflog |
 
+### 10.7 Development Guidelines
+
+When adding new features or commands, follow this checklist to maintain codebase hygiene.
+
+#### Feature Checklist
+
+Every new feature must complete these steps:
+
+| Step | Action | Verification |
+|------|--------|--------------|
+| 1. Spec | Document in SPEC.md before coding | PR includes spec update |
+| 2. Implement | Write code following conventions below | Code review |
+| 3. Test | Add tests that run in container | `make test-docker` passes |
+| 4. Document | Update CLAUDE.md if user-facing | CLAUDE.md reflects new capability |
+
+**No feature is complete until all four steps pass.**
+
+#### Test-First Workflow
+
+```bash
+# 1. Start container environment
+make test-docker-shell
+
+# 2. Write failing test first
+vim tests/shell/new_feature.bats
+
+# 3. Run test (should fail)
+bats tests/shell/new_feature.bats
+
+# 4. Implement feature
+vim scripts/new_feature.sh
+
+# 5. Run test (should pass)
+bats tests/shell/new_feature.bats
+
+# 6. Run full suite before commit
+make test-shell
+```
+
+#### Code Conventions
+
+| Area | Convention | Rationale |
+|------|------------|-----------|
+| Datahub access | All operations via `dh` CLI | Single interface, testable |
+| Windmill flows | One folder per source adapter | Clear ownership |
+| Shell scripts | Must pass `shellcheck` | Catch common errors |
+| New CLIs | Add to CLAUDE.md scripts table | Discoverability |
+| Config | Environment vars via BWS | No secrets in code |
+| Logging | Structured JSON to stderr | Machine-parseable |
+
+#### Naming Conventions
+
+| Type | Pattern | Example |
+|------|---------|---------|
+| Scripts | `kebab-case.sh` | `auth-keeper.sh` |
+| Windmill flows | `source_action` | `telegram_sync` |
+| BWS secrets | `kebab-case` | `aws-cross-accounts` |
+| Test files | `feature.bats` | `auth-keeper.bats` |
+
+#### CI Gate Requirements
+
+Nothing merges to main without:
+
+```yaml
+# .github/workflows/ci.yml gates
+required_checks:
+  - shellcheck           # All .sh files
+  - terraform validate   # Infrastructure
+  - bats tests           # Shell unit tests
+  - docker build         # Container builds
+```
+
+**PR merge blocked if any check fails.**
+
+#### When to Add vs. Extend
+
+| Situation | Action |
+|-----------|--------|
+| New data source | Add adapter in `lib/intake/adapters/` |
+| New CLI command | Extend existing CLI (e.g., `dh`) not new binary |
+| New auth provider | Add to `auth-keeper.sh` lazy-load pattern |
+| New backup target | Add to existing backup scripts |
+| New triage rule | Add to entity rules, not new triage path |
+
+**Prefer extending existing patterns over creating new ones.**
+
 ---
 
 ## 11. Chat Gateway (Mobile Access)
