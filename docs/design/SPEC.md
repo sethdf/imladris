@@ -1714,10 +1714,23 @@ Copy from existing imladris repo:
 
 Declarative configuration for:
 - Shell (zsh)
-- Packages (git, tmux, bun, etc.)
+- Packages (see table below)
 - Claude Code
 - Curu skills (PAI)
 - Dotfiles
+
+#### Installed Tools
+
+| Category | Tools |
+|----------|-------|
+| Core | git, zsh, tmux, vim, curl, jq, ripgrep, fd, fzf |
+| Languages | nodejs_20, bun, python3 |
+| Cloud | aws-cli, kubectl, terraform |
+| Containers | docker, docker-compose |
+| GitHub | gh (GitHub CLI) |
+| Secrets | bws (Bitwarden Secrets CLI) |
+| Network | tailscale |
+| AI | claude (via npm, see below) |
 
 #### Claude Code Packaging (Known Friction)
 
