@@ -5321,3 +5321,233 @@ These MCP servers were evaluated and excluded to avoid duplicating PAI:
 | Playwright | Browser automation testing | Evaluate |
 | GitHub | PR/issue integration | Evaluate (vs gh CLI) |
 | Database | Direct SQL access | Evaluate (vs Windmill) |
+
+---
+
+## Appendix J: Recommended Client Setup (Kitty)
+
+Terminal configuration for keyboard-driven workflow with inline image support. Useful for Claude Code workflows where viewing screenshots/diagrams inline improves context.
+
+### J.1 Why Kitty
+
+| Feature | Benefit for Claude workflows |
+|---------|------------------------------|
+| Inline images | View screenshots before asking Claude to analyze |
+| Kitty graphics protocol | Industry standard, widely supported |
+| Keyboard hints | Copy paths, URLs, hashes without mouse |
+| Light resource usage | Efficient on Linux |
+| Simple config | INI-style, not a programming language |
+
+### J.2 Server-Side Config (imladris)
+
+**Minimal tmux additions (`~/.tmux.conf`):**
+
+```bash
+# Graphics passthrough for Kitty
+set -g allow-passthrough on
+set -ga terminal-overrides ',xterm-kitty:Tc'
+```
+
+That's all that's needed on imladris. Everything else is client-side.
+
+### J.3 Client-Side Config (Aurora/Fedora)
+
+**Install Kitty:**
+
+```bash
+# Preferred: native package (full permissions)
+rpm-ostree install kitty
+
+# Alternative: Flatpak (may have sandbox issues)
+flatpak install flathub com.github.kovidgoyal.kitty
+```
+
+**Create `~/.config/kitty/kitty.conf`:**
+
+```bash
+# Font
+font_family      JetBrains Mono
+font_size        13
+
+# No bells
+enable_audio_bell no
+
+# Allow scripting (needed for remote control, icat)
+allow_remote_control yes
+
+# Scrollback
+scrollback_lines 10000
+
+# URLs clickable
+detect_urls yes
+
+# Keyboard hints (Quick Select equivalent)
+map ctrl+shift+e open_url_with_hints
+map ctrl+shift+p>f kitten hints --type path --program -
+map ctrl+shift+p>h kitten hints --type hash --program -
+map ctrl+shift+p>l kitten hints --type line --program -
+map ctrl+shift+p>w kitten hints --type word --program -
+
+# Copy/paste
+map ctrl+shift+c copy_to_clipboard
+map ctrl+shift+v paste_from_clipboard
+
+# Font size
+map ctrl+equal change_font_size all +1.0
+map ctrl+minus change_font_size all -1.0
+map ctrl+0 change_font_size all 0
+
+# Window navigation (when not using tmux)
+map alt+h neighboring_window left
+map alt+j neighboring_window down
+map alt+k neighboring_window up
+map alt+l neighboring_window right
+
+# New windows/tabs
+map ctrl+shift+enter new_window_with_cwd
+map ctrl+shift+t new_tab_with_cwd
+```
+
+### J.4 Image Viewing
+
+```bash
+# View image inline
+kitty +kitten icat screenshot.png
+
+# With size constraints
+kitty +kitten icat --place 80x24@0x0 diagram.png
+
+# Clear images
+kitty +kitten icat --clear
+
+# Alias for convenience (add to ~/.zshrc on client)
+alias icat='kitty +kitten icat'
+```
+
+**Through SSH + tmux:**
+
+Images display locally even when viewing remote content, thanks to `allow-passthrough`.
+
+### J.5 Keyboard Hints (Quick Select)
+
+Copy text from terminal output without mouse:
+
+| Keys | What it highlights |
+|------|--------------------|
+| `Ctrl+Shift+E` | URLs (opens in browser) |
+| `Ctrl+Shift+P` then `f` | File paths |
+| `Ctrl+Shift+P` then `h` | Git hashes |
+| `Ctrl+Shift+P` then `l` | Lines |
+| `Ctrl+Shift+P` then `w` | Words |
+
+**Workflow:**
+
+1. Press key combo (e.g., `Ctrl+Shift+P, f`)
+2. All matching patterns get highlighted with labels
+3. Type the label to copy that text
+4. Paste with `Ctrl+Shift+V`
+
+### J.6 SSH Integration
+
+Kitty has enhanced SSH with automatic shell integration:
+
+```bash
+# Regular SSH (works fine)
+ssh imladris
+
+# Kitty SSH (copies terminfo, enables features)
+kitty +kitten ssh imladris
+```
+
+The kitten version ensures Kitty features work correctly on the remote host.
+
+### J.7 Claude Code Workflow with Images
+
+```bash
+# 1. Take screenshot of issue
+# (use Flameshot, grim, or similar)
+
+# 2. View it locally first
+icat ~/screenshots/error.png
+
+# 3. SSH to imladris
+ssh imladris
+
+# 4. Attach to Claude session
+tmux attach -t main
+
+# 5. Ask Claude to analyze
+# Claude reads the file, you see context
+claude "analyze the error in ~/screenshots/error.png"
+
+# 6. View Claude's suggested fix result
+icat ~/screenshots/after.png
+```
+
+### J.8 Optional: Tmux Keyboard-Driven Config
+
+For keyboard-driven tmux (on imladris), add to `~/.tmux.conf`:
+
+```bash
+# Prefix: Ctrl-Space (easier than Ctrl-b)
+unbind C-b
+set -g prefix C-Space
+bind C-Space send-prefix
+
+# No escape delay
+set -sg escape-time 0
+
+# vim-style pane navigation (no prefix needed)
+bind -n M-h select-pane -L
+bind -n M-j select-pane -D
+bind -n M-k select-pane -U
+bind -n M-l select-pane -R
+
+# Direct window access
+bind -n M-1 select-window -t 1
+bind -n M-2 select-window -t 2
+bind -n M-3 select-window -t 3
+bind -n M-4 select-window -t 4
+bind -n M-5 select-window -t 5
+
+# vim-style splits
+bind - split-window -v -c "#{pane_current_path}"
+bind \\ split-window -h -c "#{pane_current_path}"
+
+# Copy mode
+setw -g mode-keys vi
+bind [ copy-mode
+bind -T copy-mode-vi v send -X begin-selection
+bind -T copy-mode-vi y send -X copy-pipe-and-cancel
+
+# Kill without confirmation
+bind x kill-pane
+
+# Reload config
+bind r source-file ~/.tmux.conf \; display "Reloaded"
+```
+
+**Quick reference:**
+
+| Action | Keys |
+|--------|------|
+| Navigate panes | `Alt-hjkl` (no prefix) |
+| Window 1-5 | `Alt-1` through `Alt-5` |
+| Split horizontal | `Ctrl-Space -` |
+| Split vertical | `Ctrl-Space \` |
+| Close pane | `Ctrl-Space x` |
+| Copy mode | `Ctrl-Space [` |
+| Zoom pane | `Ctrl-Space z` |
+
+### J.9 Not Required
+
+These are handled by tmux on imladris, not the client terminal:
+
+| Feature | Where |
+|---------|-------|
+| Session persistence | tmux (server) |
+| Splits/panes | tmux (server) |
+| Scrollback | tmux (server) |
+| Copy mode | tmux (server) |
+
+Kitty provides: image display, keyboard hints, font rendering, input handling.
