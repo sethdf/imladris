@@ -1725,7 +1725,7 @@ Declarative configuration for:
 |----------|-------|
 | Core | git, zsh, tmux, vim, curl, jq, ripgrep, fd, fzf |
 | Languages | nodejs_20, bun, python3 |
-| Cloud | aws-cli, kubectl, terraform |
+| Cloud | aws-cli, gcloud, kubectl, terraform |
 | Containers | docker, docker-compose |
 | GitHub | gh (GitHub CLI) |
 | Secrets | bws (Bitwarden Secrets CLI) |
