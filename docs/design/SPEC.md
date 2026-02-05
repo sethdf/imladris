@@ -5664,3 +5664,94 @@ These are handled by tmux on imladris, not the client terminal:
 | Copy mode | tmux (server) |
 
 Kitty provides: image display, keyboard hints, font rendering, input handling.
+
+---
+
+## Appendix K: Feature Backlog
+
+Future features and skills to implement. Organized by priority and category.
+
+### K.1 High Priority
+
+| Feature | Category | Description | Effort |
+|---------|----------|-------------|--------|
+| **Daily Morning Briefing** | Briefing | Weather, tasks, calendar, Denver news combined | Medium |
+| **GCP Skill** | Work Integration | Cloud management, project access | Medium |
+| **AWS Spend Analysis** | Work Integration | Cost analysis, budget alerts | Medium |
+| **Simple Home Task System** | Personal | Flat-file or SQLite tasks outside SDP | Low |
+| **Self-Healing Session Review** | Improvement | Review logs/errors, suggest improvements | Medium |
+| **AI/Cloud Release Digest** | Briefing | AWS, OpenAI, Anthropic, Gemini, GCP updates | Low |
+
+### K.2 Medium Priority
+
+| Feature | Category | Description | Effort |
+|---------|----------|-------------|--------|
+| **SignOz Integration** | Work Integration | Observability platform skill | Medium |
+| **Slack Holidays Tool** | Work Integration | Show country holidays, work hours, timezones | Low |
+| **Chat Consolidation** | Personal | Route all chats through SimpleX (iMessage, Telegram, Signal, Slack) | High |
+| **Spec-Driven Autonomous Agent** | Improvement | Use spec kit to evaluate/build/test autonomously | High |
+| **Content Summary** | Briefing | YT transcripts, Substack summarization | Medium |
+| **Calendar Review** | Briefing | Daily/weekly calendar review with context | Low |
+| **Task Review** | Briefing | SDP + adhoc incomplete task review | Low |
+| **Claude Cookbook Integration** | Integration | Integrate patterns and examples | Low |
+| **Gemini/OpenAI Hooks** | Integration | Multi-model support hooks | Medium |
+| **MCP Library Evaluation** | Integration | Find and evaluate useful MCPs | Low |
+
+### K.3 Work System Integrations
+
+| System | Purpose | Priority |
+|--------|---------|----------|
+| Ripple | TBD | Medium |
+| Site24x7 | Monitoring integration | Medium |
+| GetFlywheel | Hosting management | Low |
+| Skylight MCP | Calendar display access | Low |
+| Slack SDP Integration | Link Slack to ServiceDesk Plus | Medium |
+| TF for MS365 | Terraform for MS365 management | Low |
+
+### K.4 Personal Automations
+
+| Feature | Description | Priority |
+|---------|-------------|----------|
+| **Date Ideas Generator** | Local events + AI suggestions for dates/relationships | Low |
+| **Prescription Tracking** | KS pharmacy notifications, requests, consolidation | Low |
+| **Grocery Sales Automation** | Track deals at grocery stores | Low |
+| **Media Download Automation** | Automate movie/music acquisition | Low |
+| **Entertainment Releases** | Music and movie release tracking | Low |
+| **Financial Review** | Daily spend and financial summary | Medium |
+| **Home Assistant Skill** | Home automation integration | Low |
+| **Weather Skill** | Local weather with Denver front range context | Low |
+
+### K.5 Infrastructure / Reliability
+
+| Feature | Description | Priority |
+|---------|-------------|----------|
+| **Temp Agent Deploy** | Use Tailscale to quickly deploy temporary agents | Medium |
+| **Data Loss Prevention** | Better assurance no work is lost during sessions | Medium |
+| **Auto-Fix Testing** | Self-healing with automated tests to verify fixes | High |
+| **Skill Evolution** | AI creates/improves skills autonomously over time | Medium |
+| **Namespace Simplification** | Cleaner home/work context separation | Low |
+
+### K.6 Philosophy / Methodology
+
+| Topic | Notes |
+|-------|-------|
+| Toyota Production System | Apply lean principles to workflows |
+| Real-time System Principles | Guarantees, guardrails, reproducibility |
+| UNIX Elegance | Simple tools that compose well |
+| Modularization | Evaluate what should be modular vs integrated |
+
+### K.7 Naming Backlog
+
+| Item | Proposed Name | Context |
+|------|---------------|---------|
+| Libretto alternative | LOTR-themed name | TBD |
+
+### K.8 Questions to Resolve
+
+| Question | Context |
+|----------|---------|
+| What is Ripple? | Work system needing integration |
+| GetFlywheel scope? | WordPress hosting management |
+| KS Prescriptions? | Kaiser? King Soopers pharmacy? |
+| Skylight? | Calendar display device? |
+| More agnostic automation? | Is there a universal automation approach? |
