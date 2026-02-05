@@ -403,9 +403,9 @@ This is incorrect. The only place tmux send-keys is used is the **Chat Gateway**
 
 **Future-proofing:** When PAI adds new features (e.g., Granular Model Routing), imladris will adopt them rather than maintaining parallel implementations.
 
-### 3.6 PAI Agent Usage
+### 3.6 PAI Agent Usage (v2.5)
 
-PAI provides agent skill packs for complex reasoning. Imladris uses these **as PAI intended** - agents are the last resort in PAI's decision hierarchy:
+PAI v2.5 provides thinking tools and composition patterns for complex reasoning. Imladris uses these **as PAI intended** - agents are the last resort in PAI's decision hierarchy:
 
 ```
 Goal → Code → CLI → Prompts → Agents
@@ -413,16 +413,79 @@ Goal → Code → CLI → Prompts → Agents
  Most preferred          Last resort
 ```
 
-**PAI Principle 14 - Agent Personalities:**
-> "Different work needs different approaches. Research wants breadth. Implementation wants depth. Review wants criticism."
+#### PAI v2.5 Key Changes
 
-#### Available PAI Agent Packs
+| Feature | What It Means for Imladris |
+|---------|---------------------------|
+| **Two-Pass Capability Selection** | Hook hints validated in THINK phase - better tool selection |
+| **Thinking Tools (Justify-Exclusion)** | Must justify NOT using Council/RedTeam/FirstPrinciples |
+| **Parallel-by-Default** | Independent tasks run concurrently |
+| **7 Composition Patterns** | Formalized orchestration patterns |
+
+#### Composition Patterns
+
+PAI v2.5 defines 7 named patterns for combining capabilities:
+
+| Pattern | Shape | When Imladris Uses It |
+|---------|-------|----------------------|
+| **Pipeline** | A → B → C | Sequential domain handoff (Architect → Engineer → QA) |
+| **TDD Loop** | A ↔ B | Build-verify cycle until criteria pass |
+| **Fan-out** | → [A, B, C] | Multiple research perspectives in parallel |
+| **Fan-in** | [A, B, C] → D | Merging parallel triage results |
+| **Gate** | A → check → B | Quality gate before deployment |
+| **Escalation** | haiku → sonnet → opus | Complexity exceeded model tier |
+| **Specialist** | Single A | Deep expertise (security review) |
+
+#### Thinking Tools (Justify-Exclusion)
+
+PAI v2.5 inverts the default: thinking tools are **opt-OUT not opt-IN**. For every request, justify why each tool is NOT being used:
+
+| Tool | What It Does | Include When |
+|------|-------------|--------------|
+| **Council** | Multi-agent debate (3-7 agents) | Multiple valid approaches exist |
+| **RedTeam** | Adversarial analysis (32 agents) | Claims need stress-testing |
+| **FirstPrinciples** | Deconstruct, challenge, reconstruct | Assumptions need examining |
+| **Science** | Hypothesis-test-analyze cycles | Iterative experimentation needed |
+| **BeCreative** | Extended thinking, 5 diverse options | Creative divergence needed |
+| **Prompting** | Meta-prompting with templates | Prompt optimization needed |
+
+**Example justification block:**
+
+```
+🔍 THINKING TOOLS ASSESSMENT (justify exclusion):
+│ Council:          EXCLUDE — single clear approach, no alternatives to debate
+│ RedTeam:          INCLUDE — Windmill script could fail in non-obvious ways
+│ FirstPrinciples:  EXCLUDE — requirements are well-defined
+│ Science:          EXCLUDE — not iterative/experimental
+│ BeCreative:       EXCLUDE — clear requirements, no divergence needed
+│ Prompting:        EXCLUDE — not generating prompts
+```
+
+#### Available PAI Skill Packs
 
 | PAI Skill Pack | Purpose | When Imladris Uses It |
 |----------------|---------|----------------------|
 | `pai-agents-skill` | Dynamic agent composition | Open-ended research in `/research` zone |
-| `pai-council-skill` | Multi-agent debate | Low-confidence triage decisions |
+| `pai-council-skill` | Multi-agent debate (3-7 agents) | Low-confidence triage decisions |
 | `pai-redteam-skill` | Adversarial analysis (32 agents) | Security review of Windmill scripts |
+| `pai-firstprinciples-skill` | Fundamental analysis | Questioning assumptions in design |
+| `pai-research-skill` | Multi-model parallel research | Deep investigation tasks |
+| `pai-browser-skill` | Playwright automation | Web verification, testing |
+
+#### Named Agents (PAI v2.5)
+
+PAI v2.5 provides 12 specialized agent personalities:
+
+| Agent | Specialty | Imladris Usage |
+|-------|-----------|----------------|
+| **Algorithm** | ISC tracking, verification | Task completion validation |
+| **Architect** | System design, distributed systems | Design decisions |
+| **Engineer** | TDD, implementation patterns | Code implementation |
+| **QATester** | Browser automation, verification | Testing datahub sync |
+| **Pentester** | Security testing, vulnerability | Windmill script review |
+| **Intern** | High-agency generalist | Quick tasks |
+| **GeminiResearcher** | Multi-perspective investigations | Research zone |
+| **ClaudeResearcher** | Academic synthesis | Documentation research |
 
 #### Integration Points
 
@@ -2859,19 +2922,56 @@ Similar patterns - see detailed field matrix in conversation.
 
 ## Appendix C: PAI Integration
 
-Imladris 2.0 builds around PAI (Personal AI Infrastructure):
+Imladris 2.0 builds around PAI v2.5 (Personal AI Infrastructure):
 
-**PAI Provides:**
-- AI brain (skills, memory, hooks)
-- Goal context (TELOS)
-- Execution methodology (Algorithm)
+**PAI v2.5 Provides:**
+- AI brain (28 skills, MEMORY system, 17 hooks)
+- Goal context (TELOS - 10 identity files)
+- Execution methodology (The Algorithm v0.2.25)
 - Response format standards
+- Thinking tools (Council, RedTeam, FirstPrinciples, Science, BeCreative, Prompting)
+- 7 composition patterns (Pipeline, TDD Loop, Fan-out, Fan-in, Gate, Escalation, Specialist)
+- 12 named agents (Architect, Engineer, QATester, Pentester, etc.)
+- Two-Pass Capability Selection
+- Parallel-by-Default Execution
 
 **Imladris Provides:**
-- Workspace organization (zones/modes)
+- Workspace organization (5-zone system)
 - Datahub (external sources → unified storage)
+- Windmill integration (external API gateway)
 - Context signaling (status bar, colors)
-- Bidirectional sync
+- Bidirectional sync to SDP
+- Chat Gateway (mobile access)
+
+### C.1 PAI Hooks to Adopt
+
+| Hook | Event | Purpose | Imladris Benefit |
+|------|-------|---------|------------------|
+| `LoadContext.hook.ts` | SessionStart | Inject context automatically | No manual context loading |
+| `SecurityValidator.hook.ts` | PreToolUse | Block dangerous commands | Security without custom code |
+| `SessionSummary.hook.ts` | Stop | Generate session summaries | Auto-capture to datahub |
+| `ExplicitRatingCapture.hook.ts` | UserPromptSubmit | Capture 1-10 ratings | Feedback without prompting |
+| `ImplicitSentimentCapture.hook.ts` | Stop | Analyze sentiment | Detect frustration/satisfaction |
+| `WorkCompletionLearning.hook.ts` | Stop | Extract learnings | Continuous improvement |
+
+### C.2 Custom Imladris Hooks
+
+| Hook | Event | Purpose | Why Custom |
+|------|-------|---------|------------|
+| `DatahubSync.hook.ts` | Stop | Sync completed tasks to datahub | Datahub-specific logic |
+| `ZoneContext.hook.ts` | SessionStart | Load zone-specific context | 5-zone system is imladris-specific |
+| `ChatGatewayAck.hook.ts` | Stop | Send sentinel for mobile | Chat Gateway is imladris-specific |
+
+### C.3 What PAI Does NOT Replace
+
+| Component | Why Still Needed |
+|-----------|------------------|
+| **Windmill** | PAI has no external API gateway - Windmill handles Slack/SDP/Telegram polling |
+| **Datahub** | PAI MEMORY is for learnings; datahub is task source of truth |
+| **Chat Gateway** | PAI has no mobile access mechanism |
+| **5-Zone Workflow** | PAI has TELOS (goals) but not workspace organization |
+| **`dh` CLI** | PAI doesn't provide unified task/item interface |
+| **Bidirectional SDP Sync** | PAI doesn't integrate with ServiceDesk Plus |
 
 **Spec Kit Provides:**
 - Specification-driven development workflow
