@@ -59,6 +59,9 @@
       inotify-tools
       mosh
 
+      # Terminal compatibility (kitty terminfo for SSH from Kitty)
+      kitty.terminfo
+
       # Media & transcripts
       yt-dlp
 
@@ -479,6 +482,7 @@
     extraConfig = ''
       # Enable RGB color support
       set -ga terminal-overrides ",*256col*:Tc"
+      set -ga terminal-overrides ",xterm-kitty:Tc"
 
       # =========================================================================
       # Zone-based color theming
