@@ -403,6 +403,50 @@ This is incorrect. The only place tmux send-keys is used is the **Chat Gateway**
 
 **Future-proofing:** When PAI adds new features (e.g., Granular Model Routing), imladris will adopt them rather than maintaining parallel implementations.
 
+#### Layer Responsibilities (Simplified)
+
+Each layer has ONE job. No overlap.
+
+| Layer | Responsibility | Does NOT Do |
+|-------|----------------|-------------|
+| **PAI v2.5** | Thinking, skills, memory, methodology | API calls, auth, scheduling |
+| **Imladris** | Context injection, zone awareness | API logic, auth, thinking |
+| **Windmill** | Auth, API calls, scheduling, credentials | Thinking, triage decisions, orchestrating Claude |
+| **Datahub** | Unified data storage, queryable index | API calls, auth, thinking |
+
+```
+User asks: "What's my top priority today?"
+     │
+     ▼
+PAI thinks (using Algorithm, skills, context)
+     │
+     ▼
+PAI decides it needs data → calls Windmill script
+     │
+     ▼
+Windmill handles auth, calls SDP API, returns data
+     │
+     ▼
+PAI continues thinking with data
+     │
+     ▼
+PAI responds with recommendation
+```
+
+**Windmill never decides. Windmill only fetches/sends.**
+
+#### MVP Integrations (Start Here)
+
+| Folder | Scripts | Auth | Priority |
+|--------|---------|------|----------|
+| `f/sdp/` | get-tickets, update-ticket | API key | P0 |
+| `f/ms365/` | get-mail, get-calendar, send-mail | OAuth | P0 |
+| `f/slack/` | get-messages, post-message | OAuth | P0 |
+| `f/telegram/` | get-updates, send-message | Bot token | P1 |
+| `f/ops/` | backup, health-check | Instance role | P1 |
+
+**Add more integrations only when actually needed.**
+
 ### 3.6 PAI Agent Usage (v2.5)
 
 PAI v2.5 provides thinking tools and composition patterns for complex reasoning. Imladris uses these **as PAI intended** - agents are the last resort in PAI's decision hierarchy:
