@@ -5344,6 +5344,35 @@ MCP (Model Context Protocol) servers extend Claude Code's capabilities by connec
 
 **What we avoid:** MCP servers that duplicate PAI's reasoning (e.g., Sequential Thinking, Deep Code Reasoning). These add complexity without benefit since PAI already provides structured thinking via skills and the Foundational Algorithm.
 
+### I.2.1 MCP vs Windmill
+
+Both provide external data access. Use the right tool for the job:
+
+| Factor | MCP | Windmill |
+|--------|-----|----------|
+| **Auth needed** | No (public data) | Yes (OAuth, API keys) |
+| **Write operations** | No | Yes |
+| **Custom logic** | Limited | Full control |
+| **Claude integration** | Native (direct call) | Via skill routing |
+| **Setup** | One line config | Write script |
+| **Pre-built** | Yes (Context7, etc.) | No (your code) |
+
+**Decision matrix:**
+
+| Use Case | Tool | Why |
+|----------|------|-----|
+| Library documentation | MCP (Context7) | Pre-built, no auth, read-only |
+| Code quality scan | MCP (Lucidity) | Pre-built, deterministic |
+| SDP tickets | Windmill | Auth required, write-back |
+| MS365 email | Windmill | OAuth, custom transforms |
+| Slack messages | Windmill | OAuth, audit trail |
+| Fresh API docs | MCP | No auth, read-only |
+| Internal systems | Windmill | Auth, custom logic |
+
+**Simple rule:**
+- **MCP** = Read-only, public, pre-built
+- **Windmill** = Auth, write, custom
+
 ### I.3 Recommended MCP Servers
 
 | MCP Server | Purpose | Why It's Additive |
