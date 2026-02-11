@@ -2870,6 +2870,141 @@ You know exactly what's verified
 
 **The result:** You never wonder. You always know.
 
+### 10.9 Agent Teams for Fast Parallel Development
+
+For large coding projects requiring maximum speed, combine PAI methodology with Claude Code's experimental Agent Teams feature.
+
+#### Enable Agent Teams
+
+```json
+// ~/.claude/settings.json
+{
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  }
+}
+```
+
+#### How PAI + Agent Teams Work Together
+
+```
+PAI (The Algorithm)          Agent Teams (Execution)
+─────────────────────        ─────────────────────────
+Observe → Think → Plan  ───► Lead creates shared task list
+                             │
+Plan identifies work    ───► Lead spawns teammates:
+                             ├── Engineer A (auth module)
+                             ├── Engineer B (API layer)
+                             ├── Engineer C (UI components)
+                             └── QATester (writes tests)
+                             │
+Build phase             ───► Teammates work in parallel,
+                             discuss blockers, coordinate
+                             │
+Verify phase            ───► QATester validates all work
+```
+
+**Key insight:** PAI provides the **methodology** (what to do, how to think). Agent Teams provides the **execution power** (parallel work with coordination).
+
+#### When to Use Each Approach
+
+| Approach | Best For | How It Works |
+|----------|----------|--------------|
+| **PAI parallel (Task tool)** | Most work | Multiple Task calls in single message, results return to main |
+| **Agent Teams** | Large features, tight deadlines | True multi-agent with shared task list, inter-agent discussion |
+
+**Decision criteria:**
+- If agents need to discuss/debate → Agent Teams
+- If you just need parallel results → PAI's Task tool
+- If building a large feature fast → Agent Teams
+- If doing parallel research → PAI's Task tool
+
+#### Practical Workflow
+
+**Step 1: Start with PAI planning**
+
+```
+/pai plan - Build a full-stack ticket management system with auth, API, and dashboard
+```
+
+**Step 2: PAI creates the plan, then spawn team**
+
+```
+Create an agent team to implement this plan:
+- Lead coordinator (you) - architecture decisions, conflict resolution
+- Engineer-API - REST endpoints and auth (use sonnet)
+- Engineer-DB - Schema design and migrations (use sonnet)
+- Engineer-UI - React components and state (use sonnet)
+- QATester - Write tests as engineers complete (use sonnet)
+
+Each teammate should follow PAI's Build phase:
+- Write tests first (TDD)
+- Implement incrementally
+- Self-review before marking done
+
+Work in parallel, coordinate on shared resources via task list.
+```
+
+**Step 3: Monitor and steer**
+
+| Keys | Action |
+|------|--------|
+| `Shift+Tab` | Toggle delegate mode (lead coordinates only) |
+| `Ctrl+T` | View shared task list |
+| `Shift+Up/Down` | Select teammates to message |
+
+#### Model Selection for Teams
+
+| Role | Model | Rationale |
+|------|-------|-----------|
+| Lead (coordinator) | opus | Strategic decisions, conflict resolution |
+| Engineers | sonnet | Fast coding with good quality |
+| QATester | sonnet | Needs to understand code deeply |
+| Researchers | haiku | Fast parallel lookups |
+
+#### Example: Building a Feature Fast
+
+```
+I need to build a ticket management integration:
+- REST API with CRUD operations for SDP sync
+- PostgreSQL migrations for local cache
+- React dashboard for ticket view
+- OAuth authentication with MS365
+- Full test coverage
+
+Create an agent team using PAI methodology. Go fast -
+work in parallel, coordinate on shared resources.
+```
+
+#### What PAI Adds That Teams Don't Have
+
+| PAI Provides | Agent Teams Provides |
+|--------------|---------------------|
+| Memory (context from previous sessions) | Shared task list |
+| Skills (reusable workflows) | Inter-agent communication |
+| Hooks (quality gates) | Parallel execution |
+| Algorithm (consistent methodology) | Self-coordination |
+
+Agent Teams is raw parallel power. PAI makes each agent smarter.
+
+#### Comparison: PAI Parallel vs Agent Teams
+
+| Factor | PAI Parallel (Task tool) | Agent Teams |
+|--------|-------------------------|-------------|
+| **Setup** | None required | `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` |
+| **Communication** | Results return to main only | Agents message each other |
+| **Coordination** | Main agent orchestrates | Shared task list, self-coordinating |
+| **Best for** | Focused parallel tasks | Complex collaborative work |
+| **Token cost** | Lower (summarized results) | Higher (independent contexts) |
+| **Maturity** | Production-ready | Experimental |
+
+#### Recommended Usage in Imladris
+
+1. **Default:** Use PAI's standard parallel delegation (Task tool with multiple calls)
+2. **Large features:** Enable Agent Teams when building significant new functionality
+3. **Tight deadlines:** Agent Teams for maximum parallelization
+4. **Research/exploration:** PAI's Task tool with Haiku for fast parallel lookups
+
 ---
 
 ## 11. Chat Gateway (Mobile Access)
