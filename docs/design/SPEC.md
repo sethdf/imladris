@@ -2575,6 +2575,301 @@ required_checks:
 
 **Prefer extending existing patterns over creating new ones.**
 
+### 10.8 Executable Verification Pattern
+
+Trust comes from automated verification, not faith. This pattern ensures the spec matches implementation and data is protected.
+
+#### Core Principle
+
+> "If I can't see proof it's working, I add a check that shows me."
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  SPEC (what should exist)                                   │
+│      ↓                                                      │
+│  TESTS (executable checks)                                  │
+│      ↓                                                      │
+│  VERIFICATION (automated, visible)                          │
+│      ↓                                                      │
+│  CONFIDENCE (trust through proof)                           │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### Executable Spec Format
+
+Each spec section includes testable requirements:
+
+```markdown
+## Requirement: Windmill MVP Folders
+
+### Acceptance Criteria
+- [ ] Folder `f/sdp/` exists with sync.ts
+- [ ] Folder `f/ms365/` exists with sync.ts
+- [ ] Folder `f/slack/` exists with sync.ts
+- [ ] Folder `f/telegram/` exists with sync.ts
+- [ ] Folder `f/ops/` exists with backup.ts
+
+### Verification Command
+\`\`\`bash
+make verify-windmill
+\`\`\`
+```
+
+#### Verification Test Structure
+
+```
+tests/
+├── spec-compliance/
+│   ├── windmill.bats      # Windmill folder/script checks
+│   ├── datahub.bats       # Datahub structure checks
+│   ├── auth.bats          # OAuth configuration checks
+│   └── hooks.bats         # PAI hook installation checks
+├── data-safety/
+│   ├── git-commits.bats   # Git auto-commit working
+│   ├── snapshots.bats     # LUKS snapshots exist
+│   └── backups.bats       # S3 backups current
+└── run-all.sh             # Full verification suite
+```
+
+#### Example Tests
+
+**Spec compliance test (`tests/spec-compliance/windmill.bats`):**
+
+```bash
+#!/usr/bin/env bats
+
+@test "sdp folder exists in Windmill" {
+  run windmill script list -f json | jq -e '.[] | select(.path | startswith("f/sdp/"))'
+  [ "$status" -eq 0 ]
+}
+
+@test "sdp/sync.ts script exists" {
+  run windmill script exists f/sdp/sync
+  [ "$status" -eq 0 ]
+}
+
+@test "ms365 OAuth resource configured" {
+  run windmill resource list -f json | jq -e '.[] | select(.path == "u/ms365_oauth")'
+  [ "$status" -eq 0 ]
+}
+
+@test "datahub index exists" {
+  [ -f /data/work/datahub/index.sqlite ]
+}
+
+@test "dh CLI responds" {
+  run dh --version
+  [ "$status" -eq 0 ]
+}
+```
+
+**Data safety test (`tests/data-safety/git-commits.bats`):**
+
+```bash
+#!/usr/bin/env bats
+
+@test "git auto-commit ran within last hour" {
+  last_commit=$(git log -1 --format=%ct 2>/dev/null || echo 0)
+  now=$(date +%s)
+  age=$((now - last_commit))
+  [ "$age" -lt 3600 ]  # Less than 1 hour
+}
+
+@test "LUKS snapshot exists within last 2 hours" {
+  latest=$(aws ec2 describe-snapshots \
+    --filters "Name=tag:Name,Values=hall-of-fire*" \
+    --query 'Snapshots | sort_by(@, &StartTime) | [-1].StartTime' \
+    --output text)
+  snapshot_time=$(date -d "$latest" +%s)
+  now=$(date +%s)
+  age=$((now - snapshot_time))
+  [ "$age" -lt 7200 ]  # Less than 2 hours
+}
+
+@test "datahub has items" {
+  count=$(ls /data/work/datahub/items/ 2>/dev/null | wc -l)
+  [ "$count" -gt 0 ]
+}
+```
+
+#### Verification Commands
+
+```bash
+# Full verification suite
+make verify-all
+
+# Spec compliance only
+make verify-spec
+
+# Data safety only
+make verify-data
+
+# Quick status (no tests, just checks)
+verify-status
+```
+
+#### Makefile Targets
+
+```makefile
+.PHONY: verify-all verify-spec verify-data
+
+verify-all: verify-spec verify-data
+	@echo "✓ All verification passed"
+
+verify-spec:
+	@echo "Checking spec compliance..."
+	@bats tests/spec-compliance/
+
+verify-data:
+	@echo "Checking data safety..."
+	@bats tests/data-safety/
+```
+
+#### Quick Status Command
+
+For immediate peace of mind without running full tests:
+
+```bash
+#!/bin/bash
+# ~/bin/verify-status
+
+echo "=== Imladris Status ==="
+echo ""
+
+# Git status
+echo -n "Git: "
+if git_time=$(git log -1 --format=%cr 2>/dev/null); then
+  echo "✓ Last commit $git_time"
+else
+  echo "✗ Not in git repo"
+fi
+
+# Session capture
+echo -n "Session: "
+if session=$(ls -t ~/.claude/MEMORY/sessions/*.md 2>/dev/null | head -1); then
+  echo "✓ $(basename $session)"
+else
+  echo "⚠ No sessions captured"
+fi
+
+# Datahub
+echo -n "Datahub: "
+if [ -d /data/work/datahub/items ]; then
+  count=$(ls /data/work/datahub/items/ | wc -l)
+  echo "✓ $count items"
+else
+  echo "✗ Not found"
+fi
+
+# Windmill
+echo -n "Windmill: "
+if curl -s http://localhost:8000/api/version > /dev/null 2>&1; then
+  echo "✓ Running"
+else
+  echo "✗ Not responding"
+fi
+
+# LUKS
+echo -n "LUKS: "
+if mountpoint -q /data 2>/dev/null; then
+  echo "✓ Mounted"
+else
+  echo "✗ Not mounted"
+fi
+
+echo ""
+echo "Run 'make verify-all' for full verification"
+```
+
+#### PAI Integration
+
+**Stop hook runs verification:**
+
+```typescript
+// hooks/VerifyOnStop.hook.ts
+import { execSync } from 'child_process';
+
+export default async function verifyOnStop() {
+  try {
+    // Quick verification (non-blocking)
+    execSync('verify-status', { timeout: 5000 });
+  } catch (e) {
+    // Log failure but don't block
+    console.error('Verification warning:', e.message);
+  }
+}
+```
+
+**Failures captured in MEMORY:**
+
+```
+~/.claude/MEMORY/
+├── verification/
+│   ├── 2026-02-11-passed.md
+│   ├── 2026-02-10-failed.md  # Contains what failed
+│   └── history.jsonl          # All results
+```
+
+**Next session context:**
+
+```
+SessionStart hook checks MEMORY/verification/
+If recent failure → inject into context:
+"⚠️ Last session: verify-spec failed - sdp/sync.ts missing"
+```
+
+#### Visual Feedback
+
+**Tmux status line indicator:**
+
+```bash
+# In ~/.tmux.conf
+set -g status-right '#(verify-status-short) | %H:%M'
+```
+
+```bash
+# ~/bin/verify-status-short
+if git log -1 --format=%ct 2>/dev/null | \
+   awk -v now=$(date +%s) '{exit ($1 > now-3600) ? 0 : 1}'; then
+  echo "✓"
+else
+  echo "⚠"
+fi
+```
+
+**What you see:**
+- `✓` = All good, committed within last hour
+- `⚠` = Warning, check status
+- `✗` = Problem, run verification
+
+#### Verification Cadence
+
+| Check | When | How |
+|-------|------|-----|
+| `verify-status` | On demand | Manual or prompt |
+| Status line | Always visible | Passive indicator |
+| `verify-spec` | After implementation | Manual or CI |
+| `verify-data` | Daily | Cron job |
+| Full suite | Before major changes | Manual |
+
+#### Trust Loop
+
+```
+You work
+    ↓
+Status line shows ✓ (git committed)
+    ↓
+Stop hook runs verify-status
+    ↓
+Any failure → logged to MEMORY
+    ↓
+Next session → warned if issues
+    ↓
+You know exactly what's verified
+```
+
+**The result:** You never wonder. You always know.
+
 ---
 
 ## 11. Chat Gateway (Mobile Access)
