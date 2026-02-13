@@ -294,32 +294,31 @@ Add:
 
 ---
 
-## 10. Chat Gateway
+## 10. Mobile Access (OpenClaw)
 
 ### What's Defined
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Telegram bridge | ✓ Clear | Bot → tmux |
-| Session management | ✓ Clear | /sessions, /switch |
-| Command prefix | ✓ Clear | /c for Claude |
-| Response detection | ✓ Clear | Polling tmux capture |
-| Security | ✓ Clear | Allowlist |
+| Multi-platform gateway | ✓ Clear | Telegram, WhatsApp, Signal, etc. |
+| Docker deployment | ✓ Clear | docker-compose.openclaw.yml |
+| Context sharing | ✓ Clear | Read-only filesystem mounts |
+| Security | ✓ Clear | ALLOWED_CHAT_IDS + API key |
+| Image support | ✓ Clear | Built-in multimodal |
 
 ### Gaps / Questions
 
 | Issue | Question |
 |-------|----------|
-| **Latency** | 2-3s mentioned. Acceptable? |
-| **Message length** | Telegram has 4096 char limit. Long responses? |
-| **File sharing** | Can you send files via chat? |
-| **Error handling** | If tmux session dies, what does user see? |
+| **API costs** | Pay-per-use; need to set budget alerts? |
+| **Context freshness** | How often does OpenClaw re-read context files? |
+| **MCP integration** | Which MCP servers to expose to OpenClaw? |
 
 ### Recommendation
 
 Consider:
-- Response chunking for long messages
-- Explicit error messages for session issues
+- Setting up API usage alerts
+- Documenting which context paths are most useful
 
 ---
 

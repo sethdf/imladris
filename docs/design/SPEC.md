@@ -19,7 +19,7 @@
 8. [Infrastructure](#8-infrastructure)
 9. [User Scenarios](#9-user-scenarios)
 10. [Coding Methodology](#10-coding-methodology)
-11. [Chat Gateway (Mobile Access)](#11-chat-gateway-mobile-access)
+11. [Mobile Access (OpenClaw)](#11-mobile-access-openclaw)
 12. [Out of Scope](#12-out-of-scope)
 13. [Open Questions](#13-open-questions)
 
@@ -289,8 +289,8 @@ graph TD
 
         subgraph Workspace [Tmux Session]
             Claude[Claude Code + PAI]
-            ChatGW[Chat Gateway]
         end
+        OpenClaw[OpenClaw<br/>Mobile Access]
     end
 
     %% Inbound Flow (polling only)
@@ -303,7 +303,7 @@ graph TD
     Files -->|Read Context| Claude
     Claude -->|Write Context| Lock
     Claude -->|Commands| DH
-    ChatGW -->|Prompts| Claude
+    OpenClaw -->|Read Context| Files
 
     %% Outbound Flow
     DH -->|Queue Item| Out_Job
@@ -387,19 +387,20 @@ Imladris is built **on top of PAI** (Personal AI Infrastructure), not alongside 
 
 **Common misconception:** "Windmill orchestrates Claude Code via tmux"
 
-This is incorrect. The only place tmux send-keys is used is the **Chat Gateway** (Section 11) - a convenience feature for mobile access via Telegram. The core workflow is always human↔Claude interactive.
+This is incorrect. The core workflow is always human↔Claude interactive via tmux. Mobile access (Section 11) uses OpenClaw with its own Claude API connection, not tmux automation.
 
 | Component | Interaction Pattern |
 |-----------|---------------------|
-| Human ↔ Claude | Direct typing in tmux (interactive) |
+| Human ↔ Claude | Direct typing in tmux (interactive, primary) |
 | Claude → Windmill | API calls via PAI skills (request/response) |
 | Windmill → External | Scheduled polling + on-demand queries (deterministic) |
+| OpenClaw → Claude | Separate API connection (mobile, secondary) |
 
 **Why this matters:**
-- No "terminal scraping" in the critical path
+- No "terminal scraping" anywhere in the system
 - Windmill jobs are finite and deterministic
 - Claude Code runs interactively, not as a Windmill job
-- The system is NOT dependent on tmux send-keys reliability for core operations
+- OpenClaw uses clean API access, not tmux send-keys
 
 **Future-proofing:** When PAI adds new features (e.g., Granular Model Routing), imladris will adopt them rather than maintaining parallel implementations.
 
@@ -3007,301 +3008,200 @@ Agent Teams is raw parallel power. PAI makes each agent smarter.
 
 ---
 
-## 11. Chat Gateway (Mobile Access)
+## 11. Mobile Access (OpenClaw)
 
 ### 11.1 Purpose
 
-Continue Claude sessions from iOS via existing chat platforms. This is NOT a mobile app—it's a bridge from Telegram (which already has an iOS app) to Claude Code sessions running on imladris.
+Secondary access to Claude from iOS/Android via existing chat platforms. [OpenClaw](https://github.com/openclaw/openclaw) is an open-source AI gateway that bridges messaging platforms with Claude.
 
-#### Architectural Note: Convenience Feature
+#### Primary vs Mobile Access
 
-**This is the ONLY place in imladris that uses tmux send-keys for automation.**
+| | Primary (Claude Code) | Mobile (OpenClaw) |
+|---|----------------------|-------------------|
+| **Interface** | tmux + Claude CLI | Telegram/WhatsApp/Signal |
+| **Use case** | Active development work | Quick check-ins, status, simple tasks |
+| **Context** | Full interactive session | Shared filesystem context |
+| **Frequency** | Daily, hours at a time | Occasional, minutes at a time |
 
-| Core workflow | Chat Gateway |
-|---------------|--------------|
-| Human types directly in Claude Code | Telegram routes to Claude via tmux |
-| Deterministic, interactive | Best-effort, async |
-| Primary interface | Convenience for mobile |
+**tmux remains the primary interface.** OpenClaw is for mobile convenience only.
 
-**Known limitations of tmux-based bridging:**
+#### Why OpenClaw vs Custom Implementation
 
-| Limitation | Mitigation |
-|------------|------------|
-| Non-deterministic timing | Sentinel pattern (`\|\|IMLADRIS_ACK\|\|`) for completion detection |
-| Buffer overflow on large outputs | Truncation + `/last` command for full response |
-| No streaming | Poll-based with "thinking..." indicator |
-| Race conditions | Single-request queue; `/c --force` safety valve |
-
-**Why we accept these trade-offs:**
-
-| Factor | Reasoning |
-|--------|-----------|
-| Use frequency | Occasional mobile check-ins, not primary workflow |
-| Alternative cost | Building a proper mobile app is 100x more complex |
-| Failure impact | If it breaks, user SSHs in directly; no data loss |
-| Simplicity | ~200 lines of shell vs. custom iOS app |
-
-**If you need reliable programmatic Claude access:**
-- Use the Anthropic API directly
-- Use MCP for structured tool calls
-- Don't route through tmux
-
-The Chat Gateway exists because "good enough mobile access" beats "no mobile access."
+| Factor | OpenClaw | Custom tmux Bridge |
+|--------|----------|-------------------|
+| Maintenance | Active open-source project (180k+ stars) | Custom shell scripts |
+| Platform support | Telegram, WhatsApp, Signal, Discord, iMessage, Slack | Telegram only |
+| Response handling | Native async with proper streaming | Sentinel pattern hacks |
+| Image support | Built-in multimodal | Not supported |
+| Reliability | Production-grade | Best-effort |
 
 ### 11.2 Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  iOS Device                                                 │
-│  ┌─────────────┐                                           │
-│  │ Telegram    │  (existing app, no custom code)           │
-│  └──────┬──────┘                                           │
-└─────────┼───────────────────────────────────────────────────┘
-          │ Bot API (existing)
-          ▼
+│  Mobile Device (iOS/Android)                                │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐         │
+│  │ Telegram    │  │ WhatsApp    │  │ Signal      │  ...    │
+│  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘         │
+└─────────┼────────────────┼────────────────┼─────────────────┘
+          │                │                │
+          └────────────────┼────────────────┘
+                           ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  imladris                                                   │
 │  ┌─────────────────────────────────────────────────────┐   │
-│  │ chat-gateway.sh                                      │   │
-│  │  - Extends telegram-inbox.sh                         │   │
-│  │  - Routes /c messages to Claude                      │   │
-│  │  - Captures responses, sends back                    │   │
+│  │ OpenClaw (Docker)                                    │   │
+│  │  - Multi-platform gateway                            │   │
+│  │  - Message routing & streaming                       │   │
+│  │  - Image/file handling                               │   │
 │  └─────────────────────────────────────────────────────┘   │
 │                        │                                    │
-│                        ▼                                    │
+│                        ▼ Anthropic API                      │
 │  ┌─────────────────────────────────────────────────────┐   │
-│  │ tmux session (work:tasks, home:adhoc, etc.)          │   │
-│  │  - Claude Code running                               │   │
-│  │  - send-keys for input                               │   │
-│  │  - capture-pane for output                           │   │
+│  │ Claude (via Bedrock or API key)                      │   │
+│  │  - Same model as Claude Code                         │   │
+│  │  - Shared context via MCP/filesystem                 │   │
 │  └─────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### 11.3 Commands
+**Key difference from Claude Code sessions:** OpenClaw runs its own Claude instance via API, not the interactive Claude Code CLI. Context sharing happens through the filesystem and MCP servers, not tmux.
 
-From Telegram on iOS:
+### 11.3 Configuration
+
+**Docker Compose setup:**
+
+```yaml
+# docker-compose.openclaw.yml
+services:
+  openclaw:
+    image: openclaw/openclaw:latest
+    container_name: openclaw
+    restart: unless-stopped
+    volumes:
+      - /data/openclaw:/app/data
+      - /data/datahub:/context/datahub:ro  # Shared context
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}  # Or use Bedrock
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - ALLOWED_CHAT_IDS=${TELEGRAM_CHAT_ID}
+      - MODEL=claude-sonnet-4-20250514
+    ports:
+      - "127.0.0.1:3080:3080"  # Web UI (optional)
+```
+
+**Secrets (BWS):**
+
+| Secret | Purpose |
+|--------|---------|
+| `telegram-bot-token` | Telegram Bot API token |
+| `telegram-chat-id` | Authorized chat ID(s) |
+| `anthropic-api-key` | API key (if not using Bedrock) |
+
+### 11.4 Commands
+
+From any connected platform (Telegram, WhatsApp, etc.):
 
 | Command | Action |
 |---------|--------|
-| `/c <message>` | Send to active Claude session |
-| `/c` (no args) | Show current session info |
-| `/sessions` | List active tmux windows with Claude |
-| `/switch <workspace>` | Switch to workspace (e.g., `work:tasks`) |
-| `/new <workspace>` | Start new Claude session in workspace |
-| `/last` | Show last response (if truncated) |
-| `/cancel` | Cancel pending request |
+| Direct message | Chat with Claude |
+| `/status` | Show OpenClaw status |
+| `/model` | Show/switch model |
+| `/clear` | Clear conversation context |
+| `/help` | List available commands |
 
-Regular messages (no `/c`) continue to work as before—saved to inbox.
+**Note:** OpenClaw handles conversation context natively—no `/c` prefix needed.
 
-### 11.4 Session Management
+### 11.5 Context Sharing
 
-**State file:** `~/.local/state/chat-gateway.json`
+OpenClaw runs a separate Claude instance, but can share context with Claude Code sessions:
 
-```json
-{
-  "active_session": "work:tasks",
-  "last_request": "2026-01-29T14:32:00Z",
-  "pending": false,
-  "last_response_full": "/tmp/chat-gateway-last.txt"
-}
+**Filesystem context (read-only mounts):**
+
+| Path | Purpose |
+|------|---------|
+| `/context/datahub` | Current tasks, items, notes |
+| `/context/repos` | Code repositories |
+| `/context/inbox` | Incoming messages |
+
+**MCP servers:** OpenClaw can connect to the same MCP servers as Claude Code for tool access.
+
+**System prompt:** Configure OpenClaw's system prompt to reference imladris context:
+
+```
+You are an assistant with access to the imladris datahub.
+Current tasks are in /context/datahub/items/.
+Reference these when answering questions about work status.
 ```
 
-**Session selection:**
-1. Use explicit `/switch` if specified
-2. Otherwise use `active_session` from state
-3. Default to `work:adhoc` if no state
-
-**Workspace mapping:**
-
-| Workspace | tmux window |
-|-----------|-------------|
-| `work:tasks` | `main:work-tasks` |
-| `work:comms` | `main:work-comms` |
-| `home:adhoc` | `main:home-adhoc` |
-| etc. | Pattern: `main:{zone}-{mode}` |
-
-### 11.5 Input/Output Flow
-
-**Input (iOS → Claude):**
-
-```bash
-# 1. Receive message from Telegram
-msg="/c how do I fix the auth bug?"
-
-# 2. Strip prefix, get content
-content="how do I fix the auth bug?"
-
-# 3. Get target session
-session=$(jq -r '.active_session' ~/.local/state/chat-gateway.json)
-tmux_target="main:${session//:/-}"  # work:tasks → main:work-tasks
-
-# 4. Send to Claude
-tmux send-keys -t "$tmux_target" "$content" Enter
-
-# 5. Mark pending
-update_state pending=true
-```
-
-**Output (Claude → iOS):**
-
-```bash
-# 1. Wait for Claude to finish (detect prompt return)
-# Poll every 2s, timeout 5min
-
-# 2. Capture response
-response=$(tmux capture-pane -t "$tmux_target" -p | extract_last_response)
-
-# 3. Truncate if needed (Telegram limit: 4096 chars)
-if [[ ${#response} -gt 4000 ]]; then
-    echo "$response" > /tmp/chat-gateway-last.txt
-    response="${response:0:3900}...
-
-[Truncated. Send /last for full response]"
-fi
-
-# 4. Send back
-send_telegram_message "$response"
-
-# 5. Clear pending
-update_state pending=false
-```
-
-### 11.6 Response Detection (Sentinel Pattern)
-
-**Challenge:** Know when Claude has finished responding. Hash-based stability detection is brittle (cursor blinks, network pauses, large outputs).
-
-**Solution:** Explicit sentinel marker in shell prompt.
-
-**1. The Sentinel Prompt**
-
-Configure zsh prompt to emit a machine-readable marker after every command completion:
-
-```bash
-# In ~/.zshrc
-PROMPT='%~ $ '
-RPROMPT=''
-
-# After each command, emit sentinel (hidden via color)
-precmd() {
-    echo -ne '\033[8m||IMLADRIS_ACK||\033[0m'
-}
-```
-
-**2. The Detection Loop**
-
-```bash
-wait_for_response() {
-    local target="$1"
-    local timeout=300
-    local start_time=$(date +%s)
-
-    while true; do
-        # Capture only last 10 lines (efficient)
-        local tail=$(tmux capture-pane -t "$target" -p -S -10)
-
-        if [[ "$tail" == *"||IMLADRIS_ACK||"* ]]; then
-            return 0  # Response complete
-        fi
-
-        # Timeout check
-        local current_time=$(date +%s)
-        if (( current_time - start_time > timeout )); then
-            return 1  # Timeout
-        fi
-
-        sleep 0.5
-    done
-}
-```
-
-**3. Safety Valve**
-
-If sentinel is missed (crash, formatting error):
-
-```bash
-/c --force    # Manual release: reads buffer immediately, clears pending state
-```
-
-**Why this is better:**
-
-| Approach | Problem |
-|----------|---------|
-| Hash stability | Fails on cursor blink, typing pauses, large outputs |
-| Sentinel marker | Deterministic, instant detection, no false positives |
-
-### 11.7 Security
+### 11.6 Security
 
 | Control | Implementation |
 |---------|----------------|
-| Auth | Only accept from configured `telegram-chat-id` (existing) |
-| Rate limit | 20 messages/minute, 100/hour |
-| Cost awareness | Estimate tokens, warn on long prompts |
-| Timeout | 5 minute max wait per request |
-| Queue | One request at a time (reject if pending) |
+| Auth | `ALLOWED_CHAT_IDS` env var (comma-separated) |
+| Rate limit | OpenClaw built-in rate limiting |
+| Cost awareness | OpenClaw token tracking & limits |
+| API key | Use dedicated API key, not personal subscription |
 
-### 11.8 Limitations
+**Important:** Do not use Claude Pro/Max access tokens—this violates Anthropic ToS. Use a pay-as-you-go API key.
 
-| Limitation | Workaround |
-|------------|------------|
-| No file uploads | Use `/sync` in datahub, reference by path |
-| No streaming | Poll for completion, show "thinking..." |
-| Response truncation | `/last` for full response |
-| Single request queue | Wait for completion or `/cancel` |
-| No multi-turn visibility | Session context maintained server-side |
+### 11.7 Limitations
 
-### 11.9 Example Session
+| Limitation | Notes |
+|------------|-------|
+| Separate context | Not the same session as Claude Code |
+| API costs | Pay-per-use (not included in subscriptions) |
+| No direct file editing | Can read context, but edits go through Claude Code |
+
+### 11.8 Example Session
 
 ```
-You: /c what's the status of the auth bug?
+You: What's the status of the auth bug?
 
-Bot: Looking at work:tasks context...
+Claude: Looking at the datahub context...
 
-The auth bug (SDP-1234) is in progress. Last update:
-added retry logic to token refresh. Tests passing locally,
-CI pending.
+SDP-1234 (auth bug) is in progress. From the latest notes:
+- Retry logic added to token refresh
+- Tests passing locally
+- CI pending
 
-Next step: Review CI results and update ticket.
-
----
-
-You: /c update the ticket with current status
-
-Bot: ✓ Updated SDP-1234:
-- Added note: "Retry logic implemented, tests passing"
-- Status: In Progress
+The item is assigned to you with P1 priority.
 
 ---
 
-You: /switch home:adhoc
+You: [sends screenshot of error message]
 
-Bot: ✓ Switched to home:adhoc
-
----
-
-You: /c remind me to call mom tomorrow
-
-Bot: Created reminder in home:tasks:
-"Call mom" - Due: 2026-01-30
+Claude: I can see the error in your screenshot. The issue is
+a null pointer in the token validation. Based on the code
+in /context/repos/auth-service, you need to add a null
+check on line 142 of TokenValidator.ts.
 
 ---
 
-You: /sessions
+You: Thanks, I'll fix it when I'm back at my desk
 
-Bot: Active sessions:
-• work:tasks (2m ago)
-• work:comms (1h ago)
-• home:adhoc ← active
+Claude: Sounds good. Want me to add a note to the ticket
+about the fix needed?
+
+---
+
+You: Yes please
+
+Claude: Done. Added note to SDP-1234:
+"Fix needed: null check on TokenValidator.ts:142"
 ```
 
-### 11.10 Implementation Phases
+### 11.9 Implementation
 
-| Phase | Scope |
-|-------|-------|
-| 1 | Basic `/c` routing with fixed 30s wait |
-| 2 | Smart completion detection, truncation, `/last` |
-| 3 | Session management (`/sessions`, `/switch`, `/new`) |
-| 4 | Rate limiting, cost estimates |
+| Step | Action |
+|------|--------|
+| 1 | Create Telegram bot via BotFather |
+| 2 | Store tokens in BWS |
+| 3 | Deploy OpenClaw via Docker Compose |
+| 4 | Configure context mount paths |
+| 5 | Test from mobile device |
+
+**Startup:** OpenClaw starts automatically via Docker Compose on boot.
 
 ---
 
@@ -3312,7 +3212,7 @@ Bot: Active sessions:
 | Outbound automation | Collector, not actor |
 | Push notifications | Polling model |
 | Multi-instance/HA | Single user workstation |
-| Native mobile app | Chat gateway via Telegram instead |
+| Native mobile app | OpenClaw via Telegram/WhatsApp/Signal instead |
 | GUI | Terminal only (Telegram is the "GUI") |
 | Offline Claude | Bedrock requires network |
 
@@ -3325,7 +3225,7 @@ Bot: Active sessions:
 | Secondary offsite backup destination | S3 (see Appendix F) |
 | Attachment storage/download location | On-demand to `/data/attachments/` |
 | Triage feedback loop (improve Claude) | v2 |
-| Mobile/multi-device access | ✓ Resolved: Chat Gateway (Section 11) |
+| Mobile/multi-device access | ✓ Resolved: OpenClaw (Section 11) |
 
 ---
 
@@ -3415,7 +3315,7 @@ Imladris 2.0 builds around PAI v2.5 (Personal AI Infrastructure):
 - Windmill integration (external API gateway)
 - Context signaling (status bar, colors)
 - Bidirectional sync to SDP
-- Chat Gateway (mobile access)
+- OpenClaw (mobile access)
 
 ### C.1 PAI Hooks to Adopt
 
@@ -3434,7 +3334,7 @@ Imladris 2.0 builds around PAI v2.5 (Personal AI Infrastructure):
 |------|-------|---------|------------|
 | `DatahubSync.hook.ts` | Stop | Sync completed tasks to datahub | Datahub-specific logic |
 | `ZoneContext.hook.ts` | SessionStart | Load zone-specific context | 5-zone system is imladris-specific |
-| `ChatGatewayAck.hook.ts` | Stop | Send sentinel for mobile | Chat Gateway is imladris-specific |
+| `OpenClawContext.hook.ts` | Stop | Sync context for mobile access | OpenClaw reads shared filesystem |
 
 ### C.3 What PAI Does NOT Replace
 
@@ -3442,7 +3342,7 @@ Imladris 2.0 builds around PAI v2.5 (Personal AI Infrastructure):
 |-----------|------------------|
 | **Windmill** | PAI has no external API gateway - Windmill handles Slack/SDP/Telegram polling |
 | **Datahub** | PAI MEMORY is for learnings; datahub is task source of truth |
-| **Chat Gateway** | PAI has no mobile access mechanism |
+| **OpenClaw** | PAI has no mobile access mechanism - OpenClaw provides it |
 | **5-Zone Workflow** | PAI has TELOS (goals) but not workspace organization |
 | **`dh` CLI** | PAI doesn't provide unified task/item interface |
 | **Bidirectional SDP Sync** | PAI doesn't integrate with ServiceDesk Plus |
