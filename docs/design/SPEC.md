@@ -2,8 +2,8 @@
 
 > A reproducible Linux cloud workstation that captures all inputs from life and work, surfaces actionable items, organizes by context (workspaces), and provides frictionless AI-assisted tools to act on them.
 
-**Version:** 0.2.0
-**Last Updated:** 2026-02-02
+**Version:** 0.3.0
+**Last Updated:** 2026-02-17
 
 ---
 
@@ -329,7 +329,7 @@ Imladris is built **on top of PAI** (Personal AI Infrastructure), not alongside 
 |------------|---------------------|
 | **TELOS** | Zone-specific goals stored in GOALS.md, PROJECTS.md |
 | **Memory (Hot/Warm/Cold)** | Context save/restore uses PAI's 3-tier memory |
-| **Hook System** | Event handling via PAI's 8 lifecycle hooks |
+| **Hook System** | Event handling via PAI's 20 hooks across 6 lifecycle events |
 | **Skill System** | Curu skills follow PAI skill format |
 | **Security System** | PAI hooks validate commands before execution |
 | **User/System Separation** | Imladris configs in USER/, upgrades don't break |
@@ -341,7 +341,7 @@ Imladris is built **on top of PAI** (Personal AI Infrastructure), not alongside 
 | Scaffolding > Model | Thread-based triage with good context beats model upgrades |
 | Code Before Prompts | Windmill scripts are deterministic where possible |
 | Deterministic Infrastructure | Templates, patterns, flat files over probabilistic |
-| Foundational Algorithm | Observe → Think → Plan → Build → Execute → Verify → Learn |
+| Algorithm v1.4.0 | 7-phase (Observe→Think→Plan→Build→Execute→Verify→Learn) + ISC + drift prevention |
 
 **What Imladris Adds (Not in PAI):**
 
@@ -410,7 +410,7 @@ Each layer has ONE job. No overlap.
 
 | Layer | Responsibility | Does NOT Do |
 |-------|----------------|-------------|
-| **PAI v2.5** | Thinking, skills, memory, methodology | API calls, auth, scheduling |
+| **PAI v3.0** | Algorithm, skills, MEMORY, PRDs, agent teams | API calls, auth, scheduling |
 | **Imladris** | Context injection, zone awareness | API logic, auth, thinking |
 | **Windmill** | Auth, API calls, scheduling, credentials | Thinking, triage decisions, orchestrating Claude |
 | **Datahub** | Unified data storage, queryable index | API calls, auth, thinking |
@@ -448,9 +448,9 @@ PAI responds with recommendation
 
 **Add more integrations only when actually needed.**
 
-### 3.6 PAI Agent Usage (v2.5)
+### 3.6 PAI Agent Usage (v3.0)
 
-PAI v2.5 provides thinking tools and composition patterns for complex reasoning. Imladris uses these **as PAI intended** - agents are the last resort in PAI's decision hierarchy:
+PAI v3.0 provides thinking tools, composition patterns, and agent teams for complex reasoning. Imladris uses these **as PAI intended** - agents are the last resort in PAI's decision hierarchy:
 
 ```
 Goal → Code → CLI → Prompts → Agents
@@ -458,18 +458,22 @@ Goal → Code → CLI → Prompts → Agents
  Most preferred          Last resort
 ```
 
-#### PAI v2.5 Key Changes
+#### PAI v3.0 Key Changes
 
 | Feature | What It Means for Imladris |
 |---------|---------------------------|
-| **Two-Pass Capability Selection** | Hook hints validated in THINK phase - better tool selection |
-| **Thinking Tools (Justify-Exclusion)** | Must justify NOT using Council/RedTeam/FirstPrinciples |
-| **Parallel-by-Default** | Independent tasks run concurrently |
-| **7 Composition Patterns** | Formalized orchestration patterns |
+| **Algorithm v1.4.0** | ISC criteria, constraint extraction, drift prevention |
+| **Persistent PRDs** | Task context survives sessions - integrates with datahub |
+| **Agent Teams** | Native swarm coordination for large features |
+| **Loop Mode** | Unbounded parallel workers for 100+ criteria tasks |
+| **20 Hooks** | Full lifecycle coverage (vs 17 in v2.5) |
+| **Context Recovery** | ≤34s cold-start recovery from MEMORY/PRDs |
+| **Build Drift Prevention** | Re-read ISC before each artifact |
+| **37 Skills** | +9 new skills (Science, IterativeDepth, Evals, etc.) |
 
 #### Composition Patterns
 
-PAI v2.5 defines 7 named patterns for combining capabilities:
+PAI v3.0 defines 7 named patterns for combining capabilities:
 
 | Pattern | Shape | When Imladris Uses It |
 |---------|-------|----------------------|
@@ -483,7 +487,7 @@ PAI v2.5 defines 7 named patterns for combining capabilities:
 
 #### Thinking Tools (Justify-Exclusion)
 
-PAI v2.5 inverts the default: thinking tools are **opt-OUT not opt-IN**. For every request, justify why each tool is NOT being used:
+PAI v3.0 inverts the default: thinking tools are **opt-OUT not opt-IN**. For every request, justify why each tool is NOT being used:
 
 | Tool | What It Does | Include When |
 |------|-------------|--------------|
@@ -517,9 +521,9 @@ PAI v2.5 inverts the default: thinking tools are **opt-OUT not opt-IN**. For eve
 | `pai-research-skill` | Multi-model parallel research | Deep investigation tasks |
 | `pai-browser-skill` | Playwright automation | Web verification, testing |
 
-#### Named Agents (PAI v2.5)
+#### Named Agents (PAI v3.0)
 
-PAI v2.5 provides 12 specialized agent personalities:
+PAI v3.0 provides 13 specialized agent personalities with mapped ElevenLabs voices:
 
 | Agent | Specialty | Imladris Usage |
 |-------|-----------|----------------|
@@ -529,8 +533,10 @@ PAI v2.5 provides 12 specialized agent personalities:
 | **QATester** | Browser automation, verification | Testing datahub sync |
 | **Pentester** | Security testing, vulnerability | Windmill script review |
 | **Intern** | High-agency generalist | Quick tasks |
-| **GeminiResearcher** | Multi-perspective investigations | Research zone |
-| **ClaudeResearcher** | Academic synthesis | Documentation research |
+| **Serena Blackwood** | Security architecture | Security-critical decisions |
+| **Marcus Webb** | Research synthesis | Deep research tasks |
+| **Dev Patel** | Engineering | Feature implementation |
+| **PerplexityResearcher** | Web research | External API research |
 
 #### Integration Points
 
@@ -2873,7 +2879,15 @@ You know exactly what's verified
 
 ### 10.9 Agent Teams for Fast Parallel Development
 
-For large coding projects requiring maximum speed, combine PAI methodology with Claude Code's experimental Agent Teams feature.
+PAI v3.0 provides native agent team support for large coding projects requiring parallel execution.
+
+#### Three Agent Systems in PAI v3.0
+
+| System | Purpose | When to Use |
+|--------|---------|-------------|
+| **Task Tool** | Parallel independent work | Research, file exploration, simple parallel tasks |
+| **Named Agents** | Persistent identities with voices | Recurring work, voice output, relationships |
+| **Agent Teams** | Coordinated swarm execution | Large features, tight deadlines, complex collaboration |
 
 #### Enable Agent Teams
 
@@ -2886,67 +2900,127 @@ For large coding projects requiring maximum speed, combine PAI methodology with 
 }
 ```
 
-#### How PAI + Agent Teams Work Together
+#### How Algorithm v1.4.0 + Agent Teams Work Together
 
 ```
-PAI (The Algorithm)          Agent Teams (Execution)
-─────────────────────        ─────────────────────────
-Observe → Think → Plan  ───► Lead creates shared task list
-                             │
-Plan identifies work    ───► Lead spawns teammates:
-                             ├── Engineer A (auth module)
-                             ├── Engineer B (API layer)
-                             ├── Engineer C (UI components)
-                             └── QATester (writes tests)
-                             │
-Build phase             ───► Teammates work in parallel,
-                             discuss blockers, coordinate
-                             │
-Verify phase            ───► QATester validates all work
+Algorithm (v1.4.0)                Agent Teams (Execution)
+──────────────────────────        ─────────────────────────
+OBSERVE: Extract constraints ───► (solo - criteria generation)
+THINK: Pressure test ISC     ───► (solo - criteria refinement)
+                                  │
+PLAN: Parallelization        ───► If 3+ independent criteria:
+assessment                        │   "create an agent team"
+                                  │   → Partition into domains
+                                  │   → Spawn N agents (1 per domain)
+                                  │
+BUILD: ISC adherence check   ───► Teammates work in parallel:
+                                  ├── Engineer A (auth module)
+                                  ├── Engineer B (API layer)
+                                  ├── Engineer C (UI components)
+                                  └── QATester (writes tests)
+                                  │
+                                  │   Each agent:
+                                  │   - Re-reads ISC before artifacts
+                                  │   - Checks anti-criteria after
+                                  │   - Discusses blockers with team
+                                  │
+VERIFY: Drift check          ───► Spotcheck agent validates
+LEARN: Capture to MEMORY     ───► Reflections to JSONL
 ```
 
-**Key insight:** PAI provides the **methodology** (what to do, how to think). Agent Teams provides the **execution power** (parallel work with coordination).
+**Magic phrase:** Say "create an agent team" to invoke PAI's native team system.
+
+#### Loop Mode: Unbounded Parallel Workers
+
+For very large tasks (100+ ISC criteria), use loop mode:
+
+```bash
+# External invocation
+algorithm.ts -m loop -a 8    # 8 parallel workers
+```
+
+| Parameter | Purpose |
+|-----------|---------|
+| `-m loop` | Loop mode (unbounded iterations) |
+| `-a N` | Number of parallel workers |
+
+**Behavior:**
+- Criteria distributed across N workers
+- Effort decay: early iterations Extended → later iterations Fast
+- Convergence tracking via PRD frontmatter
+- Status: `loopStatus: running|paused|completed|failed`
+
+#### Named Agents (13 Available)
+
+PAI v3.0 includes named agents with persistent identities:
+
+| Agent | Specialty | Voice |
+|-------|-----------|-------|
+| Serena Blackwood | Security architecture | ElevenLabs mapped |
+| Marcus Webb | Research synthesis | ElevenLabs mapped |
+| Rook Blackburn | Adversarial analysis | ElevenLabs mapped |
+| Dev Patel | Engineering | ElevenLabs mapped |
+| Ava Sterling | UX/design | ElevenLabs mapped |
+| Alex Rivera | Full-stack development | ElevenLabs mapped |
+| PerplexityResearcher | Web research | ElevenLabs mapped |
+| ... | (6 more) | ... |
+
+**Use for:** Recurring interactions, voice output, building relationships across sessions.
 
 #### When to Use Each Approach
 
-| Approach | Best For | How It Works |
-|----------|----------|--------------|
-| **PAI parallel (Task tool)** | Most work | Multiple Task calls in single message, results return to main |
-| **Agent Teams** | Large features, tight deadlines | True multi-agent with shared task list, inter-agent discussion |
+| Approach | Best For | Trigger |
+|----------|----------|---------|
+| **Task Tool** | Parallel independent work | Multiple Task calls in single message |
+| **Named Agents** | Personality, voice, relationships | Reference by name |
+| **Agent Teams** | Complex collaborative work | Say "create an agent team" |
+| **Loop Mode** | Very large tasks (100+ criteria) | `algorithm.ts -m loop` |
 
 **Decision criteria:**
-- If agents need to discuss/debate → Agent Teams
-- If you just need parallel results → PAI's Task tool
-- If building a large feature fast → Agent Teams
-- If doing parallel research → PAI's Task tool
+- Just need parallel results → Task tool
+- Agents need to discuss/debate → Agent Teams
+- Building large feature fast → Agent Teams
+- Massive scale (100+ criteria) → Loop Mode
+- Want personality/voice → Named Agents
 
 #### Practical Workflow
 
-**Step 1: Start with PAI planning**
+**Step 1: Start with Algorithm planning**
 
 ```
-/pai plan - Build a full-stack ticket management system with auth, API, and dashboard
+Build a full-stack ticket management system with auth, API, and dashboard
 ```
 
-**Step 2: PAI creates the plan, then spawn team**
+Algorithm runs OBSERVE → THINK → PLAN phases solo, generating ISC.
+
+**Step 2: PLAN phase identifies parallelization opportunity**
+
+When Algorithm reaches PLAN and finds 3+ independent criteria domains, it outputs:
+
+```
+PARALLELIZATION ASSESSMENT:
+│ Independent domains: auth, api, ui, tests
+│ Criteria per domain: 4, 5, 3, 4
+│ Recommendation: Create an agent team
+```
+
+**Step 3: Spawn team with domain assignments**
 
 ```
 Create an agent team to implement this plan:
-- Lead coordinator (you) - architecture decisions, conflict resolution
-- Engineer-API - REST endpoints and auth (use sonnet)
-- Engineer-DB - Schema design and migrations (use sonnet)
-- Engineer-UI - React components and state (use sonnet)
-- QATester - Write tests as engineers complete (use sonnet)
+- Lead (opus): Architecture decisions, conflict resolution
+- Engineer-Auth (sonnet): Auth module (criteria 1-4)
+- Engineer-API (sonnet): REST endpoints (criteria 5-9)
+- Engineer-UI (sonnet): React components (criteria 10-12)
+- QATester (sonnet): Write tests as engineers complete (criteria 13-16)
 
-Each teammate should follow PAI's Build phase:
-- Write tests first (TDD)
-- Implement incrementally
-- Self-review before marking done
-
-Work in parallel, coordinate on shared resources via task list.
+Each teammate follows BUILD phase:
+- Re-read ISC criteria before each artifact
+- Check anti-criteria after each artifact
+- Flag blockers to team via shared task list
 ```
 
-**Step 3: Monitor and steer**
+**Step 4: Monitor and steer**
 
 | Keys | Action |
 |------|--------|
@@ -2963,48 +3037,50 @@ Work in parallel, coordinate on shared resources via task list.
 | QATester | sonnet | Needs to understand code deeply |
 | Researchers | haiku | Fast parallel lookups |
 
-#### Example: Building a Feature Fast
-
-```
-I need to build a ticket management integration:
-- REST API with CRUD operations for SDP sync
-- PostgreSQL migrations for local cache
-- React dashboard for ticket view
-- OAuth authentication with MS365
-- Full test coverage
-
-Create an agent team using PAI methodology. Go fast -
-work in parallel, coordinate on shared resources.
-```
-
-#### What PAI Adds That Teams Don't Have
+#### What PAI v3.0 Provides for Teams
 
 | PAI Provides | Agent Teams Provides |
 |--------------|---------------------|
-| Memory (context from previous sessions) | Shared task list |
-| Skills (reusable workflows) | Inter-agent communication |
-| Hooks (quality gates) | Parallel execution |
-| Algorithm (consistent methodology) | Self-coordination |
+| ISC criteria (what "done" means) | Shared task list |
+| Constraint extraction (rules from requirements) | Inter-agent communication |
+| Build drift prevention (re-read before artifact) | Parallel execution |
+| PRDs (context survives sessions) | Self-coordination |
+| Named agents (personality, voice) | — |
+| Loop mode (unbounded parallelization) | — |
+| MEMORY (learnings, ratings) | — |
 
-Agent Teams is raw parallel power. PAI makes each agent smarter.
+#### Spotcheck Pattern
 
-#### Comparison: PAI Parallel vs Agent Teams
+**Always launch spotcheck agent after parallel work:**
 
-| Factor | PAI Parallel (Task tool) | Agent Teams |
-|--------|-------------------------|-------------|
-| **Setup** | None required | `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` |
-| **Communication** | Results return to main only | Agents message each other |
-| **Coordination** | Main agent orchestrates | Shared task list, self-coordinating |
-| **Best for** | Focused parallel tasks | Complex collaborative work |
-| **Token cost** | Lower (summarized results) | Higher (independent contexts) |
-| **Maturity** | Production-ready | Experimental |
+```
+Spotcheck: Verify all team work against ISC criteria
+- Check for drift between agents
+- Validate integration points
+- Confirm anti-criteria not violated
+```
+
+#### Comparison: Execution Approaches
+
+| Factor | Task Tool | Agent Teams | Loop Mode |
+|--------|-----------|-------------|-----------|
+| **Setup** | None | `EXPERIMENTAL_AGENT_TEAMS=1` | External CLI |
+| **Communication** | Results return to main | Agents message each other | Independent workers |
+| **Coordination** | Main orchestrates | Shared task list | PRD-based convergence |
+| **Scale** | 2-10 parallel | 2-10 agents | Unbounded (8+ workers) |
+| **Best for** | Simple parallel | Collaborative | Massive tasks |
+| **Token cost** | Lower | Higher | Highest |
 
 #### Recommended Usage in Imladris
 
-1. **Default:** Use PAI's standard parallel delegation (Task tool with multiple calls)
-2. **Large features:** Enable Agent Teams when building significant new functionality
-3. **Tight deadlines:** Agent Teams for maximum parallelization
-4. **Research/exploration:** PAI's Task tool with Haiku for fast parallel lookups
+| Scenario | Approach |
+|----------|----------|
+| Default work | Solo Algorithm execution |
+| Parallel research | Task tool with multiple calls |
+| Large features | Agent Teams |
+| Tight deadlines | Agent Teams with aggressive parallelization |
+| Very large projects (100+ criteria) | Loop mode |
+| Personality/recurring interactions | Named agents |
 
 ---
 
@@ -3296,45 +3372,105 @@ Similar patterns - see detailed field matrix in conversation.
 
 ## Appendix C: PAI Integration
 
-Imladris 2.0 builds around PAI v2.5 (Personal AI Infrastructure):
+Imladris 2.0 builds around PAI v3.0 (Personal AI Infrastructure):
 
-**PAI v2.5 Provides:**
-- AI brain (28 skills, MEMORY system, 17 hooks)
-- Goal context (TELOS - 10 identity files)
-- Execution methodology (The Algorithm v0.2.25)
-- Response format standards
-- Thinking tools (Council, RedTeam, FirstPrinciples, Science, BeCreative, Prompting)
-- 7 composition patterns (Pipeline, TDD Loop, Fan-out, Fan-in, Gate, Escalation, Specialist)
-- 12 named agents (Architect, Engineer, QATester, Pentester, etc.)
-- Two-Pass Capability Selection
-- Parallel-by-Default Execution
+**PAI v3.0 Provides:**
+
+| Category | Components |
+|----------|------------|
+| **Skills** | 37 production skills (Research, Science, Browser, Evals, etc.) |
+| **Hooks** | 20 lifecycle hooks across 6 events |
+| **Agents** | 13 named agents + dynamic composition + agent teams |
+| **Algorithm** | v1.4.0 with ISC, constraint extraction, drift prevention |
+| **MEMORY** | 7-tier system (WORK, LEARNING, RESEARCH, STATE, etc.) |
+| **PRDs** | Persistent requirements documents surviving sessions |
+| **Thinking** | Council, RedTeam, FirstPrinciples, Science, BeCreative, IterativeDepth |
+| **Parallel** | Loop mode (N workers), agent teams, fan-out patterns |
+
+**New in v3.0 (vs v2.5):**
+
+| Feature | Benefit |
+|---------|---------|
+| **Persistent PRDs** | Task context survives sessions |
+| **Agent Teams** | Native swarm coordination with shared task lists |
+| **Loop Mode** | Unbounded parallel workers on ISC criteria |
+| **Constraint Extraction** | Mechanical extraction of rules from requirements |
+| **Build Drift Prevention** | Re-read ISC before each artifact |
+| **Verification Rehearsal** | Simulate failures before real verification |
+| **Context Recovery** | ≤34s cold-start recovery from MEMORY/PRDs |
+| **Skill-Index** | 75% context savings via deferred loading |
 
 **Imladris Provides:**
-- Workspace organization (5-zone system)
-- Datahub (external sources → unified storage)
-- Windmill integration (external API gateway)
-- Context signaling (status bar, colors)
-- Bidirectional sync to SDP
-- OpenClaw (mobile access)
 
-### C.1 PAI Hooks to Adopt
+| Component | Purpose |
+|-----------|---------|
+| **5-Zone Workflow** | Workspace organization (work/home/research/tasks/adhoc) |
+| **Datahub** | External sources → unified task storage |
+| **Windmill** | External API gateway (SDP, MS365, Slack polling) |
+| **Bidirectional Sync** | Write-back to ServiceDesk Plus |
+| **OpenClaw** | Mobile access via Telegram/WhatsApp/Signal |
+| **Context Signaling** | Status bar, zone colors |
 
-| Hook | Event | Purpose | Imladris Benefit |
-|------|-------|---------|------------------|
-| `LoadContext.hook.ts` | SessionStart | Inject context automatically | No manual context loading |
-| `SecurityValidator.hook.ts` | PreToolUse | Block dangerous commands | Security without custom code |
-| `SessionSummary.hook.ts` | Stop | Generate session summaries | Auto-capture to datahub |
-| `ExplicitRatingCapture.hook.ts` | UserPromptSubmit | Capture 1-10 ratings | Feedback without prompting |
-| `ImplicitSentimentCapture.hook.ts` | Stop | Analyze sentiment | Detect frustration/satisfaction |
-| `WorkCompletionLearning.hook.ts` | Stop | Extract learnings | Continuous improvement |
+### C.1 PAI Hooks to Adopt (20 Available)
+
+**SessionStart (3 hooks):**
+
+| Hook | Purpose | Imladris Benefit |
+|------|---------|------------------|
+| `StartupGreeting.hook.ts` | Personalized greeting | Consistent session start |
+| `LoadContext.hook.ts` | Inject PAI SKILL.md | No manual context loading |
+| `CheckVersion.hook.ts` | Version compatibility | Auto-detect PAI updates |
+
+**UserPromptSubmit (4 hooks):**
+
+| Hook | Purpose | Imladris Benefit |
+|------|---------|------------------|
+| `RatingCapture.hook.ts` | Capture 1-10 ratings + Haiku inference | Feedback without prompting |
+| `AutoWorkCreation.hook.ts` | Create work directories, track ISC | Automatic task organization |
+| `UpdateTabTitle.hook.ts` | Dynamic tab titles | Context visibility |
+| `SessionAutoName.hook.ts` | Auto-name sessions | Better session management |
+
+**PreToolUse (4 hooks):**
+
+| Hook | Purpose | Imladris Benefit |
+|------|---------|------------------|
+| `SecurityValidator.hook.ts` | Block dangerous commands via patterns.yaml | Security without custom code |
+| `SetQuestionTab.hook.ts` | Tab state on questions | UX clarity |
+| `AgentExecutionGuard.hook.ts` | Security constraints on multi-agent | Safe parallel execution |
+| `SkillGuard.hook.ts` | Skill access control | Skill isolation |
+
+**PostToolUse (2 hooks):**
+
+| Hook | Purpose | Imladris Benefit |
+|------|---------|------------------|
+| `AlgorithmTracker.hook.ts` | Phase tracking + ISC mutations | Algorithm observability |
+| `QuestionAnswered.hook.ts` | Track question resolution | UX completion |
+
+**Stop (1 hook):**
+
+| Hook | Purpose | Imladris Benefit |
+|------|---------|------------------|
+| `StopOrchestrator.hook.ts` | Coordinate voice + tab resets | Unified stop handling |
+
+**SessionEnd (6 hooks):**
+
+| Hook | Purpose | Imladris Benefit |
+|------|---------|------------------|
+| `WorkCompletionLearning.hook.ts` | Extract algorithm learnings | Continuous improvement |
+| `SessionSummary.hook.ts` | Mark work COMPLETED | Auto-capture to datahub |
+| `RelationshipMemory.hook.ts` | Track user preferences | Personalization |
+| `UpdateCounts.hook.ts` | Update system statistics | Metrics |
+| `IntegrityCheck.hook.ts` | System health validation | Reliability |
+| `ImplicitSentimentCapture.hook.ts` | Haiku sentiment analysis | Detect frustration |
 
 ### C.2 Custom Imladris Hooks
 
 | Hook | Event | Purpose | Why Custom |
 |------|-------|---------|------------|
-| `DatahubSync.hook.ts` | Stop | Sync completed tasks to datahub | Datahub-specific logic |
+| `DatahubSync.hook.ts` | SessionEnd | Sync completed tasks to datahub | Datahub-specific logic |
 | `ZoneContext.hook.ts` | SessionStart | Load zone-specific context | 5-zone system is imladris-specific |
-| `OpenClawContext.hook.ts` | Stop | Sync context for mobile access | OpenClaw reads shared filesystem |
+| `OpenClawContext.hook.ts` | SessionEnd | Sync context for mobile access | OpenClaw reads shared filesystem |
+| `WindmillTrigger.hook.ts` | SessionEnd | Trigger Windmill sync jobs | External API coordination |
 
 ### C.3 What PAI Does NOT Replace
 
@@ -3347,11 +3483,80 @@ Imladris 2.0 builds around PAI v2.5 (Personal AI Infrastructure):
 | **`dh` CLI** | PAI doesn't provide unified task/item interface |
 | **Bidirectional SDP Sync** | PAI doesn't integrate with ServiceDesk Plus |
 
-**Spec Kit Provides:**
-- Specification-driven development workflow
-- Four-phase structure (specify → plan → task → implement)
-- Acceptance criteria and test definitions
-- Consistent methodology for all code changes
+### C.4 PRD Integration with Datahub
+
+PAI v3.0's Persistent PRDs complement datahub:
+
+| System | Purpose | Data Type |
+|--------|---------|-----------|
+| **Datahub** | Task source of truth | Items from SDP, Slack, email |
+| **PRDs** | Execution context | ISC criteria, decisions, progress |
+
+**Integration pattern:**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Datahub Item (source of truth)                             │
+│  /data/work/datahub/items/sdp-1234.md                       │
+│  - What: "Fix auth token refresh"                           │
+│  - Source: SDP ticket                                       │
+│  - Status: in-progress                                      │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼ Claude starts work
+┌─────────────────────────────────────────────────────────────┐
+│  PRD (execution context)                                    │
+│  ~/.claude/MEMORY/WORK/auth-fix/PRD-20260217-auth-fix.md   │
+│  - ISC: 12 criteria for "done"                              │
+│  - Progress: 8/12 passing                                   │
+│  - Decisions: JWT over sessions (stateless)                 │
+│  - Survives session restart                                 │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼ Work completes
+┌─────────────────────────────────────────────────────────────┐
+│  Datahub Item (updated)                                     │
+│  - Status: done                                             │
+│  - Link to PRD for audit trail                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**PRD frontmatter fields:**
+
+```yaml
+prd: true
+id: PRD-{YYYYMMDD}-{slug}
+status: DRAFT|CRITERIA_DEFINED|PLANNED|IN_PROGRESS|VERIFYING|COMPLETE
+effort_level: Instant|Fast|Standard|Extended|Deep|Comprehensive|Loop
+iteration: 0
+last_phase: OBSERVE|THINK|PLAN|BUILD|EXECUTE|VERIFY|LEARN
+verification_summary: "8/12"
+datahub_item: sdp-1234  # Link back to source
+```
+
+### C.5 settings.json Configuration
+
+Enable PAI v3.0 features in `~/.claude/settings.json`:
+
+```json
+{
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
+    "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "80000"
+  },
+  "permissions": {
+    "allow": ["Bash", "Read", "Write", "Edit", "Skill", "Task", "mcp__*"]
+  },
+  "hooks": {
+    "SessionStart": ["StartupGreeting", "LoadContext", "ZoneContext"],
+    "UserPromptSubmit": ["RatingCapture", "AutoWorkCreation"],
+    "PreToolUse": ["SecurityValidator", "AgentExecutionGuard"],
+    "PostToolUse": ["AlgorithmTracker"],
+    "Stop": ["StopOrchestrator"],
+    "SessionEnd": ["WorkCompletionLearning", "SessionSummary", "DatahubSync"]
+  }
+}
+```
 
 **Layer Integration:**
 
@@ -5666,13 +5871,13 @@ MCP (Model Context Protocol) servers extend Claude Code's capabilities by connec
 
 | Capability | Handled By | Rationale |
 |------------|------------|-----------|
-| Structured reasoning | PAI (Foundational Algorithm) | Observe → Think → Plan → Build → Execute → Verify → Learn |
+| Structured reasoning | PAI Algorithm v1.4.0 | 7-phase + ISC + constraint extraction + drift prevention |
 | Complex problem-solving | PAI (pai-agents-skill) | Agent packs for multi-perspective analysis |
 | Security/code review | PAI (pai-redteam-skill) | 32 adversarial agents for thorough review |
 | **External documentation** | **MCP (Context7)** | Real-time data, not reasoning |
 | **Deterministic code scanning** | **MCP (Lucidity)** | Automated analysis, not AI judgment |
 
-**What we avoid:** MCP servers that duplicate PAI's reasoning (e.g., Sequential Thinking, Deep Code Reasoning). These add complexity without benefit since PAI already provides structured thinking via skills and the Foundational Algorithm.
+**What we avoid:** MCP servers that duplicate PAI's reasoning (e.g., Sequential Thinking, Deep Code Reasoning). These add complexity without benefit since PAI already provides structured thinking via skills and the Algorithm v1.4.0.
 
 ### I.2.1 MCP vs Windmill
 
@@ -5825,7 +6030,7 @@ These MCP servers were evaluated and excluded to avoid duplicating PAI:
 
 | MCP Server | Why Excluded |
 |------------|--------------|
-| Sequential Thinking | PAI's Foundational Algorithm already provides structured reasoning |
+| Sequential Thinking | PAI's Algorithm v1.4.0 already provides structured reasoning |
 | Deep Code Reasoning | pai-redteam-skill covers code analysis with 32 agent perspectives |
 | Other "reasoning" MCPs | Single-thread Claude + PAI skills is the preferred pattern |
 
