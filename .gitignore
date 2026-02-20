@@ -1,0 +1,20 @@
+# Secrets
+.env
+*.pem
+*.key
+
+# Terraform (v1 remnants — should not exist)
+*.tfstate
+*.tfstate.backup
+.terraform/
+.terraform.lock.hcl
+tfplan
+
+# OS
+.DS_Store
+*.swp
+*~
+
+# Runtime state (should never be in this repo)
+MEMORY/
+*.jsonl

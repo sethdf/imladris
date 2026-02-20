@@ -1,0 +1,111 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Imladris cloud workstation — EC2 instance with encrypted EBS,
+  IAM role, security group (Tailscale-only), and KMS key.
+
+# TODO: Full implementation during Phase 1
+# This is the skeleton — parameters, resources, and outputs to be filled in.
+
+Parameters:
+  InstanceType:
+    Type: String
+    Default: t3.xlarge
+    Description: EC2 instance type (4 vCPU, 16GB for Windmill comfort)
+
+  AmiId:
+    Type: AWS::EC2::Image::Id
+    Description: AMI to launch from (Amazon Linux 2023 or custom)
+
+  TailscaleAuthKey:
+    Type: String
+    NoEcho: true
+    Description: Tailscale auth key for automatic enrollment
+
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: SSH key pair (backup access only — primary access via Tailscale)
+
+Resources:
+  # KMS Key for EBS encryption (Decision #30)
+  WorkstationKmsKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: Imladris workstation EBS encryption key
+      KeyUsage: ENCRYPT_DECRYPT
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: RootSafetyNet
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          # TODO: Add Seth-only MFA-locked policy statements
+
+  WorkstationKmsAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: alias/workstation-ebs
+      TargetKeyId: !Ref WorkstationKmsKey
+
+  # Security Group — zero inbound (Decision #33: Tailscale-only)
+  WorkstationSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Imladris workstation — no public inbound, Tailscale only
+      SecurityGroupIngress: []  # Empty — all access via Tailscale mesh
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound (AWS APIs, Tailscale, package repos)
+
+  # IAM Role for EC2 instance (Decision #16: no stored credentials)
+  WorkstationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: ImladrisWorkstationRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/ReadOnlyAccess
+      # TODO: Add inline policy for cross-account AssumeRole
+
+  WorkstationInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref WorkstationRole
+
+  # EC2 Instance
+  WorkstationInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: !Ref AmiId
+      IamInstanceProfile: !Ref WorkstationInstanceProfile
+      KeyName: !Ref KeyPairName
+      SecurityGroupIds:
+        - !GetAtt WorkstationSecurityGroup.GroupId
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 100
+            VolumeType: gp3
+            Encrypted: true
+            KmsKeyId: !Ref WorkstationKmsKey
+      # TODO: UserData for bootstrap
+
+Outputs:
+  InstanceId:
+    Value: !Ref WorkstationInstance
+  KmsKeyId:
+    Value: !Ref WorkstationKmsKey
+  SecurityGroupId:
+    Value: !GetAtt WorkstationSecurityGroup.GroupId

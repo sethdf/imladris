@@ -1,0 +1,50 @@
+# Imladris Services — Windmill + supporting services
+# Deploy: docker compose up -d
+# Docs: https://www.windmill.dev/docs/advanced/self_host
+
+services:
+  windmill_server:
+    image: ghcr.io/windmill-labs/windmill:latest
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgres://postgres:${WINDMILL_DB_PASSWORD:-windmill}@windmill_db/windmill
+      - MODE=server
+    depends_on:
+      windmill_db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  windmill_worker:
+    image: ghcr.io/windmill-labs/windmill:latest
+    restart: always
+    environment:
+      - DATABASE_URL=postgres://postgres:${WINDMILL_DB_PASSWORD:-windmill}@windmill_db/windmill
+      - MODE=worker
+      - WORKER_GROUP=default
+    depends_on:
+      windmill_db:
+        condition: service_healthy
+
+  windmill_db:
+    image: postgres:16
+    restart: always
+    volumes:
+      - windmill_db_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_DB=windmill
+      - POSTGRES_PASSWORD=${WINDMILL_DB_PASSWORD:-windmill}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  windmill_db_data:

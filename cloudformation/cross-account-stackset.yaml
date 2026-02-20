@@ -1,0 +1,51 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Cross-account IAM roles for Imladris workstation.
+  Deployed via StackSet to all member accounts.
+  Two roles: ReadOnly (default) + ReadWrite (explicit escalation).
+  Decision #17.
+
+# TODO: Full implementation during Phase 1
+
+Parameters:
+  WorkstationAccountId:
+    Type: String
+    Description: AWS account ID where the workstation EC2 instance runs
+
+Resources:
+  # ReadOnly role — instance profile default, Steampipe queries
+  ImladrisReadOnlyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: ImladrisReadOnly
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${WorkstationAccountId}:role/ImladrisWorkstationRole'
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/ReadOnlyAccess
+
+  # ReadWrite role — explicit escalation, CloudTrail logged
+  ImladrisReadWriteRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: ImladrisReadWrite
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${WorkstationAccountId}:role/ImladrisWorkstationRole'
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/PowerUserAccess
+      # TODO: Scope down from PowerUserAccess to specific services
+
+Outputs:
+  ReadOnlyRoleArn:
+    Value: !GetAtt ImladrisReadOnlyRole.Arn
+  ReadWriteRoleArn:
+    Value: !GetAtt ImladrisReadWriteRole.Arn
