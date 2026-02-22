@@ -1,16 +1,28 @@
-# Imladris Services — Windmill + supporting services
+# Imladris v2 — Windmill + supporting services
+# Decision 18: Windmill self-hosted on EC2, Docker Compose
+# Decision 33: Tailscale-only network — all ports bind to 127.0.0.1 ONLY
+#
+# IMPORTANT: Docker data-root is on NVMe instance store (/local/docker) for performance.
+# Postgres data uses a bind mount to EBS (/home/ec2-user/.windmill/postgres) for persistence.
+# All other Docker data (images, containers) is ephemeral and re-pulled after stop/start.
+#
 # Deploy: docker compose up -d
-# Docs: https://www.windmill.dev/docs/advanced/self_host
+# Docs:   https://www.windmill.dev/docs/advanced/self_host
+#
+# REQUIRED: Create a .env file with WINDMILL_DB_PASSWORD set.
+#   See .env.example for reference:
+#     WINDMILL_DB_PASSWORD=<generate-a-strong-password>
 
 services:
   windmill_server:
     image: ghcr.io/windmill-labs/windmill:latest
     restart: always
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
-      - DATABASE_URL=postgres://postgres:${WINDMILL_DB_PASSWORD:-windmill}@windmill_db/windmill
+      - DATABASE_URL=postgres://postgres:${WINDMILL_DB_PASSWORD}@windmill_db/windmill
       - MODE=server
+      - BASE_URL=http://127.0.0.1:8000
     depends_on:
       windmill_db:
         condition: service_healthy
@@ -25,9 +37,20 @@ services:
     image: ghcr.io/windmill-labs/windmill:latest
     restart: always
     environment:
-      - DATABASE_URL=postgres://postgres:${WINDMILL_DB_PASSWORD:-windmill}@windmill_db/windmill
+      - DATABASE_URL=postgres://postgres:${WINDMILL_DB_PASSWORD}@windmill_db/windmill
       - MODE=worker
       - WORKER_GROUP=default
+    depends_on:
+      windmill_db:
+        condition: service_healthy
+
+  windmill_worker_native:
+    image: ghcr.io/windmill-labs/windmill:latest
+    restart: always
+    environment:
+      - DATABASE_URL=postgres://postgres:${WINDMILL_DB_PASSWORD}@windmill_db/windmill
+      - MODE=worker
+      - WORKER_GROUP=native
     depends_on:
       windmill_db:
         condition: service_healthy
@@ -35,16 +58,21 @@ services:
   windmill_db:
     image: postgres:16
     restart: always
+    ports:
+      - "127.0.0.1:5432:5432"
     volumes:
-      - windmill_db_data:/var/lib/postgresql/data
+      - /home/ec2-user/.windmill/postgres:/var/lib/postgresql/data
     environment:
       - POSTGRES_DB=windmill
-      - POSTGRES_PASSWORD=${WINDMILL_DB_PASSWORD:-windmill}
+      - POSTGRES_PASSWORD=${WINDMILL_DB_PASSWORD}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-volumes:
-  windmill_db_data:
+  windmill_lsp:
+    image: ghcr.io/windmill-labs/windmill-lsp:latest
+    restart: always
+    ports:
+      - "127.0.0.1:3001:3001"

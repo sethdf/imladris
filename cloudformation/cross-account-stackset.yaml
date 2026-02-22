@@ -1,51 +1,257 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  Cross-account IAM roles for Imladris workstation.
-  Deployed via StackSet to all member accounts.
-  Two roles: ReadOnly (default) + ReadWrite (explicit escalation).
-  Decision #17.
-
-# TODO: Full implementation during Phase 1
+  Cross-account IAM roles for Imladris v2 cloud workstation.
+  Deployed via StackSet to all member accounts (Decision #17).
+  Two roles: ImladrisReadOnly (default, Steampipe queries) and
+  ImladrisReadWrite (explicit escalation, CloudTrail logged).
+  ReadWrite uses a custom policy scoped to specific services,
+  with explicit deny on privilege escalation paths (Decision #27).
 
 Parameters:
   WorkstationAccountId:
     Type: String
-    Description: AWS account ID where the workstation EC2 instance runs
+    Description: AWS account ID where the Imladris EC2 workstation runs
+    AllowedPattern: '^\d{12}$'
+    ConstraintDescription: Must be a 12-digit AWS account ID
 
 Resources:
-  # ReadOnly role — instance profile default, Steampipe queries
+
   ImladrisReadOnlyRole:
     Type: AWS::IAM::Role
     Properties:
       RoleName: ImladrisReadOnly
+      Description: >-
+        Default cross-account role for Imladris workstation.
+        Used by Steampipe queries and all read operations.
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
           - Effect: Allow
             Principal:
               AWS: !Sub 'arn:aws:iam::${WorkstationAccountId}:role/ImladrisWorkstationRole'
-            Action: sts:AssumeRole
+            Action: 'sts:AssumeRole'
       ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/ReadOnlyAccess
+        - 'arn:aws:iam::aws:policy/ReadOnlyAccess'
 
-  # ReadWrite role — explicit escalation, CloudTrail logged
   ImladrisReadWriteRole:
     Type: AWS::IAM::Role
     Properties:
       RoleName: ImladrisReadWrite
+      Description: >-
+        Escalated cross-account role for Imladris workstation.
+        Requires explicit AssumeRole, all usage logged in CloudTrail.
+        Scoped to specific services with explicit privilege escalation deny.
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
           - Effect: Allow
             Principal:
               AWS: !Sub 'arn:aws:iam::${WorkstationAccountId}:role/ImladrisWorkstationRole'
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/PowerUserAccess
-      # TODO: Scope down from PowerUserAccess to specific services
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: ImladrisReadWritePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+
+              - Sid: EC2Management
+                Effect: Allow
+                Action:
+                  - 'ec2:StartInstances'
+                  - 'ec2:StopInstances'
+                  - 'ec2:TerminateInstances'
+                  - 'ec2:ModifyInstanceAttribute'
+                  - 'ec2:ModifyInstanceMetadataOptions'
+                  - 'ec2:CreateSecurityGroup'
+                  - 'ec2:DeleteSecurityGroup'
+                  - 'ec2:AuthorizeSecurityGroupIngress'
+                  - 'ec2:AuthorizeSecurityGroupEgress'
+                  - 'ec2:RevokeSecurityGroupIngress'
+                  - 'ec2:RevokeSecurityGroupEgress'
+                  - 'ec2:CreateVolume'
+                  - 'ec2:DeleteVolume'
+                  - 'ec2:AttachVolume'
+                  - 'ec2:DetachVolume'
+                  - 'ec2:ModifyVolume'
+                  - 'ec2:CreateSnapshot'
+                  - 'ec2:DeleteSnapshot'
+                  - 'ec2:CreateTags'
+                  - 'ec2:DeleteTags'
+                  - 'ec2:RunInstances'
+                Resource: '*'
+
+              - Sid: S3Management
+                Effect: Allow
+                Action:
+                  - 's3:CreateBucket'
+                  - 's3:DeleteBucket'
+                  - 's3:PutBucketPolicy'
+                  - 's3:DeleteBucketPolicy'
+                  - 's3:PutBucketVersioning'
+                  - 's3:PutBucketEncryption'
+                  - 's3:PutBucketTagging'
+                  - 's3:PutObject'
+                  - 's3:DeleteObject'
+                  - 's3:PutObjectTagging'
+                  - 's3:DeleteObjectTagging'
+                Resource: '*'
+
+              - Sid: IAMLimited
+                Effect: Allow
+                Action:
+                  - 'iam:CreateRole'
+                  - 'iam:DeleteRole'
+                  - 'iam:AttachRolePolicy'
+                  - 'iam:DetachRolePolicy'
+                  - 'iam:PutRolePolicy'
+                  - 'iam:DeleteRolePolicy'
+                  - 'iam:CreatePolicy'
+                  - 'iam:DeletePolicy'
+                  - 'iam:CreatePolicyVersion'
+                  - 'iam:DeletePolicyVersion'
+                  - 'iam:CreateInstanceProfile'
+                  - 'iam:DeleteInstanceProfile'
+                  - 'iam:AddRoleToInstanceProfile'
+                  - 'iam:RemoveRoleFromInstanceProfile'
+                  - 'iam:TagRole'
+                  - 'iam:UntagRole'
+                  - 'iam:PassRole'
+                  - 'iam:UpdateAssumeRolePolicy'
+                Resource: '*'
+
+              - Sid: LambdaManagement
+                Effect: Allow
+                Action:
+                  - 'lambda:CreateFunction'
+                  - 'lambda:UpdateFunctionCode'
+                  - 'lambda:UpdateFunctionConfiguration'
+                  - 'lambda:DeleteFunction'
+                  - 'lambda:AddPermission'
+                  - 'lambda:RemovePermission'
+                  - 'lambda:CreateEventSourceMapping'
+                  - 'lambda:DeleteEventSourceMapping'
+                  - 'lambda:TagResource'
+                  - 'lambda:UntagResource'
+                  - 'lambda:PublishVersion'
+                  - 'lambda:CreateAlias'
+                  - 'lambda:DeleteAlias'
+                  - 'lambda:UpdateAlias'
+                Resource: '*'
+
+              - Sid: CloudFormationManagement
+                Effect: Allow
+                Action:
+                  - 'cloudformation:CreateStack'
+                  - 'cloudformation:UpdateStack'
+                  - 'cloudformation:DeleteStack'
+                  - 'cloudformation:CreateChangeSet'
+                  - 'cloudformation:ExecuteChangeSet'
+                  - 'cloudformation:DeleteChangeSet'
+                  - 'cloudformation:SetStackPolicy'
+                  - 'cloudformation:TagResource'
+                  - 'cloudformation:UntagResource'
+                  - 'cloudformation:ContinueUpdateRollback'
+                  - 'cloudformation:CancelUpdateStack'
+                Resource: '*'
+
+              - Sid: CloudWatchManagement
+                Effect: Allow
+                Action:
+                  - 'cloudwatch:PutMetricData'
+                  - 'cloudwatch:PutMetricAlarm'
+                  - 'cloudwatch:DeleteAlarms'
+                  - 'cloudwatch:EnableAlarmActions'
+                  - 'cloudwatch:DisableAlarmActions'
+                  - 'cloudwatch:TagResource'
+                  - 'cloudwatch:UntagResource'
+                  - 'logs:CreateLogGroup'
+                  - 'logs:DeleteLogGroup'
+                  - 'logs:PutRetentionPolicy'
+                  - 'logs:TagLogGroup'
+                  - 'logs:UntagLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:DeleteLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: '*'
+
+              - Sid: SNSManagement
+                Effect: Allow
+                Action:
+                  - 'sns:CreateTopic'
+                  - 'sns:DeleteTopic'
+                  - 'sns:Publish'
+                  - 'sns:Subscribe'
+                  - 'sns:Unsubscribe'
+                  - 'sns:SetTopicAttributes'
+                  - 'sns:TagResource'
+                  - 'sns:UntagResource'
+                Resource: '*'
+
+              - Sid: SQSManagement
+                Effect: Allow
+                Action:
+                  - 'sqs:CreateQueue'
+                  - 'sqs:DeleteQueue'
+                  - 'sqs:SendMessage'
+                  - 'sqs:ReceiveMessage'
+                  - 'sqs:DeleteMessage'
+                  - 'sqs:PurgeQueue'
+                  - 'sqs:SetQueueAttributes'
+                  - 'sqs:TagQueue'
+                  - 'sqs:UntagQueue'
+                Resource: '*'
+
+              - Sid: SSMParameterManagement
+                Effect: Allow
+                Action:
+                  - 'ssm:PutParameter'
+                  - 'ssm:GetParameter'
+                  - 'ssm:GetParameters'
+                  - 'ssm:GetParametersByPath'
+                  - 'ssm:DeleteParameter'
+                  - 'ssm:DeleteParameters'
+                  - 'ssm:AddTagsToResource'
+                  - 'ssm:RemoveTagsFromResource'
+                Resource: '*'
+
+              - Sid: DynamoDBManagement
+                Effect: Allow
+                Action:
+                  - 'dynamodb:CreateTable'
+                  - 'dynamodb:DeleteTable'
+                  - 'dynamodb:UpdateTable'
+                  - 'dynamodb:PutItem'
+                  - 'dynamodb:GetItem'
+                  - 'dynamodb:DeleteItem'
+                  - 'dynamodb:UpdateItem'
+                  - 'dynamodb:Query'
+                  - 'dynamodb:Scan'
+                  - 'dynamodb:BatchWriteItem'
+                  - 'dynamodb:BatchGetItem'
+                  - 'dynamodb:TagResource'
+                  - 'dynamodb:UntagResource'
+                Resource: '*'
+
+              - Sid: DenyPrivilegeEscalation
+                Effect: Deny
+                Action:
+                  - 'iam:CreateUser'
+                  - 'iam:CreateLoginProfile'
+                  - 'iam:UpdateLoginProfile'
+                  - 'iam:CreateAccessKey'
+                  - 'iam:CreateServiceSpecificCredential'
+                  - 'organizations:*'
+                  - 'account:*'
+                Resource: '*'
 
 Outputs:
   ReadOnlyRoleArn:
+    Description: ARN of the ImladrisReadOnly role for cross-account read access
     Value: !GetAtt ImladrisReadOnlyRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-ReadOnlyRoleArn'
   ReadWriteRoleArn:
+    Description: ARN of the ImladrisReadWrite role for cross-account write access
     Value: !GetAtt ImladrisReadWriteRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-ReadWriteRoleArn'

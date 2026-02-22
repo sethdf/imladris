@@ -1,48 +1,172 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  Imladris cloud workstation — EC2 instance with encrypted EBS,
-  IAM role, security group (Tailscale-only), and KMS key.
-
-# TODO: Full implementation during Phase 1
-# This is the skeleton — parameters, resources, and outputs to be filled in.
+  Imladris v2 cloud workstation — creates dedicated VPC with internet gateway,
+  EC2 instance with customer-managed KMS encryption, automated UserData bootstrap
+  (SSM secrets, Tailscale, repo clone), IAM role for cross-account AssumeRole,
+  zero-inbound security group (Tailscale-only), hourly DLM EBS snapshots,
+  Bedrock VPC endpoints, and S3 knowledge bucket. No long-lived credentials anywhere.
 
 Parameters:
   InstanceType:
     Type: String
-    Default: t3.xlarge
-    Description: EC2 instance type (4 vCPU, 16GB for Windmill comfort)
+    Default: m7gd.xlarge
+    Description: EC2 instance type (Graviton3, NVMe instance store, non-burstable — 4 vCPU, 16GB)
+    AllowedValues:
+      - m7gd.large
+      - m7gd.xlarge
+      - m7gd.2xlarge
+      - m8gd.xlarge
+      - m8gd.2xlarge
+      - t4g.large
+      - t4g.xlarge
+      - t4g.2xlarge
 
   AmiId:
-    Type: AWS::EC2::Image::Id
-    Description: AMI to launch from (Amazon Linux 2023 or custom)
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64
+    Description: SSM parameter path for AMI lookup (Amazon Linux 2023 ARM64)
 
-  TailscaleAuthKey:
+  SethIamUserArn:
     Type: String
-    NoEcho: true
-    Description: Tailscale auth key for automatic enrollment
+    Description: ARN of Seth's IAM user for MFA-locked KMS key admin operations
+    AllowedPattern: 'arn:aws:iam::\d{12}:user/.+'
+    ConstraintDescription: Must be a valid IAM user ARN
 
-  KeyPairName:
-    Type: AWS::EC2::KeyPair::KeyName
-    Description: SSH key pair (backup access only — primary access via Tailscale)
+  TargetAccountIds:
+    Type: CommaDelimitedList
+    Description: Comma-separated list of AWS account IDs for cross-account AssumeRole
 
 Resources:
-  # KMS Key for EBS encryption (Decision #30)
+  # ============================================================
+  # VPC and Networking
+  # Dedicated VPC for the workstation with internet gateway.
+  # Single public subnet in first AZ. Zero inbound via SG.
+  # ============================================================
+  WorkstationVpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: ImladrisVpc
+        - Key: Project
+          Value: Imladris
+
+  WorkstationSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref WorkstationVpc
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: ImladrisPublicSubnet
+        - Key: Project
+          Value: Imladris
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: ImladrisIgw
+        - Key: Project
+          Value: Imladris
+
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref WorkstationVpc
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref WorkstationVpc
+      Tags:
+        - Key: Name
+          Value: ImladrisPublicRouteTable
+        - Key: Project
+          Value: Imladris
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  SubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref WorkstationSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  # ============================================================
+  # KMS Key for EBS encryption (Decision 30)
+  # Customer-managed CMK with MFA-locked admin operations.
+  # Root has emergency access. Seth can admin only with MFA.
+  # EC2 role can use the key for encrypt/decrypt (no admin).
+  # ============================================================
   WorkstationKmsKey:
     Type: AWS::KMS::Key
     Properties:
-      Description: Imladris workstation EBS encryption key
+      Description: Imladris workstation EBS encryption key — MFA-locked admin
       KeyUsage: ENCRYPT_DECRYPT
       EnableKeyRotation: true
       KeyPolicy:
         Version: '2012-10-17'
         Statement:
-          - Sid: RootSafetyNet
+          - Sid: RootEmergencyAccess
             Effect: Allow
             Principal:
               AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
             Action: 'kms:*'
             Resource: '*'
-          # TODO: Add Seth-only MFA-locked policy statements
+
+          - Sid: SethKeyAdminWithMFA
+            Effect: Allow
+            Principal:
+              AWS: !Ref SethIamUserArn
+            Action:
+              - kms:Create*
+              - kms:Describe*
+              - kms:Enable*
+              - kms:List*
+              - kms:Put*
+              - kms:Update*
+              - kms:Revoke*
+              - kms:Disable*
+              - kms:Get*
+              - kms:Delete*
+              - kms:TagResource
+              - kms:UntagResource
+              - kms:ScheduleKeyDeletion
+              - kms:CancelKeyDeletion
+            Resource: '*'
+            Condition:
+              Bool:
+                'aws:MultiFactorAuthPresent': 'true'
+
+          - Sid: SethKeyReadWithoutMFA
+            Effect: Allow
+            Principal:
+              AWS: !Ref SethIamUserArn
+            Action:
+              - kms:Describe*
+              - kms:Get*
+              - kms:List*
+            Resource: '*'
+
+      Tags:
+        - Key: Name
+          Value: ImladrisWorkstationKey
+        - Key: Project
+          Value: Imladris
 
   WorkstationKmsAlias:
     Type: AWS::KMS::Alias
@@ -50,18 +174,34 @@ Resources:
       AliasName: alias/workstation-ebs
       TargetKeyId: !Ref WorkstationKmsKey
 
-  # Security Group — zero inbound (Decision #33: Tailscale-only)
+  # ============================================================
+  # Security Group (Decision 33)
+  # Zero public inbound ports. All access via Tailscale mesh.
+  # All outbound allowed for AWS APIs, Tailscale, packages.
+  # ============================================================
   WorkstationSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Imladris workstation — no public inbound, Tailscale only
-      SecurityGroupIngress: []  # Empty — all access via Tailscale mesh
+      GroupDescription: Imladris workstation - zero inbound, Tailscale-only access
+      VpcId: !Ref WorkstationVpc
+      SecurityGroupIngress: []
       SecurityGroupEgress:
         - IpProtocol: '-1'
           CidrIp: 0.0.0.0/0
-          Description: Allow all outbound (AWS APIs, Tailscale, package repos)
+          Description: Allow all outbound (AWS APIs, Tailscale DERP, package repos)
+      Tags:
+        - Key: Name
+          Value: ImladrisWorkstationSG
+        - Key: Project
+          Value: Imladris
 
-  # IAM Role for EC2 instance (Decision #16: no stored credentials)
+  # ============================================================
+  # IAM Role for EC2 (Decision 16 + 17)
+  # No long-lived credentials. EC2 assumes this role via instance profile.
+  # Inline policy allows AssumeRole to ImladrisReadOnly and
+  # Bedrock policy enables AI failover when Anthropic API is unavailable.
+  # ImladrisReadWrite in all target accounts.
+  # ============================================================
   WorkstationRole:
     Type: AWS::IAM::Role
     Properties:
@@ -75,22 +215,120 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/ReadOnlyAccess
-      # TODO: Add inline policy for cross-account AssumeRole
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: CrossAccountAssumeRole
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: AssumeTargetAccountRoles
+                Effect: Allow
+                Action: sts:AssumeRole
+                Resource:
+                  - 'arn:aws:iam::*:role/ImladrisReadOnly'
+                  - 'arn:aws:iam::*:role/ImladrisReadWrite'
+                Condition:
+                  ForAnyValue:StringEquals:
+                    'aws:ResourceAccount': !Ref TargetAccountIds
+        - PolicyName: KmsUsage
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: UseWorkstationKmsKey
+                Effect: Allow
+                Action:
+                  - kms:Encrypt
+                  - kms:Decrypt
+                  - kms:ReEncrypt*
+                  - kms:GenerateDataKey*
+                  - kms:DescribeKey
+                Resource: !GetAtt WorkstationKmsKey.Arn
+        - PolicyName: BedrockAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ClaudeCodeBedrockFailover
+                Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                  - bedrock:ListInferenceProfiles
+                Resource: '*'
+        - PolicyName: SsmParameterAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ReadBootstrapSecrets
+                Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/imladris/*'
+        - PolicyName: KnowledgeBaseAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: BedrockKnowledgeBaseAndGuardrails
+                Effect: Allow
+                Action:
+                  - bedrock:Retrieve
+                  - bedrock:RetrieveAndGenerate
+                  - bedrock:ApplyGuardrail
+                  - bedrock:CreateKnowledgeBase
+                  - bedrock:UpdateKnowledgeBase
+                  - bedrock:DeleteKnowledgeBase
+                  - bedrock:GetKnowledgeBase
+                  - bedrock:ListKnowledgeBases
+                  - bedrock:AssociateThirdPartyKnowledgeBase
+                  - bedrock:CreateDataSource
+                  - bedrock:UpdateDataSource
+                  - bedrock:DeleteDataSource
+                  - bedrock:GetDataSource
+                  - bedrock:ListDataSources
+                  - bedrock:StartIngestionJob
+                  - bedrock:GetIngestionJob
+                  - bedrock:ListIngestionJobs
+                  - bedrock:CreateGuardrail
+                  - bedrock:UpdateGuardrail
+                  - bedrock:GetGuardrail
+                  - bedrock:ListGuardrails
+                Resource: '*'
+              - Sid: KnowledgeBucketAccess
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:ListBucket
+                  - s3:DeleteObject
+                Resource:
+                  - !GetAtt KnowledgeBucket.Arn
+                  - !Sub '${KnowledgeBucket.Arn}/*'
+      Tags:
+        - Key: Name
+          Value: ImladrisWorkstationRole
+        - Key: Project
+          Value: Imladris
 
   WorkstationInstanceProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
+      InstanceProfileName: ImladrisWorkstationProfile
       Roles:
         - !Ref WorkstationRole
 
-  # EC2 Instance
+  # ============================================================
+  # EC2 Instance (Decision 18)
+  # t3.xlarge, 100GB gp3, encrypted with customer-managed CMK.
+  # Tagged Workstation=true for DLM snapshot targeting.
+  # UserData bootstraps the workstation.
+  # ============================================================
   WorkstationInstance:
     Type: AWS::EC2::Instance
     Properties:
       InstanceType: !Ref InstanceType
       ImageId: !Ref AmiId
       IamInstanceProfile: !Ref WorkstationInstanceProfile
-      KeyName: !Ref KeyPairName
+      SubnetId: !Ref WorkstationSubnet
       SecurityGroupIds:
         - !GetAtt WorkstationSecurityGroup.GroupId
       BlockDeviceMappings:
@@ -98,14 +336,383 @@ Resources:
           Ebs:
             VolumeSize: 100
             VolumeType: gp3
+            Iops: 3000
             Encrypted: true
-            KmsKeyId: !Ref WorkstationKmsKey
-      # TODO: UserData for bootstrap
+            KmsKeyId: !GetAtt WorkstationKmsKey.Arn
+            DeleteOnTermination: false
+        - DeviceName: /dev/nvme1n1
+          VirtualName: ephemeral0
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euxo pipefail
+          exec > /var/log/imladris-bootstrap.log 2>&1
+
+          # Read bootstrap secret from SSM (encrypted with workstation CMK)
+          BWS_TOKEN=$(aws ssm get-parameter \
+            --name "/imladris/bws-token" \
+            --with-decryption \
+            --query 'Parameter.Value' \
+            --output text \
+            --region ${AWS::Region})
+          export BWS_TOKEN
+
+          # Read Tailscale auth key from SSM
+          TAILSCALE_AUTH_KEY=$(aws ssm get-parameter \
+            --name "/imladris/tailscale-auth-key" \
+            --with-decryption \
+            --query 'Parameter.Value' \
+            --output text \
+            --region ${AWS::Region})
+          export TAILSCALE_AUTH_KEY
+
+          # Clone imladris repo and run bootstrap
+          dnf install -y git
+          git clone https://github.com/sfoley/imladris.git /home/ec2-user/repos/imladris
+          chown -R ec2-user:ec2-user /home/ec2-user/repos
+          sudo -u ec2-user /home/ec2-user/repos/imladris/bootstrap.sh
+      Tags:
+        - Key: Name
+          Value: Imladris
+        - Key: Workstation
+          Value: 'true'
+        - Key: Project
+          Value: Imladris
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT30M
+
+  # ============================================================
+  # DLM Lifecycle Policy (Decision 8)
+  # Hourly EBS snapshots targeting volumes tagged Workstation=true.
+  # Retains 24 snapshots (24 hours of hourly backups).
+  # ============================================================
+  DlmRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: ImladrisDlmLifecycleRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: dlm.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSDataLifecycleManagerServiceRole
+      Policies:
+        - PolicyName: DlmKmsAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: AllowKmsForSnapshots
+                Effect: Allow
+                Action:
+                  - kms:Encrypt
+                  - kms:Decrypt
+                  - kms:ReEncrypt*
+                  - kms:GenerateDataKey*
+                  - kms:DescribeKey
+                  - kms:CreateGrant
+                  - kms:ListGrants
+                Resource: !GetAtt WorkstationKmsKey.Arn
+      Tags:
+        - Key: Name
+          Value: ImladrisDlmRole
+        - Key: Project
+          Value: Imladris
+
+  SnapshotLifecyclePolicy:
+    Type: AWS::DLM::LifecyclePolicy
+    Properties:
+      Description: Hourly EBS snapshots for Imladris workstation volumes
+      State: ENABLED
+      ExecutionRoleArn: !GetAtt DlmRole.Arn
+      PolicyDetails:
+        ResourceTypes:
+          - VOLUME
+        TargetTags:
+          - Key: Workstation
+            Value: 'true'
+        Schedules:
+          - Name: HourlySnapshots
+            CreateRule:
+              Interval: 1
+              IntervalUnit: HOURS
+            RetainRule:
+              Count: 24
+            TagsToAdd:
+              - Key: CreatedBy
+                Value: DLM-Imladris
+              - Key: Project
+                Value: Imladris
+            CopyTags: true
+      Tags:
+        - Key: Name
+          Value: ImladrisSnapshotPolicy
+        - Key: Project
+          Value: Imladris
+
+  # ============================================================
+  # Bedrock KB Execution Role
+  # Service role for Knowledge Base ingestion (embedding, chunking).
+  # Has read-only S3 access to the knowledge bucket + KMS decrypt.
+  # ============================================================
+  BedrockKbExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: AmazonBedrockExecutionRoleForKnowledgeBase_Imladris
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                'aws:SourceAccount': !Ref 'AWS::AccountId'
+      Policies:
+        - PolicyName: KbS3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ReadKnowledgeBucket
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt KnowledgeBucket.Arn
+                  - !Sub '${KnowledgeBucket.Arn}/*'
+        - PolicyName: KbKmsDecrypt
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: DecryptKnowledgeData
+                Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:DescribeKey
+                Resource: !GetAtt WorkstationKmsKey.Arn
+                Condition:
+                  StringEquals:
+                    'kms:ViaService': !Sub 's3.${AWS::Region}.amazonaws.com'
+        - PolicyName: KbEmbeddingModel
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: InvokeEmbeddingModel
+                Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                Resource: !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/amazon.titan-embed-text-v2:0'
+      Tags:
+        - Key: Name
+          Value: ImladrisBedrockKbRole
+        - Key: Project
+          Value: Imladris
+
+  # ============================================================
+  # S3 Knowledge Bucket (Bedrock KB data store)
+  # Encrypted with same CMK as EBS. Locked to workstation role only.
+  # Data sources: runbooks, tickets, docs synced by Windmill.
+  # ============================================================
+  KnowledgeBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'imladris-knowledge-${AWS::AccountId}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: !GetAtt WorkstationKmsKey.Arn
+            BucketKeyEnabled: true
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      Tags:
+        - Key: Name
+          Value: ImladrisKnowledgeBucket
+        - Key: Project
+          Value: Imladris
+
+  KnowledgeBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref KnowledgeBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyAllExceptWorkstationAndBedrock
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt KnowledgeBucket.Arn
+              - !Sub '${KnowledgeBucket.Arn}/*'
+            Condition:
+              ArnNotLike:
+                'aws:PrincipalArn':
+                  - !GetAtt WorkstationRole.Arn
+                  - !GetAtt BedrockKbExecutionRole.Arn
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+          - Sid: EnforceTlsOnly
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt KnowledgeBucket.Arn
+              - !Sub '${KnowledgeBucket.Arn}/*'
+            Condition:
+              Bool:
+                'aws:SecureTransport': 'false'
+
+  # ============================================================
+  # Bedrock VPC Endpoint Security Group
+  # Allows HTTPS only from the workstation security group.
+  # ============================================================
+  BedrockEndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Bedrock VPC endpoint - HTTPS from workstation only
+      VpcId: !Ref WorkstationVpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !GetAtt WorkstationSecurityGroup.GroupId
+          Description: HTTPS from workstation to Bedrock endpoints
+      SecurityGroupEgress: []
+      Tags:
+        - Key: Name
+          Value: ImladrisBedrockEndpointSG
+        - Key: Project
+          Value: Imladris
+
+  # ============================================================
+  # Bedrock VPC Endpoints (PrivateLink)
+  # All Bedrock API traffic stays within VPC — never public internet.
+  # ============================================================
+  BedrockRuntimeEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref WorkstationVpc
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.bedrock-runtime'
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref WorkstationSubnet
+      SecurityGroupIds:
+        - !GetAtt BedrockEndpointSecurityGroup.GroupId
+      PrivateDnsEnabled: true
+      Tags:
+        - Key: Name
+          Value: ImladrisBedrockRuntimeEndpoint
+        - Key: Project
+          Value: Imladris
+
+  BedrockAgentRuntimeEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref WorkstationVpc
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.bedrock-agent-runtime'
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref WorkstationSubnet
+      SecurityGroupIds:
+        - !GetAtt BedrockEndpointSecurityGroup.GroupId
+      PrivateDnsEnabled: true
+      Tags:
+        - Key: Name
+          Value: ImladrisBedrockAgentRuntimeEndpoint
+        - Key: Project
+          Value: Imladris
 
 Outputs:
   InstanceId:
+    Description: EC2 instance ID of the Imladris workstation
     Value: !Ref WorkstationInstance
+    Export:
+      Name: !Sub '${AWS::StackName}-InstanceId'
+
+  InstancePrivateIp:
+    Description: Private IP address (accessible via Tailscale)
+    Value: !GetAtt WorkstationInstance.PrivateIp
+    Export:
+      Name: !Sub '${AWS::StackName}-PrivateIp'
+
   KmsKeyId:
+    Description: KMS key ID for EBS encryption
     Value: !Ref WorkstationKmsKey
+    Export:
+      Name: !Sub '${AWS::StackName}-KmsKeyId'
+
+  KmsKeyArn:
+    Description: KMS key ARN for EBS encryption
+    Value: !GetAtt WorkstationKmsKey.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-KmsKeyArn'
+
   SecurityGroupId:
+    Description: Security group ID (zero inbound)
     Value: !GetAtt WorkstationSecurityGroup.GroupId
+    Export:
+      Name: !Sub '${AWS::StackName}-SecurityGroupId'
+
+  WorkstationRoleArn:
+    Description: IAM role ARN for the workstation EC2 instance
+    Value: !GetAtt WorkstationRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-WorkstationRoleArn'
+
+  SnapshotPolicyId:
+    Description: DLM snapshot lifecycle policy ID
+    Value: !Ref SnapshotLifecyclePolicy
+    Export:
+      Name: !Sub '${AWS::StackName}-SnapshotPolicyId'
+
+  KnowledgeBucketName:
+    Description: S3 bucket for Bedrock Knowledge Base data
+    Value: !Ref KnowledgeBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-KnowledgeBucketName'
+
+  KnowledgeBucketArn:
+    Description: ARN of the Knowledge Base S3 bucket
+    Value: !GetAtt KnowledgeBucket.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-KnowledgeBucketArn'
+
+  BedrockRuntimeEndpointId:
+    Description: VPC endpoint ID for Bedrock runtime
+    Value: !Ref BedrockRuntimeEndpoint
+    Export:
+      Name: !Sub '${AWS::StackName}-BedrockRuntimeEndpointId'
+
+  BedrockAgentRuntimeEndpointId:
+    Description: VPC endpoint ID for Bedrock agent runtime (KB Retrieve)
+    Value: !Ref BedrockAgentRuntimeEndpoint
+    Export:
+      Name: !Sub '${AWS::StackName}-BedrockAgentRuntimeEndpointId'
+
+  BedrockKbExecutionRoleArn:
+    Description: IAM role ARN for Bedrock Knowledge Base ingestion
+    Value: !GetAtt BedrockKbExecutionRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-BedrockKbExecutionRoleArn'
+
+  VpcId:
+    Description: VPC ID for the Imladris workstation
+    Value: !Ref WorkstationVpc
+    Export:
+      Name: !Sub '${AWS::StackName}-VpcId'
+
+  SubnetId:
+    Description: Subnet ID for the Imladris workstation
+    Value: !Ref WorkstationSubnet
+    Export:
+      Name: !Sub '${AWS::StackName}-SubnetId'
