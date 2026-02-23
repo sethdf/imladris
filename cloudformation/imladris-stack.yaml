@@ -340,7 +340,7 @@ Resources:
             Encrypted: true
             KmsKeyId: !GetAtt WorkstationKmsKey.Arn
             DeleteOnTermination: false
-        - DeviceName: /dev/nvme1n1
+        - DeviceName: /dev/sdb
           VirtualName: ephemeral0
       UserData:
         Fn::Base64: !Sub |
@@ -525,7 +525,7 @@ Resources:
   KnowledgeBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Sub 'imladris-knowledge-${AWS::AccountId}'
+      BucketName: !Sub 'imladris-kb-${AWS::AccountId}'
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
@@ -564,6 +564,7 @@ Resources:
                 'aws:PrincipalArn':
                   - !GetAtt WorkstationRole.Arn
                   - !GetAtt BedrockKbExecutionRole.Arn
+                  - !Ref AdminPrincipalArn
                   - !Sub 'arn:aws:iam::${AWS::AccountId}:root'
           - Sid: EnforceTlsOnly
             Effect: Deny
