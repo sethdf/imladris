@@ -669,7 +669,7 @@ step_start_services() {
       SKIPPED+=("Tailscale auth")
     else
       log INFO "Authenticating Tailscale..."
-      sudo tailscale up --authkey "$TAILSCALE_AUTH_KEY" --hostname imladris
+      sudo tailscale up --authkey "$TAILSCALE_AUTH_KEY" --hostname imladris --ssh
       log OK "Tailscale authenticated (hostname: imladris)"
       INSTALLED+=("Tailscale auth")
     fi
