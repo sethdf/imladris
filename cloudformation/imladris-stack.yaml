@@ -26,11 +26,11 @@ Parameters:
     Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64
     Description: SSM parameter path for AMI lookup (Amazon Linux 2023 ARM64)
 
-  SethIamUserArn:
+  AdminPrincipalArn:
     Type: String
-    Description: ARN of Seth's IAM user for MFA-locked KMS key admin operations
-    AllowedPattern: 'arn:aws:iam::\d{12}:user/.+'
-    ConstraintDescription: Must be a valid IAM user ARN
+    Description: ARN of admin principal (IAM user or SSO role) for MFA-locked KMS key operations
+    AllowedPattern: 'arn:aws:iam::\d{12}:(user|role)/.+'
+    ConstraintDescription: Must be a valid IAM user or role ARN
 
   TargetAccountIds:
     Type: CommaDelimitedList
@@ -131,7 +131,7 @@ Resources:
           - Sid: SethKeyAdminWithMFA
             Effect: Allow
             Principal:
-              AWS: !Ref SethIamUserArn
+              AWS: !Ref AdminPrincipalArn
             Action:
               - kms:Create*
               - kms:Describe*
@@ -155,7 +155,7 @@ Resources:
           - Sid: SethKeyReadWithoutMFA
             Effect: Allow
             Principal:
-              AWS: !Ref SethIamUserArn
+              AWS: !Ref AdminPrincipalArn
             Action:
               - kms:Describe*
               - kms:Get*
