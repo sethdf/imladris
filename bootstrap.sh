@@ -624,8 +624,25 @@ step_bitwarden_check() {
 # =============================================================================
 
 step_start_services() {
-  log STEP "Step 8/14: Start Services (Windmill)"
+  log STEP "Step 8/14: Start Services (Tailscale + Windmill)"
 
+  # --- Tailscale authentication ---
+  if [ -n "${TAILSCALE_AUTH_KEY:-}" ]; then
+    if tailscale status &>/dev/null 2>&1; then
+      log SKIP "Tailscale already authenticated"
+      SKIPPED+=("Tailscale auth")
+    else
+      log INFO "Authenticating Tailscale..."
+      sudo tailscale up --authkey "$TAILSCALE_AUTH_KEY" --hostname imladris
+      log OK "Tailscale authenticated (hostname: imladris)"
+      INSTALLED+=("Tailscale auth")
+    fi
+  else
+    log WARN "TAILSCALE_AUTH_KEY not set. Authenticate manually: sudo tailscale up"
+    WARNINGS+=("Tailscale: manual auth needed")
+  fi
+
+  # --- Windmill (Docker Compose) ---
   local compose_file="$IMLADRIS_DIR/docker-compose.yml"
 
   if [ ! -f "$compose_file" ]; then

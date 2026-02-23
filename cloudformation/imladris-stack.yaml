@@ -348,6 +348,9 @@ Resources:
           set -euxo pipefail
           exec > /var/log/imladris-bootstrap.log 2>&1
 
+          # Signal CloudFormation on exit (success or failure)
+          trap '/opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource WorkstationInstance --region ${AWS::Region}' EXIT
+
           # Read bootstrap secret from SSM (encrypted with workstation CMK)
           BWS_TOKEN=$(aws ssm get-parameter \
             --name "/imladris/bws-token" \
@@ -368,9 +371,10 @@ Resources:
 
           # Clone imladris repo and run bootstrap
           dnf install -y git
-          git clone https://github.com/sfoley/imladris.git /home/ec2-user/repos/imladris
+          mkdir -p /home/ec2-user/repos
+          git clone https://github.com/sethdf/imladris.git /home/ec2-user/repos/imladris
           chown -R ec2-user:ec2-user /home/ec2-user/repos
-          sudo -u ec2-user /home/ec2-user/repos/imladris/bootstrap.sh
+          sudo --preserve-env=BWS_TOKEN,TAILSCALE_AUTH_KEY -u ec2-user /home/ec2-user/repos/imladris/bootstrap.sh
       Tags:
         - Key: Name
           Value: Imladris
