@@ -423,7 +423,7 @@ install_bws() {
 
   # Get latest release tag from GitHub API
   local latest_tag
-  latest_tag="$(curl -fsSL https://api.github.com/repos/bitwarden/sdk-internal/releases?per_page=20 \
+  latest_tag="$(curl -fsSL https://api.github.com/repos/bitwarden/sdk/releases?per_page=20 \
     | jq -r '[.[] | select(.tag_name | startswith("bws-v"))][0].tag_name // empty')"
 
   if [ -z "$latest_tag" ]; then
@@ -432,7 +432,7 @@ install_bws() {
   fi
 
   local version="${latest_tag#bws-v}"
-  local url="https://github.com/bitwarden/sdk-internal/releases/download/${latest_tag}/bws-${arch}-${version}.zip"
+  local url="https://github.com/bitwarden/sdk/releases/download/${latest_tag}/bws-${arch}-${version}.zip"
 
   log INFO "Downloading bws ${version} for ${arch}..."
   local tmp_dir
@@ -514,8 +514,12 @@ clone_or_pull() {
     WARNINGS+=("$name: exists but not a git repo")
   else
     log INFO "$name: cloning from $url..."
-    git clone "$url" "$dest"
-    log OK "$name: cloned"
+    if git clone "$url" "$dest"; then
+      log OK "$name: cloned"
+    else
+      log WARN "$name: clone failed (private repo or network issue). Skipping."
+      WARNINGS+=("$name: clone failed")
+    fi
   fi
 }
 
