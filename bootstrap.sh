@@ -360,6 +360,12 @@ install_wget() {
   sudo "$pkg_mgr" install -y wget
 }
 
+install_unzip() {
+  local pkg_mgr
+  pkg_mgr="$(detect_pkg_manager)"
+  sudo "$pkg_mgr" install -y unzip
+}
+
 install_nodejs() {
   # Install Node.js 20 via dnf module or NodeSource
   local pkg_mgr
@@ -406,13 +412,38 @@ install_steampipe_aws_plugin() {
 }
 
 install_bws() {
-  # Bitwarden Secrets Manager CLI
-  # Try npm global install first
-  if command_exists npm; then
-    sudo npm install -g @bitwarden/cli
+  # Bitwarden Secrets Manager CLI (bws) — standalone binary, NOT @bitwarden/cli (that's bw)
+  local arch
+  arch="$(uname -m)"
+  case "$arch" in
+    aarch64) arch="aarch64-unknown-linux-gnu" ;;
+    x86_64)  arch="x86_64-unknown-linux-gnu" ;;
+    *)       log WARN "Unsupported architecture for bws: $arch"; return 1 ;;
+  esac
+
+  # Get latest release tag from GitHub API
+  local latest_tag
+  latest_tag="$(curl -fsSL https://api.github.com/repos/bitwarden/sdk-internal/releases?per_page=20 \
+    | jq -r '[.[] | select(.tag_name | startswith("bws-v"))][0].tag_name // empty')"
+
+  if [ -z "$latest_tag" ]; then
+    log WARN "Could not determine latest bws release"
+    return 1
+  fi
+
+  local version="${latest_tag#bws-v}"
+  local url="https://github.com/bitwarden/sdk-internal/releases/download/${latest_tag}/bws-${arch}-${version}.zip"
+
+  log INFO "Downloading bws ${version} for ${arch}..."
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+  if curl -fsSL -o "${tmp_dir}/bws.zip" "$url"; then
+    unzip -o "${tmp_dir}/bws.zip" -d "${tmp_dir}/"
+    sudo install -m 755 "${tmp_dir}/bws" /usr/local/bin/bws
+    rm -rf "$tmp_dir"
   else
-    log WARN "npm not available. Install bws manually: https://bitwarden.com/help/secrets-manager-cli/"
-    WARNINGS+=("bws: manual install needed")
+    rm -rf "$tmp_dir"
+    log WARN "Failed to download bws from $url"
     return 1
   fi
 }
@@ -425,6 +456,7 @@ step_system_dependencies() {
   ensure_command "wget"    install_wget    "wget"
   ensure_command "git"     install_git     "git"
   ensure_command "jq"      install_jq      "jq"
+  ensure_command "unzip"   install_unzip   "unzip"
   ensure_command "tmux"    install_tmux    "tmux"
 
   # Docker
@@ -455,8 +487,8 @@ step_system_dependencies() {
   # NOTE: Windmill CLI (wmill) -> dedicated step 11
   # NOTE: mcp-tools -> dedicated step 12
 
-  # Bitwarden Secrets CLI
-  ensure_command "bws" install_bws "Bitwarden Secrets CLI (bws)"
+  # Bitwarden Secrets CLI (non-critical — secrets sync can be set up later)
+  ensure_command "bws" install_bws "Bitwarden Secrets CLI (bws)" || true
 }
 
 # =============================================================================
