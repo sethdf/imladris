@@ -318,9 +318,9 @@ install_docker_compose_plugin() {
   # Fallback: install standalone binary
   local compose_version
   compose_version="$(curl -fsSL https://api.github.com/repos/docker/compose/releases/latest | jq -r '.tag_name')"
+  sudo mkdir -p /usr/local/lib/docker/cli-plugins
   sudo curl -fsSL "https://github.com/docker/compose/releases/download/${compose_version}/docker-compose-linux-$(uname -m)" \
     -o /usr/local/lib/docker/cli-plugins/docker-compose
-  sudo mkdir -p /usr/local/lib/docker/cli-plugins
   sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
 }
 
