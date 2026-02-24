@@ -34,7 +34,6 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'fs';
 import { join, dirname } from 'path';
 import { homedir } from 'os';
-import { tmpdir } from 'os';
 
 // ========================================
 // Types
@@ -73,7 +72,8 @@ function atomicWrite(filePath: string, content: string): void {
   const dir = dirname(filePath);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
-  const tmpPath = join(tmpdir(), `prdsync-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  // Use same directory as target to avoid cross-device rename failures (NVMe vs EBS)
+  const tmpPath = join(dir, `.tmp-prdsync-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   writeFileSync(tmpPath, content, 'utf-8');
   renameSync(tmpPath, filePath);
 }
