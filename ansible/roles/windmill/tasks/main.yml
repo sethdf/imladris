@@ -35,9 +35,8 @@
       ansible.builtin.file:
         path: "{{ imladris_home }}/.windmill/postgres"
         state: directory
-        owner: "{{ imladris_user }}"
-        group: "{{ imladris_user }}"
         mode: "0755"
+      become: true
 
     - name: Start Windmill via Docker Compose
       ansible.builtin.command: docker compose -f {{ windmill_compose_file }} up -d
