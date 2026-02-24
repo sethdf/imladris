@@ -59,6 +59,10 @@ tailscale_hostname: imladris
 # Set via --extra-vars, env, or vault. Empty = skip auth.
 tailscale_auth_key: ""
 
+# --- Bitwarden Secrets (Decision 13/20) ---
+# Set via --extra-vars. Empty = skip BWS setup.
+bws_access_token: ""
+
 # --- Node.js ---
 nodejs_version: "20"
 

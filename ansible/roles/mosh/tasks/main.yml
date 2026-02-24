@@ -1,0 +1,66 @@
+---
+# =============================================================================
+# Mosh (Decision 42: Connection Resilience)
+# =============================================================================
+# UDP-based shell that survives network switches and high latency.
+# Combined with tmux: network drops are invisible.
+#
+# Mosh is in EPEL on AL2023. Install from source if EPEL unavailable.
+
+- name: Check if mosh is installed
+  ansible.builtin.command: mosh-server --version
+  register: mosh_check
+  changed_when: false
+  failed_when: false
+
+- name: Install mosh via dnf (EPEL or AL2023 extras)
+  ansible.builtin.dnf:
+    name: mosh
+    state: present
+  become: true
+  when: mosh_check.rc != 0
+  register: mosh_dnf_result
+  failed_when: false
+
+- name: Install mosh from source if package not available
+  when:
+    - mosh_check.rc != 0
+    - mosh_dnf_result is defined
+    - mosh_dnf_result.rc | default(1) != 0
+  block:
+    - name: Install mosh build dependencies
+      ansible.builtin.dnf:
+        name:
+          - protobuf-compiler
+          - protobuf-devel
+          - ncurses-devel
+          - openssl-devel
+          - automake
+          - autoconf
+          - gcc-c++
+        state: present
+      become: true
+
+    - name: Download mosh source
+      ansible.builtin.get_url:
+        url: https://github.com/mobile-shell/mosh/releases/download/mosh-1.4.0/mosh-1.4.0.tar.gz
+        dest: /tmp/mosh-1.4.0.tar.gz
+        mode: "0644"
+
+    - name: Extract and build mosh
+      ansible.builtin.shell: |
+        cd /tmp && tar xzf mosh-1.4.0.tar.gz && cd mosh-1.4.0
+        ./configure && make -j$(nproc) && make install
+      become: true
+      args:
+        creates: /usr/local/bin/mosh-server
+
+- name: Verify mosh installation
+  ansible.builtin.command: mosh-server --version
+  register: mosh_verify
+  changed_when: false
+  failed_when: false
+
+- name: Report mosh status
+  ansible.builtin.debug:
+    msg: "Mosh {{ 'installed' if mosh_verify.rc == 0 else 'installation failed' }}"

@@ -13,6 +13,7 @@
 #
 # Extra vars for secrets (never stored in files):
 #   -e tailscale_auth_key=YOUR_KEY_HERE
+#   -e bws_access_token=YOUR_BWS_TOKEN
 
 - name: Provision Imladris workstation
   hosts: imladris
@@ -74,3 +75,7 @@
     # Step 13: AI failover wrapper
     - role: ai-failover
       tags: [ai-failover, failover]
+
+    # Decision 42: Mosh for connection resilience
+    - role: mosh
+      tags: [mosh, network]

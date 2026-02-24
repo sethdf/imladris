@@ -4,9 +4,17 @@ all:
     imladris:
       hosts:
         # Local execution (from UserData / on-box)
+        # Uncomment localhost and comment imladris-1 to run on-box
         # localhost:
         #   ansible_connection: local
         #   ansible_python_interpreter: /usr/bin/python3
+
+        # Self-targeting: run Ansible ON the instance against itself
+        # Uses local connection so no SSH key needed
+        imladris-local:
+          ansible_host: localhost
+          ansible_connection: local
+          ansible_python_interpreter: /usr/bin/python3
 
         # Remote execution (from Aurora over Tailscale SSH)
         imladris-1:

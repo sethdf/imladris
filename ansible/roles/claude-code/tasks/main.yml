@@ -177,6 +177,22 @@
     group: "{{ imladris_user }}"
     mode: "0644"
 
+# --- Bitwarden Secrets Token (Decision 13/20: Bitwarden is source of truth) ---
+# Token passed via: -e bws_access_token=YOUR_TOKEN
+
+- name: Set BWS_ACCESS_TOKEN in bashrc
+  ansible.builtin.blockinfile:
+    path: "{{ imladris_home }}/.bashrc"
+    marker: "# {mark} ANSIBLE MANAGED - Bitwarden Secrets"
+    block: |
+      export BWS_ACCESS_TOKEN="{{ bws_access_token }}"
+    create: true
+    owner: "{{ imladris_user }}"
+    group: "{{ imladris_user }}"
+    mode: "0644"
+  when: bws_access_token | default('') | length > 0
+  no_log: true
+
 # --- Auto-attach tmux on SSH login (Decision 23: SSH disconnect ≠ session lost) ---
 
 - name: Auto-start tmux on interactive login
