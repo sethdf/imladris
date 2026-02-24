@@ -73,10 +73,12 @@ git_repos:
 
 # --- Claude Code Symlinks (Decision 34) ---
 claude_symlinks:
-  - src: "{{ repos_dir }}/PAI/skills"
+  - src: "{{ repos_dir }}/PAI/.claude/skills"
     dest: "{{ claude_dir }}/skills"
-  - src: "{{ repos_dir }}/PAI/agents"
+  - src: "{{ repos_dir }}/PAI/.claude/agents"
     dest: "{{ claude_dir }}/agents"
+  - src: "{{ repos_dir }}/PAI/.claude/hooks"
+    dest: "{{ claude_dir }}/hooks"
 
 # --- Claude Runtime Directories ---
 claude_runtime_dirs:

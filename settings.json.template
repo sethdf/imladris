@@ -18,5 +18,32 @@
     "allow": [],
     "deny": []
   },
-  "hooks": {}
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "mcp__*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun run $HOME/repos/imladris/hooks/McpSecurityValidator.hook.ts"
+          },
+          {
+            "type": "command",
+            "command": "bun run $HOME/repos/imladris/hooks/McpLogger.hook.ts"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "mcp__*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun run $HOME/repos/imladris/hooks/McpLogger.hook.ts"
+          }
+        ]
+      }
+    ]
+  }
 }
