@@ -34,6 +34,33 @@
             "command": "bun run $HOME/.claude/hooks/McpLogger.hook.ts"
           }
         ]
+      },
+      {
+        "matcher": "TaskCreate",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun run $HOME/.claude/hooks/PrdSync.hook.ts"
+          }
+        ]
+      },
+      {
+        "matcher": "TaskUpdate",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun run $HOME/.claude/hooks/PrdSync.hook.ts"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun run $HOME/.claude/hooks/StateSnapshot.hook.ts"
+          }
+        ]
       }
     ]
   }
