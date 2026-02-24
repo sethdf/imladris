@@ -14,6 +14,7 @@
   block:
     - name: Start Windmill via Docker Compose
       ansible.builtin.command: docker compose -f {{ windmill_compose_file }} up -d
+      become: true
       register: windmill_compose_result
       changed_when: "'Started' in windmill_compose_result.stderr or 'Creating' in windmill_compose_result.stderr"
 
