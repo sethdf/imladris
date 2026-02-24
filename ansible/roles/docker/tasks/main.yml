@@ -9,6 +9,28 @@
     state: present
   become: true
 
+# --- Docker Compose plugin (binary install — not in AL2023 repos) ---
+
+- name: Create Docker CLI plugins directory
+  ansible.builtin.file:
+    path: /usr/local/lib/docker/cli-plugins
+    state: directory
+    mode: "0755"
+  become: true
+
+- name: Check if docker-compose plugin exists
+  ansible.builtin.stat:
+    path: /usr/local/lib/docker/cli-plugins/docker-compose
+  register: docker_compose_stat
+
+- name: Install Docker Compose plugin binary
+  ansible.builtin.get_url:
+    url: "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-aarch64"
+    dest: /usr/local/lib/docker/cli-plugins/docker-compose
+    mode: "0755"
+  become: true
+  when: not docker_compose_stat.stat.exists
+
 - name: Ensure /etc/docker directory exists
   ansible.builtin.file:
     path: /etc/docker

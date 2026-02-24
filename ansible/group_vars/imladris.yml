@@ -52,7 +52,7 @@ system_packages:
 docker_data_root: "{{ nvme_mount_point }}/docker"
 docker_packages:
   - docker
-  - docker-compose-plugin
+# docker-compose-plugin installed as binary in docker role (not in AL2023 repos)
 
 # --- Tailscale ---
 tailscale_hostname: imladris
