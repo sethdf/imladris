@@ -73,7 +73,7 @@
   failed_when: false
 
 - name: Install Windmill CLI via npm
-  ansible.builtin.command: npm install -g windmill-client
+  ansible.builtin.command: npm install -g windmill-cli
   become: true
   changed_when: true
   when: windmill_wmill_check.rc != 0
