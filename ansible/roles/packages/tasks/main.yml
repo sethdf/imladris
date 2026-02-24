@@ -29,6 +29,7 @@
       - automake
       - autoconf
       - perl-open
+      - perl-diagnostics
     state: present
   become: true
   when: packages_mosh_check.rc != 0
