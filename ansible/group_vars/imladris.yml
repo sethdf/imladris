@@ -31,7 +31,7 @@ nvme_mount_point: /local
 nvme_fs_label: nvme-local
 nvme_mount_opts: defaults,nofail,noatime,discard
 nvme_dirs:
-  - "{{ nvme_mount_point }}/docker"
+  # /local/docker is NOT here — Docker creates it with root ownership via data-root
   - "{{ nvme_mount_point }}/worktrees"
   - "{{ nvme_mount_point }}/tmp"
   - "{{ nvme_mount_point }}/cache/npm"
