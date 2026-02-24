@@ -47,10 +47,11 @@ fi
 info "Windmill is reachable at $WINDMILL_URL"
 
 # --- Check if already configured ---
-CURRENT_TOKEN=$(jq -r '.mcpServers.windmill.env.WINDMILL_TOKEN // ""' "$SETTINGS_FILE")
-if [ -n "$CURRENT_TOKEN" ] && [ "$CURRENT_TOKEN" != "__WINDMILL_TOKEN__" ]; then
-  # Verify the existing token works
-  if curl -sf -H "Authorization: Bearer $CURRENT_TOKEN" "$WINDMILL_URL/api/version" >/dev/null 2>&1; then
+# Extract token from URL-based config (type: url) or env-based config (legacy)
+CURRENT_URL=$(jq -r '.mcpServers.windmill.url // ""' "$SETTINGS_FILE")
+if [ -n "$CURRENT_URL" ] && ! echo "$CURRENT_URL" | grep -q "__WINDMILL_TOKEN__"; then
+  CURRENT_TOKEN=$(echo "$CURRENT_URL" | grep -oP 'token=\K[^&]+')
+  if [ -n "$CURRENT_TOKEN" ] && curl -sf -H "Authorization: Bearer $CURRENT_TOKEN" "$WINDMILL_URL/api/version" >/dev/null 2>&1; then
     info "Windmill token already configured and working"
     exit 0
   else
@@ -95,6 +96,19 @@ curl -sf -X POST "$WINDMILL_URL/api/users/setpassword" \
   info "Default admin password changed (API token still works)" || \
   warn "Could not change default password (may already be changed)"
 
+# --- Ensure workspace exists ---
+WORKSPACE="imladris"
+WORKSPACES=$(curl -sf -H "Authorization: Bearer $AUTH_TOKEN" "$WINDMILL_URL/api/workspaces/list" 2>/dev/null)
+if ! echo "$WORKSPACES" | jq -e ".[] | select(.id == \"$WORKSPACE\")" >/dev/null 2>&1; then
+  info "Creating workspace '$WORKSPACE'..."
+  curl -sf -X POST -H "Authorization: Bearer $AUTH_TOKEN" -H "Content-Type: application/json" \
+    "$WINDMILL_URL/api/workspaces/create" \
+    -d "{\"id\": \"$WORKSPACE\", \"name\": \"Imladris\"}" >/dev/null 2>&1 && \
+    info "Workspace created" || warn "Workspace creation failed (may already exist)"
+else
+  info "Workspace '$WORKSPACE' exists"
+fi
+
 # --- Create API token ---
 info "Creating API token..."
 
@@ -115,9 +129,13 @@ info "API token created successfully"
 info "Patching $SETTINGS_FILE..."
 
 # Use jq to safely update the token
+# Windmill MCP uses HTTP streamable transport — URL-based config
+WORKSPACE="imladris"
+MCP_URL="$WINDMILL_URL/api/mcp/w/$WORKSPACE/mcp?token=$API_TOKEN"
+
 TEMP_FILE=$(mktemp)
-jq --arg token "$API_TOKEN" \
-  '.mcpServers.windmill.env.WINDMILL_TOKEN = $token' \
+jq --arg url "$MCP_URL" \
+  '.mcpServers.windmill = {"type": "url", "url": $url}' \
   "$SETTINGS_FILE" > "$TEMP_FILE"
 
 mv "$TEMP_FILE" "$SETTINGS_FILE"

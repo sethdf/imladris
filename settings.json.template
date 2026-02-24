@@ -1,12 +1,8 @@
 {
   "mcpServers": {
     "windmill": {
-      "command": "npx",
-      "args": ["-y", "windmill-mcp-server"],
-      "env": {
-        "WINDMILL_BASE_URL": "http://localhost:8000",
-        "WINDMILL_TOKEN": "__WINDMILL_TOKEN__"
-      }
+      "type": "url",
+      "url": "http://localhost:8000/api/mcp/w/imladris/mcp?token=__WINDMILL_TOKEN__"
     }
   },
   "permissions": {
