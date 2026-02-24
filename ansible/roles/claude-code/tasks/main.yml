@@ -163,6 +163,23 @@
     group: "{{ imladris_user }}"
   when: pai_script_stat.stat.exists | default(false)
 
+# --- Utility Scripts (symlink to PATH) ---
+
+- name: Check for sync-credentials script
+  ansible.builtin.stat:
+    path: "{{ imladris_repo_dir }}/scripts/sync-credentials.sh"
+  register: sync_creds_script_stat
+
+- name: Symlink sync-credentials to PATH
+  ansible.builtin.file:
+    src: "{{ imladris_repo_dir }}/scripts/sync-credentials.sh"
+    dest: "{{ imladris_home }}/.local/bin/sync-credentials"
+    state: link
+    force: true
+    owner: "{{ imladris_user }}"
+    group: "{{ imladris_user }}"
+  when: sync_creds_script_stat.stat.exists | default(false)
+
 # --- Skip permissions flag (Decision 23: Claude runs inside tmux, unattended) ---
 
 - name: Set Claude to skip permissions in bashrc

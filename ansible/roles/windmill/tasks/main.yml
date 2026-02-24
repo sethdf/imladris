@@ -3,6 +3,8 @@
 # Windmill (Bootstrap Steps 8 + 11)
 # =============================================================================
 # Decision 18: Windmill via Docker Compose on same EC2
+# Handles: Docker Compose startup, wmill CLI, admin bootstrap,
+#          script deployment, and cron schedule creation.
 
 - name: Check if docker-compose.yml exists
   ansible.builtin.stat:
@@ -77,3 +79,174 @@
   become: true
   changed_when: true
   when: windmill_wmill_check.rc != 0
+
+# --- Windmill Admin Bootstrap (fresh deploy) ---
+# On fresh EBS: creates admin user, gets token, configures wmill CLI.
+# On existing EBS: Windmill data persists in Postgres, this block is skipped.
+
+- name: Bootstrap Windmill admin and deploy scripts
+  when:
+    - windmill_health.status | default(0) == 200
+    - windmill_admin_password | default('') | length > 0
+  block:
+    - name: Check if wmill workspace is already configured
+      ansible.builtin.stat:
+        path: "{{ windmill_wmill_config_dir }}/remotes.ndjson"
+      register: windmill_wmill_config_stat
+
+    - name: Create admin user (fresh deploy only — no auth required on empty DB)
+      ansible.builtin.uri:
+        url: "{{ windmill_api_base }}/api/users/create"
+        method: POST
+        body_format: json
+        body:
+          email: "{{ windmill_admin_email }}"
+          password: "{{ windmill_admin_password }}"
+          super_admin: true
+          name: "Admin"
+        status_code: [200, 201, 409, 401, 403]
+      register: windmill_user_create
+      failed_when: false
+      no_log: true
+      when: not windmill_wmill_config_stat.stat.exists
+
+    - name: Login to Windmill
+      ansible.builtin.uri:
+        url: "{{ windmill_api_base }}/api/auth/login"
+        method: POST
+        body_format: json
+        body:
+          email: "{{ windmill_admin_email }}"
+          password: "{{ windmill_admin_password }}"
+        status_code: 200
+        return_content: true
+      register: windmill_login
+      no_log: true
+      when: not windmill_wmill_config_stat.stat.exists
+
+    - name: Create persistent API token
+      ansible.builtin.uri:
+        url: "{{ windmill_api_base }}/api/users/tokens/create"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ windmill_login.content }}"
+        body_format: json
+        body:
+          label: "ansible-deploy"
+        status_code: 200
+        return_content: true
+      register: windmill_new_token
+      no_log: true
+      when: not windmill_wmill_config_stat.stat.exists
+
+    - name: Create wmill config directory
+      ansible.builtin.file:
+        path: "{{ windmill_wmill_config_dir }}"
+        state: directory
+        owner: "{{ imladris_user }}"
+        group: "{{ imladris_user }}"
+        mode: "0755"
+      when: not windmill_wmill_config_stat.stat.exists
+
+    - name: Write wmill activeWorkspace
+      ansible.builtin.copy:
+        content: "{{ windmill_workspace }}"
+        dest: "{{ windmill_wmill_config_dir }}/activeWorkspace"
+        owner: "{{ imladris_user }}"
+        group: "{{ imladris_user }}"
+        mode: "0644"
+      when: not windmill_wmill_config_stat.stat.exists
+
+    - name: Write wmill remotes config
+      ansible.builtin.copy:
+        content: '{"name":"{{ windmill_workspace }}","remote":"{{ windmill_api_base }}/","workspaceId":"{{ windmill_workspace }}","token":"{{ windmill_new_token.content }}"}'
+        dest: "{{ windmill_wmill_config_dir }}/remotes.ndjson"
+        owner: "{{ imladris_user }}"
+        group: "{{ imladris_user }}"
+        mode: "0600"
+      no_log: true
+      when: not windmill_wmill_config_stat.stat.exists
+
+# --- Windmill Script Deployment ---
+# Pushes all TypeScript scripts from repo to Windmill via wmill CLI.
+# Idempotent: wmill push overwrites existing scripts.
+
+- name: Deploy Windmill scripts
+  when:
+    - windmill_health.status | default(0) == 200
+  block:
+    - name: Check for windmill scripts directory
+      ansible.builtin.stat:
+        path: "{{ windmill_scripts_dir }}/f/devops"
+      register: windmill_scripts_dir_stat
+
+    - name: Initialize wmill in scripts directory
+      ansible.builtin.command:
+        cmd: wmill init
+        chdir: "{{ windmill_scripts_dir }}"
+        creates: "{{ windmill_scripts_dir }}/wmill.yaml"
+      when: windmill_scripts_dir_stat.stat.exists | default(false)
+
+    - name: Find Windmill scripts to push
+      ansible.builtin.find:
+        paths: "{{ windmill_scripts_dir }}/f/devops"
+        patterns: "*.ts"
+        excludes: "*.script.yaml"
+      register: windmill_script_files
+      when: windmill_scripts_dir_stat.stat.exists | default(false)
+
+    - name: Push Windmill scripts
+      ansible.builtin.command:
+        cmd: "wmill script push f/devops/{{ item.path | basename }}"
+        chdir: "{{ windmill_scripts_dir }}"
+      loop: "{{ windmill_script_files.files | default([]) }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+      changed_when: true
+      when: windmill_scripts_dir_stat.stat.exists | default(false)
+
+# --- Windmill Cron Schedules ---
+# Creates schedules via API. Idempotent: checks if schedule exists first.
+
+- name: Deploy Windmill schedules
+  when:
+    - windmill_health.status | default(0) == 200
+    - windmill_schedules | default([]) | length > 0
+  block:
+    - name: Read wmill token from config
+      ansible.builtin.command:
+        cmd: "python3 -c \"import json; print(json.loads(open('{{ windmill_wmill_config_dir }}/remotes.ndjson').read())['token'])\""
+      register: windmill_deploy_token
+      changed_when: false
+      no_log: true
+
+    - name: Check existing schedules
+      ansible.builtin.uri:
+        url: "{{ windmill_api_base }}/api/w/{{ windmill_workspace }}/schedules/list"
+        headers:
+          Authorization: "Bearer {{ windmill_deploy_token.stdout }}"
+        return_content: true
+      register: windmill_existing_schedules
+      no_log: true
+
+    - name: Create Windmill schedules
+      ansible.builtin.uri:
+        url: "{{ windmill_api_base }}/api/w/{{ windmill_workspace }}/schedules/create"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ windmill_deploy_token.stdout }}"
+        body_format: json
+        body:
+          path: "{{ item.path }}"
+          schedule: "{{ item.schedule }}"
+          timezone: "America/Los_Angeles"
+          script_path: "{{ item.script_path }}"
+          is_flow: false
+          args: {}
+          enabled: true
+        status_code: [200, 201, 409]
+      loop: "{{ windmill_schedules }}"
+      loop_control:
+        label: "{{ item.path }}"
+      when: item.path not in (windmill_existing_schedules.json | default([]) | map(attribute='path') | list)
+      no_log: true

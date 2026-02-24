@@ -103,6 +103,23 @@ windmill_compose_file: "{{ imladris_repo_dir }}/docker-compose.yml"
 windmill_health_url: "http://localhost:8000/api/version"
 windmill_health_retries: 30
 windmill_health_delay: 2
+windmill_api_base: "http://localhost:8000"
+windmill_workspace: imladris
+windmill_admin_email: "admin@windmill.dev"
+# Set via --extra-vars. Required for fresh deploy bootstrap.
+windmill_admin_password: ""
+windmill_scripts_dir: "{{ imladris_repo_dir }}/windmill"
+windmill_wmill_config_dir: "{{ imladris_home }}/.config/windmill"
+windmill_schedules:
+  - path: f/devops/feed_collector_schedule
+    schedule: "0 0 */6 * * *"
+    script_path: f/devops/feed_collector
+  - path: f/devops/activity_report_schedule
+    schedule: "0 0 7 * * *"
+    script_path: f/devops/activity_report
+  - path: f/devops/contextual_surface_schedule
+    schedule: "0 0 */12 * * *"
+    script_path: f/devops/contextual_surface
 
 # --- Steampipe ---
 steampipe_install_url: "https://steampipe.io/install/steampipe.sh"
