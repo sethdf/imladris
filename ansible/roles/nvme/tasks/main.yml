@@ -15,6 +15,7 @@
   register: nvme_root_device
   changed_when: false
   failed_when: false
+  check_mode: false
 
 - name: Find NVMe instance store device
   ansible.builtin.shell:
@@ -34,6 +35,7 @@
   register: nvme_device_result
   changed_when: false
   failed_when: false
+  check_mode: false
 
 - name: Set NVMe facts
   ansible.builtin.set_fact:
