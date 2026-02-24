@@ -1,0 +1,31 @@
+---
+# =============================================================================
+# Disable SSM Agent (Security Hardening)
+# =============================================================================
+# SSM provides root shell access to anyone with ssm:StartSession IAM permissions,
+# bypassing YubiKey MFA (Decision 31), CMK encryption (Decision 30), and
+# Tailscale-only access (Decision 33). Once Tailscale SSH is operational,
+# SSM is a liability and must be disabled.
+#
+# Note: SSM may be needed during initial bootstrap (before Tailscale auth).
+# This role runs AFTER Tailscale to ensure we still have access.
+
+- name: Check if amazon-ssm-agent is installed
+  ansible.builtin.command: systemctl list-unit-files amazon-ssm-agent.service
+  register: ssm_agent_check
+  changed_when: false
+  failed_when: false
+
+- name: Stop SSM agent
+  ansible.builtin.systemd:
+    name: amazon-ssm-agent
+    state: stopped
+  become: true
+  when: ssm_agent_check.rc == 0
+
+- name: Disable SSM agent
+  ansible.builtin.systemd:
+    name: amazon-ssm-agent
+    enabled: false
+  become: true
+  when: ssm_agent_check.rc == 0

@@ -35,6 +35,10 @@
     - role: tailscale
       tags: [tailscale, network]
 
+    # Security: Disable SSM agent (Tailscale replaces it)
+    - role: ssm-disable
+      tags: [ssm, security, hardening]
+
     # Step 2: Node.js
     - role: nodejs
       tags: [nodejs, runtime]
