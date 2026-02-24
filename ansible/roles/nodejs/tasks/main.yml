@@ -1,0 +1,31 @@
+---
+# =============================================================================
+# Node.js (Bootstrap Step 2 — Node.js portion)
+# =============================================================================
+
+- name: Check if Node.js is installed
+  ansible.builtin.command: node --version
+  register: nodejs_check
+  changed_when: false
+  failed_when: false
+
+- name: Install Node.js via dnf module
+  when: nodejs_check.rc != 0
+  block:
+    - name: Enable dnf module for Node.js {{ nodejs_version }}
+      ansible.builtin.command: dnf module enable -y nodejs:{{ nodejs_version }}
+      become: true
+      changed_when: true
+
+    - name: Install Node.js
+      ansible.builtin.dnf:
+        name: nodejs
+        state: present
+      become: true
+
+# --- Route npm cache to NVMe when available ---
+
+- name: Set npm cache to NVMe
+  ansible.builtin.command: npm config set cache {{ nvme_mount_point }}/cache/npm
+  changed_when: true
+  when: nvme_available | default(false) | bool

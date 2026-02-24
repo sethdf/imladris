@@ -1,0 +1,20 @@
+---
+# =============================================================================
+# System Packages (Bootstrap Step 2 — base packages)
+# =============================================================================
+
+- name: Install system packages
+  ansible.builtin.dnf:
+    name: "{{ system_packages }}"
+    state: present
+  become: true
+
+# --- tmux config (low-strain theme for long sessions) ---
+
+- name: Deploy tmux config
+  ansible.builtin.template:
+    src: tmux.conf.j2
+    dest: "{{ imladris_home }}/.tmux.conf"
+    owner: "{{ imladris_user }}"
+    group: "{{ imladris_user }}"
+    mode: "0644"

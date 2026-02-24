@@ -1,0 +1,117 @@
+---
+# =============================================================================
+# Imladris Workstation Configuration
+# =============================================================================
+# All configurable values extracted from bootstrap.sh
+# This is the single source of truth for system state.
+#
+# Architecture decisions enforced:
+#   D34 — Repos ARE production via symlinks
+#   D13 — Bitwarden Secrets is source of truth
+#   D18 — Windmill via Docker Compose on same EC2
+#   D33 — Tailscale-only network access
+#
+# NVMe Policy (m7gd instances have 237GB NVMe SSD at /local):
+#   ON NVMe (/local):  caches, tmp, docker layers, worktrees, build artifacts
+#                       — anything ephemeral, rebuildable, or high-IO
+#   ON EBS (~/ root):   repos, configs, MEMORY, PRDs, secrets, state files
+#                       — anything that must survive instance stop/start
+#   Guard all NVMe paths with: when: nvme_available | default(false) | bool
+#   Add new cache dirs to nvme_dirs list below so they're auto-created
+
+# --- User & Paths ---
+imladris_user: ec2-user
+imladris_home: "/home/{{ imladris_user }}"
+repos_dir: "{{ imladris_home }}/repos"
+claude_dir: "{{ imladris_home }}/.claude"
+imladris_repo_dir: "{{ repos_dir }}/imladris"
+
+# --- NVMe Instance Store ---
+nvme_mount_point: /local
+nvme_fs_label: nvme-local
+nvme_mount_opts: defaults,nofail,noatime,discard
+nvme_dirs:
+  - "{{ nvme_mount_point }}/docker"
+  - "{{ nvme_mount_point }}/worktrees"
+  - "{{ nvme_mount_point }}/tmp"
+  - "{{ nvme_mount_point }}/cache/npm"
+  - "{{ nvme_mount_point }}/cache/bun"
+  - "{{ nvme_mount_point }}/cache/steampipe"
+
+# --- System Packages ---
+system_packages:
+  - curl
+  - wget
+  - git
+  - jq
+  - unzip
+  - tmux
+  - mosh
+
+# --- Docker ---
+docker_data_root: "{{ nvme_mount_point }}/docker"
+docker_packages:
+  - docker
+  - docker-compose-plugin
+
+# --- Tailscale ---
+tailscale_hostname: imladris
+# Set via --extra-vars, env, or vault. Empty = skip auth.
+tailscale_auth_key: ""
+
+# --- Node.js ---
+nodejs_version: "20"
+
+# --- Git Repositories ---
+git_repos:
+  - name: PAI
+    url: https://github.com/danielmiessler/PAI.git
+  - name: imladris
+    url: https://github.com/sethdf/imladris.git
+  - name: dotfiles
+    url: https://github.com/sethdf/dotfiles.git
+
+# --- Claude Code Symlinks (Decision 34) ---
+claude_symlinks:
+  - src: "{{ repos_dir }}/PAI/skills"
+    dest: "{{ claude_dir }}/skills"
+  - src: "{{ repos_dir }}/PAI/agents"
+    dest: "{{ claude_dir }}/agents"
+
+# --- Claude Runtime Directories ---
+claude_runtime_dirs:
+  - "{{ claude_dir }}/MEMORY/WORK"
+  - "{{ claude_dir }}/MEMORY/STATE"
+  - "{{ claude_dir }}/MEMORY/LEARNING/REFLECTIONS"
+  - "{{ claude_dir }}/projects"
+  - "{{ claude_dir }}/logs"
+
+# --- Context Seeding ---
+context_seed_dir: "{{ imladris_repo_dir }}/context"
+memory_seed_dir: "{{ context_seed_dir }}/memory"
+
+# --- Windmill ---
+windmill_compose_file: "{{ imladris_repo_dir }}/docker-compose.yml"
+windmill_health_url: "http://localhost:8000/api/version"
+windmill_health_retries: 30
+windmill_health_delay: 2
+
+# --- Steampipe ---
+steampipe_install_url: "https://steampipe.io/install/steampipe.sh"
+steampipe_plugins:
+  - aws
+
+# --- mcp-tools ---
+mcp_tools_arch: linux-arm64
+mcp_tools_url: "https://github.com/nicholasgasior/mcp-tools/releases/latest/download/mcp-tools-{{ mcp_tools_arch }}"
+
+# --- AI Failover ---
+ai_failover_dir: "{{ imladris_repo_dir }}/ai-failover"
+ai_failover_wrapper: "{{ ai_failover_dir }}/claude-failover"
+ai_provider_env: "{{ claude_dir }}/ai-provider.env"
+ai_failover_state: "{{ claude_dir }}/ai-failover-state"
+
+# --- Settings Template ---
+settings_template_candidates:
+  - "{{ repos_dir }}/PAI/settings.json.template"
+  - "{{ imladris_repo_dir }}/settings.json.template"

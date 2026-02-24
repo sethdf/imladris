@@ -1,0 +1,157 @@
+---
+# =============================================================================
+# Claude Code (Bootstrap Steps 4, 5, 6, 10)
+# =============================================================================
+# Symlinks (D34), runtime dirs, settings template, CLI install, context seeding
+
+# --- Step 10: Install Claude Code CLI ---
+
+- name: Check if Claude Code CLI is installed
+  ansible.builtin.command: claude --version
+  register: claude_code_cli_check
+  changed_when: false
+  failed_when: false
+
+- name: Install Claude Code CLI via npm
+  ansible.builtin.command: npm install -g @anthropic-ai/claude-code
+  become: true
+  changed_when: true
+  when: claude_code_cli_check.rc != 0
+
+# --- Step 4: Create Symlinks (Decision 34) ---
+
+- name: Create Claude directory
+  ansible.builtin.file:
+    path: "{{ claude_dir }}"
+    state: directory
+    owner: "{{ imladris_user }}"
+    group: "{{ imladris_user }}"
+    mode: "0755"
+
+- name: Create Claude symlinks
+  ansible.builtin.file:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    state: link
+    force: true
+    owner: "{{ imladris_user }}"
+    group: "{{ imladris_user }}"
+  loop: "{{ claude_symlinks }}"
+  when: item.src is exists
+
+# --- Step 5: Create Runtime Directories ---
+
+- name: Create Claude runtime directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ imladris_user }}"
+    group: "{{ imladris_user }}"
+    mode: "0755"
+  loop: "{{ claude_runtime_dirs }}"
+
+# --- Context Seeding (skip if already exists) ---
+
+- name: Check if CLAUDE.md exists
+  ansible.builtin.stat:
+    path: "{{ claude_dir }}/CLAUDE.md"
+  register: claude_code_md_stat
+
+- name: Check if CLAUDE.md seed exists
+  ansible.builtin.stat:
+    path: "{{ context_seed_dir }}/CLAUDE.md"
+  register: claude_code_md_seed_stat
+
+- name: Seed CLAUDE.md
+  ansible.builtin.copy:
+    src: "{{ context_seed_dir }}/CLAUDE.md"
+    dest: "{{ claude_dir }}/CLAUDE.md"
+    owner: "{{ imladris_user }}"
+    group: "{{ imladris_user }}"
+    mode: "0644"
+    remote_src: true
+  when:
+    - not claude_code_md_stat.stat.exists
+    - claude_code_md_seed_stat.stat.exists
+
+- name: Check for memory seed directory
+  ansible.builtin.stat:
+    path: "{{ memory_seed_dir }}"
+  register: claude_code_memory_seed_stat
+
+- name: Find memory seed files
+  ansible.builtin.find:
+    paths: "{{ memory_seed_dir }}"
+    patterns: "*.md"
+  register: claude_code_memory_seed_files
+  when: claude_code_memory_seed_stat.stat.exists | default(false)
+
+- name: Seed MEMORY files (skip existing)
+  ansible.builtin.copy:
+    src: "{{ item.path }}"
+    dest: "{{ claude_dir }}/MEMORY/{{ item.path | basename }}"
+    owner: "{{ imladris_user }}"
+    group: "{{ imladris_user }}"
+    mode: "0644"
+    remote_src: true
+    force: false
+  loop: "{{ claude_code_memory_seed_files.files | default([]) }}"
+  when: claude_code_memory_seed_stat.stat.exists | default(false)
+
+# --- Step 6: Settings Template ---
+
+- name: Check if settings.json exists
+  ansible.builtin.stat:
+    path: "{{ claude_dir }}/settings.json"
+  register: claude_code_settings_stat
+
+- name: Find settings template
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop: "{{ settings_template_candidates }}"
+  register: claude_code_settings_template_check
+  when: not claude_code_settings_stat.stat.exists
+
+- name: Copy settings template
+  ansible.builtin.copy:
+    src: "{{ item.item }}"
+    dest: "{{ claude_dir }}/settings.json"
+    owner: "{{ imladris_user }}"
+    group: "{{ imladris_user }}"
+    mode: "0644"
+    remote_src: true
+  loop: "{{ claude_code_settings_template_check.results | default([]) }}"
+  when:
+    - not claude_code_settings_stat.stat.exists
+    - item.stat is defined
+    - item.stat.exists
+  loop_control:
+    label: "{{ item.item | default('unknown') }}"
+
+# --- Skip permissions flag (Decision 23: Claude runs inside tmux, unattended) ---
+
+- name: Set Claude to skip permissions in bashrc
+  ansible.builtin.blockinfile:
+    path: "{{ imladris_home }}/.bashrc"
+    marker: "# {mark} ANSIBLE MANAGED - Claude Code Permissions"
+    block: |
+      export CLAUDE_DANGEROUSLY_SKIP_PERMISSIONS=1
+    create: true
+    owner: "{{ imladris_user }}"
+    group: "{{ imladris_user }}"
+    mode: "0644"
+
+# --- Auto-attach tmux on SSH login (Decision 23: SSH disconnect ≠ session lost) ---
+
+- name: Auto-start tmux on interactive login
+  ansible.builtin.blockinfile:
+    path: "{{ imladris_home }}/.bashrc"
+    marker: "# {mark} ANSIBLE MANAGED - tmux auto-attach"
+    block: |
+      if command -v tmux &>/dev/null && [ -n "$SSH_CONNECTION" ] && [ -z "$TMUX" ]; then
+        tmux attach -t work 2>/dev/null || tmux new -s work
+      fi
+    create: true
+    owner: "{{ imladris_user }}"
+    group: "{{ imladris_user }}"
+    mode: "0644"

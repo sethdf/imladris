@@ -1,0 +1,67 @@
+---
+# =============================================================================
+# Bitwarden Secrets CLI (Bootstrap Steps 2 + 7)
+# =============================================================================
+# Decision 13: Bitwarden Secrets is source of truth
+
+- name: Check if bws is installed
+  ansible.builtin.command: bws --version
+  register: bitwarden_bws_check
+  changed_when: false
+  failed_when: false
+
+- name: Install bws CLI
+  when: bitwarden_bws_check.rc != 0
+  block:
+    - name: Detect architecture for bws
+      ansible.builtin.set_fact:
+        bitwarden_bws_arch: "{{ 'aarch64-unknown-linux-gnu' if ansible_architecture == 'aarch64' else 'x86_64-unknown-linux-gnu' }}"
+
+    - name: Get latest bws release tag
+      ansible.builtin.uri:
+        url: https://api.github.com/repos/bitwarden/sdk/releases?per_page=20
+        return_content: true
+      register: bitwarden_releases
+
+    - name: Extract bws release tag
+      ansible.builtin.set_fact:
+        bitwarden_bws_tag: "{{ (bitwarden_releases.json | selectattr('tag_name', 'match', '^bws-v') | first).tag_name }}"
+      failed_when: false
+
+    - name: Extract bws version
+      ansible.builtin.set_fact:
+        bitwarden_bws_version: "{{ bitwarden_bws_tag | regex_replace('^bws-v', '') }}"
+      when: bitwarden_bws_tag is defined and bitwarden_bws_tag | length > 0
+
+    - name: Download and install bws
+      when: bitwarden_bws_tag is defined and bitwarden_bws_tag | length > 0
+      block:
+        - name: Create temp directory for bws
+          ansible.builtin.tempfile:
+            state: directory
+          register: bitwarden_tmpdir
+
+        - name: Download bws zip
+          ansible.builtin.get_url:
+            url: "https://github.com/bitwarden/sdk/releases/download/{{ bitwarden_bws_tag }}/bws-{{ bitwarden_bws_arch }}-{{ bitwarden_bws_version }}.zip"
+            dest: "{{ bitwarden_tmpdir.path }}/bws.zip"
+            mode: "0644"
+
+        - name: Unzip bws
+          ansible.builtin.unarchive:
+            src: "{{ bitwarden_tmpdir.path }}/bws.zip"
+            dest: "{{ bitwarden_tmpdir.path }}"
+            remote_src: true
+
+        - name: Install bws binary
+          ansible.builtin.copy:
+            src: "{{ bitwarden_tmpdir.path }}/bws"
+            dest: /usr/local/bin/bws
+            mode: "0755"
+            remote_src: true
+          become: true
+
+        - name: Clean up temp directory
+          ansible.builtin.file:
+            path: "{{ bitwarden_tmpdir.path }}"
+            state: absent

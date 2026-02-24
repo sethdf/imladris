@@ -1,0 +1,37 @@
+---
+# =============================================================================
+# Bun Runtime (Bootstrap Step 2 — Bun portion)
+# =============================================================================
+
+- name: Check if Bun is installed
+  ansible.builtin.command: "{{ imladris_home }}/.bun/bin/bun --version"
+  register: bun_check
+  changed_when: false
+  failed_when: false
+
+- name: Install Bun
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      curl -fsSL https://bun.sh/install | bash
+    executable: /bin/bash
+  become: false
+  changed_when: true
+  environment:
+    HOME: "{{ imladris_home }}"
+  when: bun_check.rc != 0
+
+- name: Add Bun to PATH in bashrc (with NVMe cache)
+  ansible.builtin.blockinfile:
+    path: "{{ imladris_home }}/.bashrc"
+    marker: "# {mark} ANSIBLE MANAGED - Bun"
+    block: |
+      export BUN_INSTALL="{{ imladris_home }}/.bun"
+      export PATH="$BUN_INSTALL/bin:$PATH"
+      {% if nvme_available | default(false) | bool %}
+      export BUN_INSTALL_CACHE_DIR="{{ nvme_mount_point }}/cache/bun"
+      {% endif %}
+    create: true
+    owner: "{{ imladris_user }}"
+    group: "{{ imladris_user }}"
+    mode: "0644"

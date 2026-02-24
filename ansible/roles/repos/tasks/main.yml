@@ -1,0 +1,40 @@
+---
+# =============================================================================
+# Clone Repositories (Bootstrap Step 3)
+# =============================================================================
+
+- name: Create repos directory
+  ansible.builtin.file:
+    path: "{{ repos_dir }}"
+    state: directory
+    owner: "{{ imladris_user }}"
+    group: "{{ imladris_user }}"
+    mode: "0755"
+
+- name: Clone repositories
+  ansible.builtin.git:
+    repo: "{{ item.url }}"
+    dest: "{{ repos_dir }}/{{ item.name }}"
+    version: main
+    update: true
+    force: false
+  loop: "{{ git_repos }}"
+  register: repos_git_result
+  failed_when: false
+  # Private repos may fail on first boot before SSH keys are set up
+
+# --- Route git worktrees to NVMe when available ---
+# IMLADRIS_WORKTREE_DIR is used by Code Factory (D36) and custom scripts.
+# Claude Code's built-in --worktree uses its own paths internally.
+
+- name: Add IMLADRIS_WORKTREE_DIR to bashrc for NVMe worktrees
+  ansible.builtin.blockinfile:
+    path: "{{ imladris_home }}/.bashrc"
+    marker: "# {mark} ANSIBLE MANAGED - Git Worktrees"
+    block: |
+      export IMLADRIS_WORKTREE_DIR="{{ nvme_mount_point }}/worktrees"
+    create: true
+    owner: "{{ imladris_user }}"
+    group: "{{ imladris_user }}"
+    mode: "0644"
+  when: nvme_available | default(false) | bool

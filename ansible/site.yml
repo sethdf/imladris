@@ -1,0 +1,72 @@
+---
+# =============================================================================
+# Imladris v2 Cloud Workstation Playbook
+# =============================================================================
+# Converts bootstrap.sh (14 steps) into idempotent Ansible roles.
+# Run locally from UserData or remotely over Tailscale SSH.
+#
+# Usage:
+#   Local:  ansible-playbook site.yml
+#   Remote: ansible-playbook -i imladris-1, -u ec2-user site.yml
+#   Check:  ansible-playbook site.yml --check --diff
+#   Tags:   ansible-playbook site.yml --tags docker,tailscale
+#
+# Extra vars for secrets (never stored in files):
+#   -e tailscale_auth_key=YOUR_KEY_HERE
+
+- name: Provision Imladris workstation
+  hosts: imladris
+  gather_facts: true
+
+  roles:
+    # Step 1: NVMe instance store (graceful skip on non-d instances)
+    - role: nvme
+      tags: [nvme, storage]
+
+    # Step 2: System packages
+    - role: packages
+      tags: [packages, base]
+
+    # Step 2: Docker + Compose
+    - role: docker
+      tags: [docker, containers]
+
+    # Step 2: Tailscale VPN
+    - role: tailscale
+      tags: [tailscale, network]
+
+    # Step 2: Node.js
+    - role: nodejs
+      tags: [nodejs, runtime]
+
+    # Step 2: Bun runtime
+    - role: bun
+      tags: [bun, runtime]
+
+    # Step 2: Bitwarden Secrets CLI
+    - role: bitwarden
+      tags: [bitwarden, secrets]
+
+    # Step 3: Clone repositories
+    - role: repos
+      tags: [repos, git]
+
+    # Steps 4-6, 10: Claude Code (symlinks, dirs, settings, CLI, context seed)
+    - role: claude-code
+      tags: [claude, claude-code]
+
+    # Step 8: Windmill (Docker Compose + wmill CLI)
+    - role: windmill
+      tags: [windmill, automation]
+
+    # Step 9: Steampipe + AWS plugin
+    - role: steampipe
+      tags: [steampipe, query]
+
+    # Step 12: mcp-tools CLI
+    - role: mcp-tools
+      tags: [mcp-tools, mcp]
+
+    # Step 13: AI failover wrapper
+    - role: ai-failover
+      tags: [ai-failover, failover]

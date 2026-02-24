@@ -1,0 +1,52 @@
+---
+# =============================================================================
+# Windmill (Bootstrap Steps 8 + 11)
+# =============================================================================
+# Decision 18: Windmill via Docker Compose on same EC2
+
+- name: Check if docker-compose.yml exists
+  ansible.builtin.stat:
+    path: "{{ windmill_compose_file }}"
+  register: windmill_compose_stat
+
+- name: Start Windmill services
+  when: windmill_compose_stat.stat.exists
+  block:
+    - name: Start Windmill via Docker Compose
+      ansible.builtin.command: docker compose -f {{ windmill_compose_file }} up -d
+      register: windmill_compose_result
+      changed_when: "'Started' in windmill_compose_result.stderr or 'Creating' in windmill_compose_result.stderr"
+
+    - name: Wait for Windmill healthcheck
+      ansible.builtin.uri:
+        url: "{{ windmill_health_url }}"
+        return_content: true
+        status_code: 200
+      register: windmill_health
+      retries: "{{ windmill_health_retries }}"
+      delay: "{{ windmill_health_delay }}"
+      until: windmill_health.status == 200
+      failed_when: false
+
+    - name: Report Windmill health status
+      ansible.builtin.debug:
+        msg: "Windmill {{ 'healthy' if windmill_health.status | default(0) == 200 else 'not responding — check docker compose logs' }}"
+
+- name: Skip Windmill (no docker-compose.yml)
+  ansible.builtin.debug:
+    msg: "docker-compose.yml not found at {{ windmill_compose_file }}. Skipping Windmill."
+  when: not windmill_compose_stat.stat.exists
+
+# --- Windmill CLI (wmill) ---
+
+- name: Check if wmill CLI is installed
+  ansible.builtin.command: wmill --version
+  register: windmill_wmill_check
+  changed_when: false
+  failed_when: false
+
+- name: Install Windmill CLI via npm
+  ansible.builtin.command: npm install -g windmill-client
+  become: true
+  changed_when: true
+  when: windmill_wmill_check.rc != 0

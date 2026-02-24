@@ -351,23 +351,13 @@ Resources:
           # Signal CloudFormation on exit (success or failure)
           trap '/opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource WorkstationInstance --region ${AWS::Region}' EXIT
 
-          # Read bootstrap secret from SSM (encrypted with workstation CMK)
-          BWS_TOKEN=$(aws ssm get-parameter \
-            --name "/imladris/bws-token" \
-            --with-decryption \
-            --query 'Parameter.Value' \
-            --output text \
-            --region ${AWS::Region})
-          export BWS_TOKEN
-
-          # Read Tailscale auth key from SSM
+          # Read Tailscale auth key from SSM (encrypted with workstation CMK)
           TAILSCALE_AUTH_KEY=$(aws ssm get-parameter \
             --name "/imladris/tailscale-auth-key" \
             --with-decryption \
             --query 'Parameter.Value' \
             --output text \
             --region ${AWS::Region})
-          export TAILSCALE_AUTH_KEY
 
           # Wait for internet connectivity (IGW propagation can lag instance launch)
           for i in $(seq 1 30); do
@@ -379,8 +369,12 @@ Resources:
             sleep 10
           done
 
-          # Clone imladris repo and run bootstrap
-          dnf install -y git
+          # Install Ansible and git
+          dnf install -y git python3-pip
+          pip3 install ansible-core
+          sudo -u ec2-user /usr/local/bin/ansible-galaxy collection install ansible.posix
+
+          # Clone imladris repo
           mkdir -p /home/ec2-user/repos
           for i in $(seq 1 3); do
             if git clone https://github.com/sethdf/imladris.git /home/ec2-user/repos/imladris; then
@@ -391,7 +385,11 @@ Resources:
             sleep 10
           done
           chown -R ec2-user:ec2-user /home/ec2-user/repos
-          sudo --preserve-env=BWS_TOKEN,TAILSCALE_AUTH_KEY -u ec2-user /home/ec2-user/repos/imladris/bootstrap.sh
+
+          # Run Ansible playbook as ec2-user
+          sudo -u ec2-user /usr/local/bin/ansible-playbook \
+            /home/ec2-user/repos/imladris/ansible/site.yml \
+            -e "tailscale_auth_key=$TAILSCALE_AUTH_KEY"
       Tags:
         - Key: Name
           Value: Imladris

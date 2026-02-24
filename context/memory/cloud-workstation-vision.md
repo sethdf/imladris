@@ -24,6 +24,7 @@ A cloud-based, secure, deterministic-first workstation where Claude+PAI is the s
 | **Zero context friction** | Switching tasks doesn't lose previous context | PRD-based workstreams — PARTIAL (needs better recovery) |
 | **Zero downtime** | Always available, survives reboots and session changes | Cloud instance + persistent state files — PARTIAL |
 | **Single session** | One physical session to work against, no tmux juggling | PAI orchestrates multiple workstreams — DESIGNED |
+| **Known host state** | OS-level state always declared, diffable, and drift-detectable | Ansible roles as source of truth — BUILT |
 
 ---
 
@@ -746,6 +747,8 @@ Automatic "what I did" reports generated from workstream data. Manager-friendly 
 38. **Amazon Linux 2023 ARM AMI** — Graviton-native, smallest attack surface, longest AWS support, SSM agent pre-installed. Uses `dnf` (same as bootstrap.sh). AMI resolved via SSM public parameter (`/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64`) — always gets latest patched version, no hardcoded AMI IDs.
 39. **UserData automated deploy** — CloudFormation embeds bootstrap.sh in UserData. Instance comes up fully provisioned — no manual SSH required. Reads SSM parameter for bws token, runs full bootstrap, connects Tailscale. If something goes wrong: terminate and redeploy. Fits deterministic-first principle. First access is via Tailscale SSH after bootstrap completes.
 40. **SSM Parameter Store with CMK for bootstrap secret** — Bitwarden service account token stored as SSM SecureString at `/imladris/bws-token`, encrypted with the customer-managed workstation CMK (`alias/workstation-ebs`). Same trust model as EBS — only EC2 instance role and root+YubiKey can decrypt. Must use `--key-id alias/workstation-ebs` (not default `aws/ssm` key). One manual `aws ssm put-parameter` before first deploy.
+41. **Ansible as configuration management — host state always known** — Every package, config file, service, and symlink on the workstation is declared in Ansible roles (`~/repos/imladris/ansible/`). Ansible is the single source of truth for OS-level state. CloudFormation owns AWS resources (VPC, EC2, KMS, IAM). Ansible owns everything inside the OS. `--check --diff` from Aurora detects any drift between declared state and actual state. No manual SSH changes are permanent — if it's not in Ansible, it doesn't survive a redeploy. 13 roles map 1:1 to bootstrap.sh steps. Variables in `group_vars/imladris.yml`. Lint passes at production profile. Applied remotely over Tailscale SSH from Aurora (control node) or locally from UserData on first boot.
+42. **Mosh for connection resilience** — UDP-based remote shell handles network switches (wifi→cellular), high latency, and intermittent connections without dropping sessions. Installed via Ansible `packages` role. Connect with `mosh ec2-user@imladris-1` instead of `ssh` for resilient sessions. tmux underneath provides session persistence; Mosh provides transport resilience. Combined: network drops are invisible.
 
 ---
 

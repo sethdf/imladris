@@ -1,0 +1,34 @@
+---
+# =============================================================================
+# Steampipe + AWS Plugin (Bootstrap Step 9)
+# =============================================================================
+
+- name: Check if Steampipe is installed
+  ansible.builtin.command: steampipe --version
+  register: steampipe_check
+  changed_when: false
+  failed_when: false
+
+- name: Install Steampipe
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      curl -fsSL {{ steampipe_install_url }} | sh
+    executable: /bin/bash
+  become: true
+  changed_when: true
+  when: steampipe_check.rc != 0
+
+- name: Check installed Steampipe plugins
+  ansible.builtin.command: steampipe plugin list
+  register: steampipe_plugins_list
+  changed_when: false
+  failed_when: false
+  become: false
+
+- name: Install Steampipe plugins
+  ansible.builtin.command: steampipe plugin install {{ item }}
+  loop: "{{ steampipe_plugins }}"
+  when: item not in (steampipe_plugins_list.stdout | default(''))
+  become: false
+  changed_when: true

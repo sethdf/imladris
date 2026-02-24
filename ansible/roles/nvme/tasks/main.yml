@@ -1,0 +1,124 @@
+---
+# =============================================================================
+# NVMe Instance Store Setup (Bootstrap Step 1)
+# =============================================================================
+# m7gd.xlarge has a 237GB NVMe SSD for ephemeral high-speed storage.
+# Gracefully skips on instances without instance store (e.g., t4g).
+# Handles stop/start cycles (NVMe wiped but fstab entry persists).
+
+- name: Get root device name
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      lsblk -ndo PKNAME "$(findmnt -n -o SOURCE /)" 2>/dev/null
+    executable: /bin/bash
+  register: nvme_root_device
+  changed_when: false
+  failed_when: false
+
+- name: Find NVMe instance store device
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      for dev in /dev/nvme*n1; do
+        [ -b "$dev" ] || continue
+        base="$(basename "$dev")"
+        [ "$base" = "{{ nvme_root_device.stdout | trim }}" ] && continue
+        if ! lsblk -n "$dev" 2>/dev/null | grep -q 'part'; then
+          echo "$dev"
+          exit 0
+        fi
+      done
+      echo ""
+    executable: /bin/bash
+  register: nvme_device_result
+  changed_when: false
+  failed_when: false
+
+- name: Set NVMe facts
+  ansible.builtin.set_fact:
+    nvme_available: "{{ nvme_device_result.stdout | trim | length > 0 }}"
+    nvme_dev: "{{ nvme_device_result.stdout | trim }}"
+
+- name: NVMe setup block
+  when: nvme_available | bool
+  block:
+    - name: Check if already mounted
+      ansible.builtin.command: mountpoint -q {{ nvme_mount_point }}
+      register: nvme_mounted
+      changed_when: false
+      failed_when: false
+
+    - name: Check filesystem on NVMe device
+      ansible.builtin.command: blkid -s TYPE -o value {{ nvme_dev }}
+      register: nvme_fstype
+      changed_when: false
+      failed_when: false
+      become: true
+      when: nvme_mounted.rc != 0
+
+    - name: Format NVMe device with ext4
+      ansible.builtin.command: mkfs.ext4 -L {{ nvme_fs_label }} {{ nvme_dev }}
+      become: true
+      changed_when: true
+      when:
+        - nvme_mounted.rc != 0
+        - nvme_fstype.stdout | trim | length == 0
+
+    - name: Create mount point
+      ansible.builtin.file:
+        path: "{{ nvme_mount_point }}"
+        state: directory
+        owner: "{{ imladris_user }}"
+        group: "{{ imladris_user }}"
+        mode: "0755"
+      become: true
+
+    - name: Mount NVMe device
+      ansible.posix.mount:
+        path: "{{ nvme_mount_point }}"
+        src: "LABEL={{ nvme_fs_label }}"
+        fstype: ext4
+        opts: "{{ nvme_mount_opts }}"
+        state: mounted
+      become: true
+
+    - name: Set mount point ownership
+      ansible.builtin.file:
+        path: "{{ nvme_mount_point }}"
+        owner: "{{ imladris_user }}"
+        group: "{{ imladris_user }}"
+      become: true
+
+    - name: Create NVMe directory structure
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ imladris_user }}"
+        group: "{{ imladris_user }}"
+        mode: "0755"
+      loop: "{{ nvme_dirs }}"
+
+    - name: Create steampipe cache symlink to NVMe
+      ansible.builtin.file:
+        src: "{{ nvme_mount_point }}/cache/steampipe"
+        dest: "{{ imladris_home }}/.cache/steampipe"
+        state: link
+        force: true
+        owner: "{{ imladris_user }}"
+        group: "{{ imladris_user }}"
+
+    - name: Add TMPDIR to bashrc
+      ansible.builtin.lineinfile:
+        path: "{{ imladris_home }}/.bashrc"
+        line: "export TMPDIR={{ nvme_mount_point }}/tmp"
+        regexp: "^export TMPDIR="
+        create: true
+        owner: "{{ imladris_user }}"
+        group: "{{ imladris_user }}"
+        mode: "0644"
+
+- name: Skip NVMe (no instance store detected)
+  ansible.builtin.debug:
+    msg: "No NVMe instance store detected. Skipping NVMe setup."
+  when: not (nvme_available | bool)

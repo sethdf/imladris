@@ -1,0 +1,18 @@
+---
+# =============================================================================
+# mcp-tools CLI (Bootstrap Step 12)
+# =============================================================================
+
+- name: Check if mcp-tools is installed
+  ansible.builtin.command: mcp-tools --version
+  register: mcp_tools_check
+  changed_when: false
+  failed_when: false
+
+- name: Install mcp-tools binary
+  ansible.builtin.get_url:
+    url: "{{ mcp_tools_url }}"
+    dest: /usr/local/bin/mcp-tools
+    mode: "0755"
+  become: true
+  when: mcp_tools_check.rc != 0

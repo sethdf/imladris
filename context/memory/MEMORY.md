@@ -62,10 +62,12 @@
 36. **Code Factory via thin orchestrator** — `factory.ts` reads PRD, partitions ISC, spawns parallel Claude agents in worktrees (`claude -p --worktree`), optional review agent, merge + PR via `gh`. PAI does thinking, factory is pure plumbing. Disposable if PAI ships native.
 37. **Domain tagging: work vs personal** — every workstream tagged `work` (default) or `personal`. Inferred from source mapping + content analysis, zero manual friction. Flows through: PRD frontmatter, current-work.json, triage, reports (manager reports exclude personal), guardrails (personal has no work AWS access), KB (S3 prefix partitioning), agent inheritance, dashboard grouping.
 
-### Deployment & Bootstrap (Decisions 38-40)
+### Deployment & Bootstrap (Decisions 38-42)
 38. **Amazon Linux 2023 ARM** — Graviton-native, SSM pre-installed, `dnf` compatible, AMI via SSM parameter lookup.
-39. **UserData automated deploy** — CF embeds bootstrap.sh, instance comes up fully provisioned. Terminate and redeploy on failure.
+39. **UserData automated deploy** — CF installs Ansible, runs playbook. Instance comes up fully provisioned. Terminate and redeploy on failure.
 40. **SSM Parameter Store with CMK** — bws token as SecureString encrypted with workstation CMK. Same trust model as EBS.
+41. **Ansible as configuration management** — host state always known. Every package, config, service declared in Ansible roles. `--check --diff` detects drift. CloudFormation owns AWS resources, Ansible owns OS state. Applied from Aurora over Tailscale SSH.
+42. **Mosh for connection resilience** — UDP-based shell survives network switches and high latency. Combined with tmux: network drops are invisible.
 
 ## Key Patterns
 - **Intelligence Cycle:** COLLECT→CORRELATE→SURFACE→LEARN — PAI's existing pattern given infrastructure (Steampipe, Windmill, webhooks, cron). 5 gaps identified for Phase 6.
@@ -82,6 +84,6 @@
 ## Roadmap
 6 phases: Foundation → Service Integrations → Context Persistence → Workstream Management → Automation/Triage/Reports → Intelligence Cycle Expansion
 
-## Status: PHASE 1 IN PROGRESS — Infrastructure deployed, configuring services
-All 40 decisions locked. All 13 questions answered. Roadmap complete. Infrastructure live.
-Instance: i-0759728464ba968c6 | Tailscale: imladris-1 | Account: 767448074758
+## Status: PHASE 1 IN PROGRESS — Ansible playbook built, ready to deploy
+42 decisions locked. All 13 questions answered. Roadmap complete. Ansible replaces bootstrap.sh.
+Account: 767448074758 | Stack: deleted (awaiting redeploy with Ansible)

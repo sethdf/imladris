@@ -278,14 +278,20 @@ else
 fi
 
 # =============================================================================
-# C11: sudo --preserve-env
+# C11: Ansible playbook invocation
 # =============================================================================
-header "C11: Environment variable passthrough"
+header "C11: Ansible playbook invocation in UserData"
 
-if grep -q '\-\-preserve-env=BWS_TOKEN,TAILSCALE_AUTH_KEY' "$CF_TEMPLATE"; then
-  pass "sudo --preserve-env passes BWS_TOKEN and TAILSCALE_AUTH_KEY"
+if grep -q 'ansible-playbook' "$CF_TEMPLATE"; then
+  pass "UserData runs ansible-playbook"
 else
-  fail "sudo --preserve-env not found or missing variables"
+  fail "ansible-playbook not found in UserData"
+fi
+
+if grep -q 'tailscale_auth_key=' "$CF_TEMPLATE"; then
+  pass "Tailscale auth key passed to Ansible via --extra-vars"
+else
+  fail "tailscale_auth_key not passed to ansible-playbook"
 fi
 
 # =============================================================================

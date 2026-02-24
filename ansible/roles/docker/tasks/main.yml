@@ -1,0 +1,39 @@
+---
+# =============================================================================
+# Docker + Compose (Bootstrap Step 2 — Docker portion)
+# =============================================================================
+
+- name: Install Docker packages
+  ansible.builtin.dnf:
+    name: "{{ docker_packages }}"
+    state: present
+  become: true
+
+- name: Ensure /etc/docker directory exists
+  ansible.builtin.file:
+    path: /etc/docker
+    state: directory
+    mode: "0755"
+  become: true
+
+- name: Configure Docker daemon.json
+  ansible.builtin.template:
+    src: daemon.json.j2
+    dest: /etc/docker/daemon.json
+    mode: "0644"
+  become: true
+  notify: Restart Docker
+
+- name: Enable and start Docker
+  ansible.builtin.systemd:
+    name: docker
+    enabled: true
+    state: started
+  become: true
+
+- name: Add user to docker group
+  ansible.builtin.user:
+    name: "{{ imladris_user }}"
+    groups: docker
+    append: true
+  become: true
