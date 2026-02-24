@@ -1,0 +1,403 @@
+#!/usr/bin/env bun
+/**
+ * pai - Workstream Management CLI (Decision 22, Layer 3)
+ *
+ * Commands:
+ *   pai work "name"       Start or resume a named workstream
+ *   pai shelve             Save current workstream state and exit
+ *   pai jobs               List all active workstreams
+ *   pai archive "name"     Archive a completed workstream
+ *
+ * The PRD is the saved game state. This CLI manages the mapping
+ * between human-friendly names and PRD files on disk.
+ */
+
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, renameSync } from 'fs';
+import { join, basename, dirname } from 'path';
+import { homedir } from 'os';
+import { execSync } from 'child_process';
+
+// ========================================
+// Constants
+// ========================================
+
+const HOME = homedir();
+const STATE_DIR = join(HOME, '.claude', 'state');
+const WORK_DIR = join(HOME, '.claude', 'MEMORY', 'WORK');
+const CURRENT_WORK = join(STATE_DIR, 'current-work.json');
+
+// ========================================
+// Types
+// ========================================
+
+interface Workstream {
+  name: string;
+  prd: string;
+  domain: 'work' | 'personal';
+  status: string;
+  phase: string | null;
+  last_action: string | null;
+  last_updated: string;
+  priority: string;
+  criteria_summary: string;
+  archived: boolean;
+}
+
+interface CurrentWork {
+  last_updated: string;
+  session_id: string;
+  active_workstreams: Workstream[];
+  foreground: string | null; // name of the current foreground workstream
+}
+
+// ========================================
+// State Management
+// ========================================
+
+function ensureDirs(): void {
+  if (!existsSync(STATE_DIR)) mkdirSync(STATE_DIR, { recursive: true });
+  if (!existsSync(WORK_DIR)) mkdirSync(WORK_DIR, { recursive: true });
+}
+
+function readState(): CurrentWork {
+  ensureDirs();
+  if (!existsSync(CURRENT_WORK)) {
+    return {
+      last_updated: new Date().toISOString(),
+      session_id: '',
+      active_workstreams: [],
+      foreground: null,
+    };
+  }
+  try {
+    const raw = JSON.parse(readFileSync(CURRENT_WORK, 'utf-8'));
+    // Migrate from old single-workstream format
+    if (!Array.isArray(raw.active_workstreams)) {
+      return {
+        last_updated: raw.last_updated || new Date().toISOString(),
+        session_id: raw.session_id || '',
+        active_workstreams: raw.active_prd ? [{
+          name: raw.active_workstream || basename(raw.active_prd, '.md'),
+          prd: raw.active_prd,
+          domain: 'work',
+          status: 'IN_PROGRESS',
+          phase: raw.last_phase || null,
+          last_action: raw.last_action || null,
+          last_updated: raw.last_updated || new Date().toISOString(),
+          priority: 'medium',
+          criteria_summary: raw.criteria_summary || '0/0',
+          archived: false,
+        }] : [],
+        foreground: raw.active_workstream || null,
+      };
+    }
+    return raw;
+  } catch {
+    return {
+      last_updated: new Date().toISOString(),
+      session_id: '',
+      active_workstreams: [],
+      foreground: null,
+    };
+  }
+}
+
+function writeState(state: CurrentWork): void {
+  ensureDirs();
+  state.last_updated = new Date().toISOString();
+  const tmpPath = join(STATE_DIR, `.tmp-pai-${Date.now()}`);
+  writeFileSync(tmpPath, JSON.stringify(state, null, 2), 'utf-8');
+  renameSync(tmpPath, CURRENT_WORK);
+}
+
+// ========================================
+// PRD Discovery
+// ========================================
+
+function findPrdByName(name: string): string | null {
+  if (!existsSync(WORK_DIR)) return null;
+
+  const nameLower = name.toLowerCase();
+
+  // Search recursively for PRD files
+  try {
+    const result = execSync(
+      `find ${WORK_DIR} -name 'PRD-*.md' -type f 2>/dev/null`,
+      { encoding: 'utf-8', timeout: 2000 }
+    ).trim();
+
+    if (!result) return null;
+
+    const files = result.split('\n').filter(Boolean);
+
+    // Score each PRD by how well it matches the name
+    let bestMatch: string | null = null;
+    let bestScore = 0;
+
+    for (const file of files) {
+      const content = readFileSync(file, 'utf-8').slice(0, 500); // Read just the header
+      const fileLower = file.toLowerCase();
+
+      let score = 0;
+      // Check filename
+      if (fileLower.includes(nameLower.replace(/\s+/g, '-'))) score += 10;
+      // Check content header
+      if (content.toLowerCase().includes(nameLower)) score += 5;
+      // Check individual words
+      for (const word of nameLower.split(/\s+/)) {
+        if (fileLower.includes(word)) score += 2;
+        if (content.toLowerCase().includes(word)) score += 1;
+      }
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestMatch = file;
+      }
+    }
+
+    return bestScore > 0 ? bestMatch : null;
+  } catch {
+    return null;
+  }
+}
+
+function createWorkstreamDir(name: string): string {
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
+  const dir = join(WORK_DIR, slug);
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function inferDomain(name: string): 'work' | 'personal' {
+  const lower = name.toLowerCase();
+  const personalKeywords = ['personal', 'camera', 'music', 'guitar', 'shopping', 'movie', 'game', 'hobby', 'recipe', 'travel', 'vacation', 'birthday'];
+  for (const kw of personalKeywords) {
+    if (lower.includes(kw)) return 'personal';
+  }
+  return 'work';
+}
+
+// ========================================
+// Commands
+// ========================================
+
+function cmdWork(name: string): void {
+  const state = readState();
+
+  // Check if workstream already exists
+  let ws = state.active_workstreams.find(
+    w => w.name.toLowerCase() === name.toLowerCase() && !w.archived
+  );
+
+  if (ws) {
+    // Resume existing workstream
+    console.log(`\x1b[32mResuming:\x1b[0m ${ws.name}`);
+    console.log(`  PRD: ${ws.prd}`);
+    console.log(`  Phase: ${ws.phase || 'not started'}`);
+    console.log(`  Progress: ${ws.criteria_summary}`);
+    state.foreground = ws.name;
+    writeState(state);
+
+    // Launch Claude with context
+    const prdExists = existsSync(ws.prd);
+    if (prdExists) {
+      console.log(`\nLaunching Claude with PRD context...`);
+      try {
+        execSync(`claude -p "Resume work on: ${ws.name}. PRD at ${ws.prd}. Read the PRD and rebuild ISC from its IDEAL STATE CRITERIA section."`, {
+          stdio: 'inherit',
+        });
+      } catch {
+        // Claude exited, that's fine
+      }
+    } else {
+      console.log(`\nLaunching Claude for: ${ws.name}`);
+      try {
+        execSync(`claude -p "Starting workstream: ${ws.name}"`, { stdio: 'inherit' });
+      } catch {
+        // Claude exited
+      }
+    }
+  } else {
+    // Create new workstream
+    const dir = createWorkstreamDir(name);
+    const domain = inferDomain(name);
+    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40);
+    const prdPath = join(dir, `PRD-${dateStr}-${slug}.md`);
+
+    ws = {
+      name,
+      prd: prdPath,
+      domain,
+      status: 'DRAFT',
+      phase: null,
+      last_action: 'Created workstream',
+      last_updated: new Date().toISOString(),
+      priority: 'medium',
+      criteria_summary: '0/0',
+      archived: false,
+    };
+
+    state.active_workstreams.push(ws);
+    state.foreground = ws.name;
+    writeState(state);
+
+    console.log(`\x1b[32mCreated workstream:\x1b[0m ${name}`);
+    console.log(`  Domain: ${domain}`);
+    console.log(`  PRD: ${prdPath}`);
+
+    // Launch Claude
+    console.log(`\nLaunching Claude...`);
+    try {
+      execSync(`claude -p "New workstream: ${name}. Domain: ${domain}. PRD will be at ${prdPath}."`, {
+        stdio: 'inherit',
+      });
+    } catch {
+      // Claude exited
+    }
+  }
+}
+
+function cmdShelve(): void {
+  const state = readState();
+  if (!state.foreground) {
+    console.log('No active workstream to shelve.');
+    return;
+  }
+
+  const ws = state.active_workstreams.find(w => w.name === state.foreground);
+  if (ws) {
+    ws.status = 'SHELVED';
+    ws.last_action = 'Shelved by user';
+    ws.last_updated = new Date().toISOString();
+  }
+
+  const prevForeground = state.foreground;
+  state.foreground = null;
+  writeState(state);
+
+  console.log(`\x1b[33mShelved:\x1b[0m ${prevForeground}`);
+  console.log('  State saved. Resume with: pai work "' + prevForeground + '"');
+}
+
+function cmdJobs(): void {
+  const state = readState();
+  const active = state.active_workstreams.filter(w => !w.archived);
+
+  if (active.length === 0) {
+    console.log('No active workstreams.');
+    console.log('Start one with: pai work "task name"');
+    return;
+  }
+
+  console.log(`\x1b[1m  WORKSTREAMS\x1b[0m (${active.length} active)\n`);
+
+  for (const ws of active) {
+    const isFg = ws.name === state.foreground;
+    const marker = isFg ? '\x1b[32m▶\x1b[0m' : ' ';
+    const domainBadge = ws.domain === 'personal' ? '\x1b[35m[P]\x1b[0m' : '\x1b[34m[W]\x1b[0m';
+    const statusColor = ws.status === 'SHELVED' ? '\x1b[33m' :
+                        ws.status === 'COMPLETE' ? '\x1b[32m' :
+                        ws.status === 'BLOCKED' ? '\x1b[31m' : '\x1b[36m';
+
+    const age = timeSince(ws.last_updated);
+
+    console.log(`${marker} ${domainBadge} \x1b[1m${ws.name}\x1b[0m`);
+    console.log(`    ${statusColor}${ws.status}\x1b[0m | Phase: ${ws.phase || '-'} | ${ws.criteria_summary} | ${age}`);
+    if (ws.last_action) {
+      console.log(`    ${ws.last_action}`);
+    }
+    console.log('');
+  }
+}
+
+function cmdArchive(name: string): void {
+  const state = readState();
+  const ws = state.active_workstreams.find(
+    w => w.name.toLowerCase() === name.toLowerCase() && !w.archived
+  );
+
+  if (!ws) {
+    console.log(`No active workstream matching "${name}".`);
+    return;
+  }
+
+  ws.archived = true;
+  ws.status = 'ARCHIVED';
+  ws.last_updated = new Date().toISOString();
+
+  if (state.foreground === ws.name) {
+    state.foreground = null;
+  }
+
+  writeState(state);
+  console.log(`\x1b[90mArchived:\x1b[0m ${ws.name}`);
+}
+
+// ========================================
+// Utilities
+// ========================================
+
+function timeSince(isoDate: string): string {
+  const diff = Date.now() - new Date(isoDate).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
+function printUsage(): void {
+  console.log(`\x1b[1mpai\x1b[0m — Workstream Management (Decision 22)
+
+\x1b[1mUSAGE:\x1b[0m
+  pai work "name"       Start or resume a named workstream
+  pai shelve             Save current workstream and exit
+  pai jobs               List all active workstreams
+  pai archive "name"     Archive a completed workstream
+
+\x1b[1mEXAMPLES:\x1b[0m
+  pai work "AWS security audit"
+  pai work "SDP #4521"
+  pai jobs
+  pai shelve
+  pai archive "AWS security audit"`);
+}
+
+// ========================================
+// Main
+// ========================================
+
+const args = process.argv.slice(2);
+const command = args[0]?.toLowerCase();
+
+switch (command) {
+  case 'work':
+    if (!args[1]) {
+      console.error('Usage: pai work "workstream name"');
+      process.exit(1);
+    }
+    cmdWork(args.slice(1).join(' '));
+    break;
+
+  case 'shelve':
+    cmdShelve();
+    break;
+
+  case 'jobs':
+    cmdJobs();
+    break;
+
+  case 'archive':
+    if (!args[1]) {
+      console.error('Usage: pai archive "workstream name"');
+      process.exit(1);
+    }
+    cmdArchive(args.slice(1).join(' '));
+    break;
+
+  default:
+    printUsage();
+    break;
+}

@@ -40,14 +40,30 @@ interface HookInput {
   tool_output?: Record<string, unknown>;
 }
 
+interface Workstream {
+  name: string;
+  prd: string;
+  domain: string;
+  status: string;
+  phase: string | null;
+  last_action: string | null;
+  last_updated: string;
+  priority: string;
+  criteria_summary: string;
+  archived: boolean;
+}
+
 interface CurrentWork {
   last_updated: string;
   session_id: string;
-  active_prd: string | null;
-  active_workstream: string | null;
-  last_phase: string | null;
-  last_action: string | null;
-  criteria_summary: string;
+  active_workstreams: Workstream[];
+  foreground: string | null;
+  // Legacy fields for backward compat
+  active_prd?: string | null;
+  active_workstream?: string | null;
+  last_phase?: string | null;
+  last_action?: string | null;
+  criteria_summary?: string;
 }
 
 // ========================================
@@ -83,31 +99,49 @@ function atomicWrite(filePath: string, content: string): void {
   renameSync(tmpPath, filePath);
 }
 
+function defaultState(): CurrentWork {
+  return {
+    last_updated: new Date().toISOString(),
+    session_id: '',
+    active_workstreams: [],
+    foreground: null,
+  };
+}
+
 function readCurrentWork(): CurrentWork {
-  if (!existsSync(CURRENT_WORK_PATH)) {
-    return {
-      last_updated: new Date().toISOString(),
-      session_id: '',
-      active_prd: null,
-      active_workstream: null,
-      last_phase: null,
-      last_action: null,
-      criteria_summary: '0/0',
-    };
-  }
+  if (!existsSync(CURRENT_WORK_PATH)) return defaultState();
   try {
-    return JSON.parse(readFileSync(CURRENT_WORK_PATH, 'utf-8'));
+    const raw = JSON.parse(readFileSync(CURRENT_WORK_PATH, 'utf-8'));
+    // Migrate old single-workstream format
+    if (!Array.isArray(raw.active_workstreams)) {
+      const state = defaultState();
+      state.last_updated = raw.last_updated || state.last_updated;
+      state.session_id = raw.session_id || '';
+      if (raw.active_prd) {
+        state.active_workstreams.push({
+          name: raw.active_workstream || 'default',
+          prd: raw.active_prd,
+          domain: 'work',
+          status: 'IN_PROGRESS',
+          phase: raw.last_phase || null,
+          last_action: raw.last_action || null,
+          last_updated: raw.last_updated || new Date().toISOString(),
+          priority: 'medium',
+          criteria_summary: raw.criteria_summary || '0/0',
+          archived: false,
+        });
+        state.foreground = raw.active_workstream || 'default';
+      }
+      return state;
+    }
+    return raw;
   } catch {
-    return {
-      last_updated: new Date().toISOString(),
-      session_id: '',
-      active_prd: null,
-      active_workstream: null,
-      last_phase: null,
-      last_action: null,
-      criteria_summary: '0/0',
-    };
+    return defaultState();
   }
+}
+
+function getForegroundWorkstream(cw: CurrentWork): Workstream | undefined {
+  return cw.active_workstreams.find(w => w.name === cw.foreground && !w.archived);
 }
 
 function detectPhase(command: string): string | null {
@@ -157,12 +191,20 @@ async function main(): Promise<void> {
       return;
     }
 
-    // Update current-work.json
+    // Update current-work.json (multi-workstream aware)
     const cw = readCurrentWork();
     cw.last_updated = new Date().toISOString();
     cw.session_id = input.session_id || cw.session_id;
-    cw.last_phase = phase;
-    cw.last_action = `Entered ${phase} phase`;
+
+    const actionDesc = `Entered ${phase} phase`;
+
+    // Update foreground workstream if one exists
+    const fg = getForegroundWorkstream(cw);
+    if (fg) {
+      fg.phase = phase;
+      fg.last_action = actionDesc;
+      fg.last_updated = new Date().toISOString();
+    }
 
     atomicWrite(CURRENT_WORK_PATH, JSON.stringify(cw, null, 2));
 

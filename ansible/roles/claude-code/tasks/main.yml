@@ -138,6 +138,31 @@
   loop_control:
     label: "{{ item.item | default('unknown') }}"
 
+# --- pai CLI (Decision 22: Workstream Management, Layer 3) ---
+
+- name: Create local bin directory
+  ansible.builtin.file:
+    path: "{{ imladris_home }}/.local/bin"
+    state: directory
+    owner: "{{ imladris_user }}"
+    group: "{{ imladris_user }}"
+    mode: "0755"
+
+- name: Check if pai script exists
+  ansible.builtin.stat:
+    path: "{{ imladris_repo_dir }}/scripts/pai"
+  register: pai_script_stat
+
+- name: Symlink pai CLI to PATH
+  ansible.builtin.file:
+    src: "{{ imladris_repo_dir }}/scripts/pai"
+    dest: "{{ imladris_home }}/.local/bin/pai"
+    state: link
+    force: true
+    owner: "{{ imladris_user }}"
+    group: "{{ imladris_user }}"
+  when: pai_script_stat.stat.exists | default(false)
+
 # --- Skip permissions flag (Decision 23: Claude runs inside tmux, unattended) ---
 
 - name: Set Claude to skip permissions in bashrc
@@ -146,6 +171,7 @@
     marker: "# {mark} ANSIBLE MANAGED - Claude Code Permissions"
     block: |
       export CLAUDE_DANGEROUSLY_SKIP_PERMISSIONS=1
+      export PATH="$HOME/.local/bin:$PATH"
     create: true
     owner: "{{ imladris_user }}"
     group: "{{ imladris_user }}"
