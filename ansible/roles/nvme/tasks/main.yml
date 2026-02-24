@@ -99,6 +99,14 @@
         mode: "0755"
       loop: "{{ nvme_dirs }}"
 
+    - name: Ensure .cache directory exists
+      ansible.builtin.file:
+        path: "{{ imladris_home }}/.cache"
+        state: directory
+        owner: "{{ imladris_user }}"
+        group: "{{ imladris_user }}"
+        mode: "0755"
+
     - name: Create steampipe cache symlink to NVMe
       ansible.builtin.file:
         src: "{{ nvme_mount_point }}/cache/steampipe"
