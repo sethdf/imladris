@@ -386,9 +386,10 @@ Resources:
           done
           chown -R ec2-user:ec2-user /home/ec2-user/repos
 
-          # Run Ansible playbook as ec2-user
+          # Run Ansible playbook as ec2-user (cd ensures ansible.cfg + inventory.yml are found)
+          cd /home/ec2-user/repos/imladris/ansible
           sudo -u ec2-user /usr/local/bin/ansible-playbook \
-            /home/ec2-user/repos/imladris/ansible/site.yml \
+            site.yml \
             -e "tailscale_auth_key=$TAILSCALE_AUTH_KEY"
       Tags:
         - Key: Name
