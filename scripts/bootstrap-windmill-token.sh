@@ -58,74 +58,54 @@ if [ -n "$CURRENT_TOKEN" ] && [ "$CURRENT_TOKEN" != "__WINDMILL_TOKEN__" ]; then
   fi
 fi
 
-# --- Setup admin user ---
-# Windmill requires initial setup — create admin user if not exists
-info "Checking Windmill setup status..."
+# --- Authenticate ---
+# Windmill CE ships with a default superadmin: admin@windmill.dev / changeme
+# After first run, we change the password. The API token persists regardless.
+ADMIN_EMAIL="admin@windmill.dev"
+AUTH_TOKEN=""
 
-# Try to login as admin first
-ADMIN_EMAIL="admin@imladris.local"
-ADMIN_PASSWORD="$(openssl rand -base64 24)"
+info "Authenticating with Windmill..."
 
-# Check if setup is needed (first-time Windmill)
-SETUP_RESPONSE=$(curl -sf "$WINDMILL_URL/api/users/exists" 2>/dev/null || echo "error")
-
-if [ "$SETUP_RESPONSE" = "false" ] || [ "$SETUP_RESPONSE" = "error" ]; then
-  info "First-time Windmill setup — creating admin user..."
-
-  # Create the first user (superadmin)
-  CREATE_RESPONSE=$(curl -sf -X POST "$WINDMILL_URL/api/auth/signup" \
-    -H "Content-Type: application/json" \
-    -d "{
-      \"email\": \"$ADMIN_EMAIL\",
-      \"password\": \"$ADMIN_PASSWORD\",
-      \"name\": \"Imladris Admin\"
-    }" 2>&1) || true
-
-  if echo "$CREATE_RESPONSE" | jq -e '.error' >/dev/null 2>&1; then
-    warn "User creation returned: $CREATE_RESPONSE"
-    warn "Trying to login with default credentials instead..."
-  else
-    info "Admin user created: $ADMIN_EMAIL"
-    info "Password saved for this session only (not persisted)"
-  fi
-fi
-
-# --- Get auth token ---
-info "Authenticating to get session token..."
-
-# Try our generated credentials, then common defaults
-for PASSWORD in "$ADMIN_PASSWORD" "changeme"; do
+# Try default password first, then common alternatives
+for PASSWORD in "changeme"; do
   LOGIN_RESPONSE=$(curl -sf -X POST "$WINDMILL_URL/api/auth/login" \
     -H "Content-Type: application/json" \
     -d "{\"email\": \"$ADMIN_EMAIL\", \"password\": \"$PASSWORD\"}" 2>&1) || continue
 
-  AUTH_TOKEN=$(echo "$LOGIN_RESPONSE" | jq -r '.token // empty' 2>/dev/null) || continue
-
-  if [ -n "$AUTH_TOKEN" ]; then
+  # Windmill login returns the token directly as a string, not JSON
+  if [ -n "$LOGIN_RESPONSE" ] && [ "$LOGIN_RESPONSE" != "Bad request: Invalid login" ]; then
+    AUTH_TOKEN="$LOGIN_RESPONSE"
     info "Authentication successful"
     break
   fi
 done
 
-if [ -z "${AUTH_TOKEN:-}" ]; then
+if [ -z "$AUTH_TOKEN" ]; then
   error "Failed to authenticate with Windmill"
-  error "You may need to manually create a user at $WINDMILL_URL"
+  error "Default password may have been changed. Generate a token manually at $WINDMILL_URL"
   exit 1
 fi
+
+# Change the default password for security
+NEW_PASS=$(openssl rand -base64 24)
+curl -sf -X POST "$WINDMILL_URL/api/users/setpassword" \
+  -H "Authorization: Bearer $AUTH_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"password\": \"$NEW_PASS\"}" >/dev/null 2>&1 && \
+  info "Default admin password changed (API token still works)" || \
+  warn "Could not change default password (may already be changed)"
 
 # --- Create API token ---
 info "Creating API token..."
 
-TOKEN_RESPONSE=$(curl -sf -X POST "$WINDMILL_URL/api/users/tokens/create" \
+# Windmill returns the token as a plain string, not JSON
+API_TOKEN=$(curl -sf -X POST "$WINDMILL_URL/api/users/tokens/create" \
   -H "Authorization: Bearer $AUTH_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"label": "claude-code-mcp", "expiration": null}' 2>&1)
-
-API_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '. // empty' 2>/dev/null)
+  -d '{"label": "claude-code-mcp"}' 2>&1)
 
 if [ -z "$API_TOKEN" ]; then
   error "Failed to create API token"
-  error "Response: $TOKEN_RESPONSE"
   exit 1
 fi
 

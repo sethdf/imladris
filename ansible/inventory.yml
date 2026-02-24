@@ -4,13 +4,12 @@ all:
     imladris:
       hosts:
         # Local execution (from UserData / on-box)
-        localhost:
-          ansible_connection: local
-          ansible_python_interpreter: /usr/bin/python3
+        # localhost:
+        #   ansible_connection: local
+        #   ansible_python_interpreter: /usr/bin/python3
 
         # Remote execution (from Aurora over Tailscale SSH)
-        # Uncomment and comment localhost when running remotely
-        # imladris-1:
-        #   ansible_host: imladris-1
-        #   ansible_user: ec2-user
-        #   ansible_ssh_common_args: ''
+        imladris-1:
+          ansible_host: 100.75.112.33
+          ansible_user: ec2-user
+          ansible_ssh_common_args: '-o StrictHostKeyChecking=no'

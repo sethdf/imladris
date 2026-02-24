@@ -1,10 +1,5 @@
 {
   "mcpServers": {
-    "steampipe": {
-      "command": "steampipe-mcp",
-      "args": [],
-      "env": {}
-    },
     "windmill": {
       "command": "npx",
       "args": ["-y", "windmill-mcp-server"],
