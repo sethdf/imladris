@@ -12,6 +12,33 @@
 - name: Start Windmill services
   when: windmill_compose_stat.stat.exists
   block:
+    - name: Check if Windmill .env exists
+      ansible.builtin.stat:
+        path: "{{ imladris_repo_dir }}/.env"
+      register: windmill_env_stat
+
+    - name: Generate Windmill DB password
+      ansible.builtin.set_fact:
+        windmill_generated_password: "{{ lookup('ansible.builtin.password', '/dev/null length=32 chars=ascii_letters,digits') }}"
+      when: not windmill_env_stat.stat.exists
+
+    - name: Create Windmill .env file with generated password
+      ansible.builtin.copy:
+        content: "WINDMILL_DB_PASSWORD={{ windmill_generated_password }}"
+        dest: "{{ imladris_repo_dir }}/.env"
+        owner: "{{ imladris_user }}"
+        group: "{{ imladris_user }}"
+        mode: "0600"
+      when: not windmill_env_stat.stat.exists
+
+    - name: Create Windmill Postgres data directory on EBS
+      ansible.builtin.file:
+        path: "{{ imladris_home }}/.windmill/postgres"
+        state: directory
+        owner: "{{ imladris_user }}"
+        group: "{{ imladris_user }}"
+        mode: "0755"
+
     - name: Start Windmill via Docker Compose
       ansible.builtin.command: docker compose -f {{ windmill_compose_file }} up -d
       become: true
