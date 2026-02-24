@@ -16,3 +16,10 @@
     mode: "0755"
   become: true
   when: mcp_tools_check.rc != 0
+  register: mcp_tools_install
+  failed_when: false
+
+- name: Warn if mcp-tools download failed
+  ansible.builtin.debug:
+    msg: "mcp-tools binary not available at {{ mcp_tools_url }} — skipping (repo may be offline)"
+  when: mcp_tools_install is defined and mcp_tools_install is failed
