@@ -596,6 +596,41 @@ step_create_runtime_dirs() {
       log OK "Created: $dir"
     fi
   done
+
+  # Seed CLAUDE.md (skip if already exists — don't overwrite user edits)
+  local claude_md="$CLAUDE_DIR/CLAUDE.md"
+  local claude_md_seed="$IMLADRIS_DIR/context/CLAUDE.md"
+  if [ -f "$claude_md" ]; then
+    log SKIP "CLAUDE.md already exists"
+  elif [ -f "$claude_md_seed" ]; then
+    cp "$claude_md_seed" "$claude_md"
+    log OK "Seeded CLAUDE.md from imladris/context/"
+    INSTALLED+=("CLAUDE.md seed")
+  else
+    log WARN "No CLAUDE.md seed found at $claude_md_seed"
+    WARNINGS+=("CLAUDE.md: no seed found")
+  fi
+
+  # Seed MEMORY files (skip each if already exists)
+  local memory_seed_dir="$IMLADRIS_DIR/context/memory"
+  if [ -d "$memory_seed_dir" ]; then
+    for seed_file in "$memory_seed_dir"/*.md; do
+      [ -f "$seed_file" ] || continue
+      local basename
+      basename="$(basename "$seed_file")"
+      local target="$CLAUDE_DIR/MEMORY/$basename"
+      if [ -f "$target" ]; then
+        log SKIP "MEMORY/$basename already exists"
+      else
+        cp "$seed_file" "$target"
+        log OK "Seeded MEMORY/$basename"
+        INSTALLED+=("MEMORY/$basename seed")
+      fi
+    done
+  else
+    log WARN "No memory seed directory at $memory_seed_dir"
+    WARNINGS+=("MEMORY seeds: directory missing")
+  fi
 }
 
 # =============================================================================
