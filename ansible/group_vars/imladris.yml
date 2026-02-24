@@ -40,13 +40,13 @@ nvme_dirs:
 
 # --- System Packages ---
 system_packages:
-  - curl
+  # curl-minimal is pre-installed on AL2023 — do NOT add curl (conflicts)
   - wget
   - git
   - jq
   - unzip
   - tmux
-  - mosh
+  # mosh requires EPEL — installed separately in packages role
 
 # --- Docker ---
 docker_data_root: "{{ nvme_mount_point }}/docker"

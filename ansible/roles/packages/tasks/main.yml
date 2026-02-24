@@ -9,6 +9,45 @@
     state: present
   become: true
 
+# --- Mosh (Decision 42) — not in AL2023 default repos ---
+
+- name: Check if mosh is installed
+  ansible.builtin.command: mosh --version
+  register: packages_mosh_check
+  changed_when: false
+  failed_when: false
+
+- name: Install mosh build dependencies
+  ansible.builtin.dnf:
+    name:
+      - protobuf-compiler
+      - protobuf-devel
+      - ncurses-devel
+      - openssl-devel
+      - gcc-c++
+      - make
+      - automake
+      - autoconf
+      - perl-open
+    state: present
+  become: true
+  when: packages_mosh_check.rc != 0
+
+- name: Download and install mosh from source
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      cd /tmp
+      curl -fsSL https://github.com/mobile-shell/mosh/releases/download/mosh-1.4.0/mosh-1.4.0.tar.gz | tar xz
+      cd mosh-1.4.0
+      ./configure
+      make -j$(nproc)
+      make install
+    executable: /bin/bash
+  become: true
+  changed_when: true
+  when: packages_mosh_check.rc != 0
+
 # --- tmux config (low-strain theme for long sessions) ---
 
 - name: Deploy tmux config
