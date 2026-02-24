@@ -66,21 +66,19 @@ nodejs_version: "20"
 git_repos:
   - name: PAI
     url: https://github.com/danielmiessler/PAI.git
-  - name: pai-config
-    url: https://github.com/sethdf/pai-config.git
   - name: imladris
     url: https://github.com/sethdf/imladris.git
   - name: dotfiles
     url: https://github.com/sethdf/dotfiles.git
 
 # --- Claude Code Symlinks (Decision 34) ---
-# Source: pai-config repo (PAI runtime snapshot — skills, hooks, agents)
+# Source: imladris/pai-config/ (PAI runtime snapshot — skills, hooks, agents)
 claude_symlinks:
-  - src: "{{ repos_dir }}/pai-config/skills"
+  - src: "{{ imladris_repo_dir }}/pai-config/skills"
     dest: "{{ claude_dir }}/skills"
-  - src: "{{ repos_dir }}/pai-config/agents"
+  - src: "{{ imladris_repo_dir }}/pai-config/agents"
     dest: "{{ claude_dir }}/agents"
-  - src: "{{ repos_dir }}/pai-config/hooks"
+  - src: "{{ imladris_repo_dir }}/pai-config/hooks"
     dest: "{{ claude_dir }}/hooks"
 
 # --- Claude Runtime Directories ---
