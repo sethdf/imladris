@@ -16,11 +16,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bun run $HOME/repos/imladris/hooks/McpSecurityValidator.hook.ts"
+            "command": "bun run $HOME/.claude/hooks/McpSecurityValidator.hook.ts"
           },
           {
             "type": "command",
-            "command": "bun run $HOME/repos/imladris/hooks/McpLogger.hook.ts"
+            "command": "bun run $HOME/.claude/hooks/McpLogger.hook.ts"
           }
         ]
       }
@@ -31,7 +31,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bun run $HOME/repos/imladris/hooks/McpLogger.hook.ts"
+            "command": "bun run $HOME/.claude/hooks/McpLogger.hook.ts"
           }
         ]
       }
