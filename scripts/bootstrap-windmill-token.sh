@@ -116,7 +116,7 @@ info "Creating API token..."
 API_TOKEN=$(curl -sf -X POST "$WINDMILL_URL/api/users/tokens/create" \
   -H "Authorization: Bearer $AUTH_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"label": "claude-code-mcp"}' 2>&1)
+  -d '{"label": "claude-code-mcp", "scopes": ["mcp:read", "mcp:write", "runs:read", "runs:write"]}' 2>&1)
 
 if [ -z "$API_TOKEN" ]; then
   error "Failed to create API token"
