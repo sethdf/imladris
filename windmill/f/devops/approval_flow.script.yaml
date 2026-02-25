@@ -1,0 +1,27 @@
+summary: ''
+description: ''
+lock: '!inline f/devops/approval_flow.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    operation:
+      type: string
+      description: ''
+      default: ''
+    resource:
+      type: string
+      description: ''
+      default: ''
+    severity:
+      type: string
+      description: ''
+      default: 'high'
+    requested_by:
+      type: string
+      description: ''
+      default: 'PAI'
+  required:
+    - operation
+    - resource
