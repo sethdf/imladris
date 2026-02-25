@@ -12,9 +12,11 @@ Parameters:
     Default: m7gd.xlarge
     Description: EC2 instance type (Graviton3, NVMe instance store, non-burstable — 4 vCPU, 16GB)
     AllowedValues:
+      - m7g.xlarge
       - m7gd.large
       - m7gd.xlarge
       - m7gd.2xlarge
+      - m8g.xlarge
       - m8gd.xlarge
       - m8gd.2xlarge
       - t4g.large
@@ -342,8 +344,18 @@ Resources:
           set -euxo pipefail
           exec > /var/log/imladris-bootstrap.log 2>&1
 
-          # Signal CloudFormation on exit (success or failure)
-          trap '/opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource WorkstationInstance --region ${AWS::Region}' EXIT
+          # Upload logs to S3 and signal CloudFormation on exit (success or failure)
+          cleanup_and_signal() {
+            EXIT_CODE=$?
+            echo "=== Bootstrap finished with exit code $EXIT_CODE at $(date -u) ==="
+            # Upload bootstrap log to S3 for post-mortem (best-effort)
+            aws s3 cp /var/log/imladris-bootstrap.log \
+              s3://imladris-state-${AWS::AccountId}/bootstrap-logs/$(date -u +%Y%m%d-%H%M%S)-exit${!EXIT_CODE}.log \
+              --region ${AWS::Region} 2>/dev/null || true
+            # Signal CF immediately (fail-fast on errors instead of waiting for timeout)
+            /opt/aws/bin/cfn-signal -e $EXIT_CODE --stack ${AWS::StackName} --resource WorkstationInstance --region ${AWS::Region}
+          }
+          trap cleanup_and_signal EXIT
 
           # Read Tailscale auth key from SSM (encrypted with workstation CMK)
           TAILSCALE_AUTH_KEY=$(aws ssm get-parameter \
@@ -394,7 +406,7 @@ Resources:
           Value: Imladris
     CreationPolicy:
       ResourceSignal:
-        Timeout: PT30M
+        Timeout: PT15M
 
   # ============================================================
   # DLM Lifecycle Policy (Decision 8)
