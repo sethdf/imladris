@@ -4,7 +4,7 @@ Description: >
   EC2 instance with customer-managed KMS encryption, automated UserData bootstrap
   (SSM secrets, Tailscale, repo clone), IAM role for cross-account AssumeRole,
   zero-inbound security group (Tailscale-only), hourly DLM EBS snapshots,
-  Bedrock VPC endpoints, and S3 knowledge bucket. No long-lived credentials anywhere.
+  Bedrock VPC endpoint (model invocation failover), and S3 state backup. No long-lived credentials anywhere.
 
 Parameters:
   InstanceType:
@@ -201,6 +201,7 @@ Resources:
   # Inline policy allows AssumeRole to ImladrisReadOnly and
   # Bedrock policy enables AI failover when Anthropic API is unavailable.
   # ImladrisReadWrite in all target accounts.
+  # KB/guardrails removed — add back when data volume warrants it.
   # ============================================================
   WorkstationRole:
     Type: AWS::IAM::Role
@@ -264,45 +265,6 @@ Resources:
                   - ssm:GetParameter
                   - ssm:GetParameters
                 Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/imladris/*'
-        - PolicyName: KnowledgeBaseAccess
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Sid: BedrockKnowledgeBaseAndGuardrails
-                Effect: Allow
-                Action:
-                  - bedrock:Retrieve
-                  - bedrock:RetrieveAndGenerate
-                  - bedrock:ApplyGuardrail
-                  - bedrock:CreateKnowledgeBase
-                  - bedrock:UpdateKnowledgeBase
-                  - bedrock:DeleteKnowledgeBase
-                  - bedrock:GetKnowledgeBase
-                  - bedrock:ListKnowledgeBases
-                  - bedrock:AssociateThirdPartyKnowledgeBase
-                  - bedrock:CreateDataSource
-                  - bedrock:UpdateDataSource
-                  - bedrock:DeleteDataSource
-                  - bedrock:GetDataSource
-                  - bedrock:ListDataSources
-                  - bedrock:StartIngestionJob
-                  - bedrock:GetIngestionJob
-                  - bedrock:ListIngestionJobs
-                  - bedrock:CreateGuardrail
-                  - bedrock:UpdateGuardrail
-                  - bedrock:GetGuardrail
-                  - bedrock:ListGuardrails
-                Resource: '*'
-              - Sid: KnowledgeBucketAccess
-                Effect: Allow
-                Action:
-                  - s3:GetObject
-                  - s3:PutObject
-                  - s3:ListBucket
-                  - s3:DeleteObject
-                Resource:
-                  - !GetAtt KnowledgeBucket.Arn
-                  - !Sub '${KnowledgeBucket.Arn}/*'
         - PolicyName: StateBackupAccess
           PolicyDocument:
             Version: '2012-10-17'
@@ -488,126 +450,6 @@ Resources:
           Value: Imladris
 
   # ============================================================
-  # Bedrock KB Execution Role
-  # Service role for Knowledge Base ingestion (embedding, chunking).
-  # Has read-only S3 access to the knowledge bucket + KMS decrypt.
-  # ============================================================
-  BedrockKbExecutionRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: AmazonBedrockExecutionRoleForKnowledgeBase_Imladris
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: bedrock.amazonaws.com
-            Action: sts:AssumeRole
-            Condition:
-              StringEquals:
-                'aws:SourceAccount': !Ref 'AWS::AccountId'
-      Policies:
-        - PolicyName: KbS3Access
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Sid: ReadKnowledgeBucket
-                Effect: Allow
-                Action:
-                  - s3:GetObject
-                  - s3:ListBucket
-                Resource:
-                  - !GetAtt KnowledgeBucket.Arn
-                  - !Sub '${KnowledgeBucket.Arn}/*'
-        - PolicyName: KbKmsDecrypt
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Sid: DecryptKnowledgeData
-                Effect: Allow
-                Action:
-                  - kms:Decrypt
-                  - kms:DescribeKey
-                Resource: !GetAtt WorkstationKmsKey.Arn
-                Condition:
-                  StringEquals:
-                    'kms:ViaService': !Sub 's3.${AWS::Region}.amazonaws.com'
-        - PolicyName: KbEmbeddingModel
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Sid: InvokeEmbeddingModel
-                Effect: Allow
-                Action:
-                  - bedrock:InvokeModel
-                Resource: !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/amazon.titan-embed-text-v2:0'
-      Tags:
-        - Key: Name
-          Value: ImladrisBedrockKbRole
-        - Key: Project
-          Value: Imladris
-
-  # ============================================================
-  # S3 Knowledge Bucket (Bedrock KB data store)
-  # Encrypted with same CMK as EBS. Locked to workstation role only.
-  # Data sources: runbooks, tickets, docs synced by Windmill.
-  # ============================================================
-  KnowledgeBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketName: !Sub 'imladris-kb-${AWS::AccountId}'
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault:
-              SSEAlgorithm: aws:kms
-              KMSMasterKeyID: !GetAtt WorkstationKmsKey.Arn
-            BucketKeyEnabled: true
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
-      VersioningConfiguration:
-        Status: Enabled
-      Tags:
-        - Key: Name
-          Value: ImladrisKnowledgeBucket
-        - Key: Project
-          Value: Imladris
-
-  KnowledgeBucketPolicy:
-    Type: AWS::S3::BucketPolicy
-    Properties:
-      Bucket: !Ref KnowledgeBucket
-      PolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Sid: DenyAllExceptWorkstationAndBedrock
-            Effect: Deny
-            Principal: '*'
-            Action: 's3:*'
-            Resource:
-              - !GetAtt KnowledgeBucket.Arn
-              - !Sub '${KnowledgeBucket.Arn}/*'
-            Condition:
-              ArnNotLike:
-                'aws:PrincipalArn':
-                  - !GetAtt WorkstationRole.Arn
-                  - !GetAtt BedrockKbExecutionRole.Arn
-                  - !Ref AdminPrincipalArn
-                  - !Sub 'arn:aws:iam::${AWS::AccountId}:root'
-          - Sid: EnforceTlsOnly
-            Effect: Deny
-            Principal: '*'
-            Action: 's3:*'
-            Resource:
-              - !GetAtt KnowledgeBucket.Arn
-              - !Sub '${KnowledgeBucket.Arn}/*'
-            Condition:
-              Bool:
-                'aws:SecureTransport': 'false'
-
-  # ============================================================
   # S3 State Backup Bucket
   # Encrypted with same CMK as EBS. Locked to workstation role ONLY.
   # Stores: ~/.claude/ (conversations, memory, logs, state),
@@ -729,22 +571,6 @@ Resources:
         - Key: Project
           Value: Imladris
 
-  BedrockAgentRuntimeEndpoint:
-    Type: AWS::EC2::VPCEndpoint
-    Properties:
-      VpcId: !Ref WorkstationVpc
-      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.bedrock-agent-runtime'
-      VpcEndpointType: Interface
-      SubnetIds:
-        - !Ref WorkstationSubnet
-      SecurityGroupIds:
-        - !GetAtt BedrockEndpointSecurityGroup.GroupId
-      PrivateDnsEnabled: true
-      Tags:
-        - Key: Name
-          Value: ImladrisBedrockAgentRuntimeEndpoint
-        - Key: Project
-          Value: Imladris
 
 Outputs:
   InstanceId:
@@ -789,18 +615,6 @@ Outputs:
     Export:
       Name: !Sub '${AWS::StackName}-SnapshotPolicyId'
 
-  KnowledgeBucketName:
-    Description: S3 bucket for Bedrock Knowledge Base data
-    Value: !Ref KnowledgeBucket
-    Export:
-      Name: !Sub '${AWS::StackName}-KnowledgeBucketName'
-
-  KnowledgeBucketArn:
-    Description: ARN of the Knowledge Base S3 bucket
-    Value: !GetAtt KnowledgeBucket.Arn
-    Export:
-      Name: !Sub '${AWS::StackName}-KnowledgeBucketArn'
-
   StateBackupBucketName:
     Description: S3 bucket for encrypted state backups
     Value: !Ref StateBackupBucket
@@ -818,18 +632,6 @@ Outputs:
     Value: !Ref BedrockRuntimeEndpoint
     Export:
       Name: !Sub '${AWS::StackName}-BedrockRuntimeEndpointId'
-
-  BedrockAgentRuntimeEndpointId:
-    Description: VPC endpoint ID for Bedrock agent runtime (KB Retrieve)
-    Value: !Ref BedrockAgentRuntimeEndpoint
-    Export:
-      Name: !Sub '${AWS::StackName}-BedrockAgentRuntimeEndpointId'
-
-  BedrockKbExecutionRoleArn:
-    Description: IAM role ARN for Bedrock Knowledge Base ingestion
-    Value: !GetAtt BedrockKbExecutionRole.Arn
-    Export:
-      Name: !Sub '${AWS::StackName}-BedrockKbExecutionRoleArn'
 
   VpcId:
     Description: VPC ID for the Imladris workstation

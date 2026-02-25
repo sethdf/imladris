@@ -313,6 +313,15 @@
     job: "bash {{ imladris_repo_dir }}/scripts/state-backup.sh 2>&1 | tail -5 >> {{ imladris_home }}/.claude/logs/state-backup-cron.log"
     user: "{{ imladris_user }}"
 
+- name: Install cache eviction cron (daily)
+  ansible.builtin.cron:
+    name: "Triage cache eviction"
+    minute: "30"
+    hour: "3"
+    job: "bash {{ imladris_repo_dir }}/scripts/cache-evict.sh 2>&1 >> {{ imladris_home }}/.claude/logs/cache-evict.log"
+    user: "{{ imladris_user }}"
+  when: nvme_available | default(false) | bool
+
 - name: Run initial state backup
   ansible.builtin.command:
     cmd: bash {{ imladris_repo_dir }}/scripts/state-backup.sh

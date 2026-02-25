@@ -194,6 +194,22 @@ export async function main(
       );
     }
     saveSeen(seen);
+
+    // Cache feed items for cross-source correlation
+    try {
+      const { store, isAvailable, init } = await import("./cache_lib.ts");
+      if (isAvailable()) {
+        init();
+        for (const item of newItems) {
+          store(
+            "feed", item.source || "rss", item.id || `${Date.now()}`,
+            item.title || "",
+            `${item.title || ""} ${item.description || ""} ${item.severity || ""}`,
+            item
+          );
+        }
+      }
+    } catch { /* cache unavailable */ }
   }
 
   // Categorize by severity for summary

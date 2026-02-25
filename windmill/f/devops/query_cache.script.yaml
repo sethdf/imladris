@@ -1,0 +1,31 @@
+summary: Query the NVMe triage cache (entity lookup, full-text search, recent items, stats)
+description: >
+  Searches the SQLite-backed triage cache on NVMe for cached SDP tickets,
+  Slack threads, emails, and calendar events. Supports entity-based
+  cross-source correlation, full-text search via FTS5, and recent item listing.
+  Cache is ephemeral (lost on instance stop).
+kind: script
+lang: bun
+is_template: false
+schema:
+  $schema: 'https://json-schema.org/draft/2020-12/schema'
+  type: object
+  properties:
+    action:
+      type: string
+      description: 'Action: entity (find by entity ID), search (full-text), recent (latest items), stats (cache info), raw (full JSON)'
+      default: stats
+      enum: [entity, search, recent, stats, raw]
+    query:
+      type: string
+      description: 'Entity ID, search text, or item ID depending on action'
+      default: ''
+    source:
+      type: string
+      description: 'Filter by source type (sdp, slack, email, calendar). Empty = all sources.'
+      default: ''
+    limit:
+      type: integer
+      description: 'Max results to return'
+      default: 20
+  required: []

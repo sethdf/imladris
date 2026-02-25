@@ -62,13 +62,48 @@ Use this calibration data to adjust your classification. If AUTO accuracy is low
     // Calibration file missing or invalid — proceed without it
   }
 
+  // Pull related context from NVMe cache (cross-source correlation)
+  let cacheContext = "";
+  try {
+    const { extractEntities, queryEntity, isAvailable, init } = await import("./cache_lib.ts");
+    if (isAvailable()) {
+      init();
+      const entities = extractEntities(payload);
+      if (entities.length > 0) {
+        const relatedItems: string[] = [];
+        const seen = new Set<string>();
+        for (const { entity } of entities.slice(0, 5)) { // cap at 5 entities
+          const items = queryEntity(entity, 3); // top 3 per entity
+          for (const item of items) {
+            if (!seen.has(item.id)) {
+              seen.add(item.id);
+              relatedItems.push(`[${item.source}/${item.type}] ${item.title}: ${item.body.slice(0, 200)}`);
+            }
+          }
+        }
+        if (relatedItems.length > 0) {
+          cacheContext = `\n\nRelated context from cache (${relatedItems.length} items):\n${relatedItems.join("\n")}`;
+        }
+      }
+    }
+  } catch { /* cache unavailable — proceed without context */ }
+
+  // Cache the incoming event itself
+  try {
+    const { store, isAvailable, init } = await import("./cache_lib.ts");
+    if (isAvailable()) {
+      init();
+      store("triage", event_type || "event", `${Date.now()}`, `${source}: ${event_type}`, payload.slice(0, 5000));
+    }
+  } catch { /* cache write failed — non-fatal */ }
+
   // Build triage prompt
   const prompt = `You are an event triage system. Classify this event.
 
 Source: ${source}
 Event type: ${event_type || "unknown"}
 Payload:
-${payload.slice(0, 2000)}
+${payload.slice(0, 2000)}${cacheContext}
 
 Respond with ONLY valid JSON (no markdown):
 {

@@ -77,6 +77,23 @@ export async function main(
   const data = await response.json();
   const requests = data.requests || [];
 
+  // Cache each ticket for cross-source correlation (ephemeral NVMe cache)
+  try {
+    const { store, isAvailable, init } = await import("./cache_lib.ts");
+    if (isAvailable()) {
+      init();
+      for (const r of requests) {
+        const t = r as any;
+        store(
+          "sdp", "ticket", String(t.id),
+          t.subject || "",
+          `${t.subject || ""} ${t.status?.name || ""} ${t.priority?.name || ""} ${t.technician?.name || ""}`,
+          t
+        );
+      }
+    }
+  } catch { /* cache unavailable — continue without it */ }
+
   return {
     count: requests.length,
     status_filter: status || "all",

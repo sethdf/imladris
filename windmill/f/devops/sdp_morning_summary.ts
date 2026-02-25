@@ -106,6 +106,22 @@ export async function main(
 
   const allOpen = await fetchTickets(baseUrl, apiKey, openCriteria);
 
+  // Cache tickets for cross-source correlation
+  try {
+    const { store, isAvailable, init } = await import("./cache_lib.ts");
+    if (isAvailable()) {
+      init();
+      for (const t of allOpen) {
+        store(
+          "sdp", "ticket", String(t.id),
+          t.subject || "",
+          `${t.subject || ""} ${t.status?.name || ""} ${t.priority?.name || ""} ${t.technician?.name || ""}`,
+          t
+        );
+      }
+    }
+  } catch { /* cache unavailable */ }
+
   const now = new Date();
   const twentyFourHoursAgo = new Date(now.getTime() - 86400000);
 

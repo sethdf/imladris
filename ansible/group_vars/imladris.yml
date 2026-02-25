@@ -37,6 +37,7 @@ nvme_dirs:
   - "{{ nvme_mount_point }}/cache/npm"
   - "{{ nvme_mount_point }}/cache/bun"
   - "{{ nvme_mount_point }}/cache/steampipe"
+  - "{{ nvme_mount_point }}/cache/triage"
 
 # --- AWS ---
 aws_account_id: "767448074758"
