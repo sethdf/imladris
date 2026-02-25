@@ -7,6 +7,11 @@
 // Requires: claude CLI available in PATH
 
 import { execSync } from "child_process";
+import { readFileSync, existsSync } from "fs";
+import { join } from "path";
+import { homedir } from "os";
+
+const HOME = homedir();
 
 type TriageAction = "NOTIFY" | "QUEUE" | "AUTO";
 
@@ -26,6 +31,35 @@ export async function main(
 ) {
   if (!source || !payload) {
     return { error: "source and payload are required" };
+  }
+
+  // Read calibration data from feedback loop (Decision 25 + Phase 6 Gap #1)
+  let calibrationContext = "";
+  try {
+    const calibrationPath = join(HOME, ".claude", "state", "triage-calibration.json");
+    if (existsSync(calibrationPath)) {
+      const calibration = JSON.parse(readFileSync(calibrationPath, "utf-8"));
+      if (calibration && calibration.accuracy_rate !== undefined) {
+        const autoAccuracy = calibration.by_source?.AUTO?.accuracy ?? "N/A";
+        const recs = Array.isArray(calibration.recommendations) ? calibration.recommendations.join("; ") : "none";
+        const adjustments = Array.isArray(calibration.threshold_adjustments)
+          ? calibration.threshold_adjustments.map((a: any) => `${a.action}: ${a.direction} (${a.reason})`).join("; ")
+          : "none";
+        calibrationContext = `
+
+Calibration data from past triage outcomes:
+- Overall accuracy: ${calibration.accuracy_rate}%
+- AUTO accuracy: ${autoAccuracy}%
+- Over-triage rate: ${calibration.over_triage_rate ?? "N/A"}%
+- Under-triage rate: ${calibration.under_triage_rate ?? "N/A"}%
+- Threshold adjustments: ${adjustments}
+- Recommendations: ${recs}
+
+Use this calibration data to adjust your classification. If AUTO accuracy is low, be more conservative (prefer QUEUE over AUTO). If over-triage rate is high, be less aggressive with NOTIFY.`;
+      }
+    }
+  } catch {
+    // Calibration file missing or invalid — proceed without it
   }
 
   // Build triage prompt
@@ -49,7 +83,7 @@ Rules:
 - NOTIFY: Security alerts, service down, P1 incidents, anything needing immediate human attention
 - QUEUE: New tickets, feature requests, non-urgent tasks — add to workstream for later
 - AUTO: Informational, resolved alerts, routine maintenance — log and move on
-- critical/high → NOTIFY, medium → QUEUE or AUTO, low → AUTO`;
+- critical/high → NOTIFY, medium → QUEUE or AUTO, low → AUTO${calibrationContext}`;
 
   try {
     const result = execSync(

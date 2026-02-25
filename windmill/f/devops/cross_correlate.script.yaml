@@ -1,0 +1,18 @@
+summary: ''
+description: 'Cross-source correlation engine — finds entity relationships across all event logs'
+lock: '!inline cross_correlate.script.lock'
+kind: script
+schema:
+  $schema: 'https://json-schema.org/draft/2020-12/schema'
+  type: object
+  properties:
+    lookback_days:
+      type: number
+      default: 7
+    min_co_occurrences:
+      type: number
+      default: 2
+    dry_run:
+      type: boolean
+      default: false
+  required: []

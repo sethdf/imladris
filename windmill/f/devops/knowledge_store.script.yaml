@@ -1,0 +1,49 @@
+summary: ''
+description: 'Persistent entity-relationship knowledge base with store/query/prune/stats operations'
+lock: '!inline knowledge_store.script.lock'
+kind: script
+schema:
+  $schema: 'https://json-schema.org/draft/2020-12/schema'
+  type: object
+  properties:
+    action:
+      type: string
+      default: stats
+      description: 'Operation: store, query, prune, or stats'
+    entity_a_type:
+      type: string
+      default: ''
+    entity_a_value:
+      type: string
+      default: ''
+    entity_b_type:
+      type: string
+      default: ''
+    entity_b_value:
+      type: string
+      default: ''
+    relationship:
+      type: string
+      default: co-occurrence
+    source:
+      type: string
+      default: manual
+    confidence:
+      type: number
+      default: 0.5
+    context:
+      type: string
+      default: ''
+    entity_type:
+      type: string
+      default: ''
+    entity_value:
+      type: string
+      default: ''
+    lookback_days:
+      type: number
+      default: 90
+    max_age_days:
+      type: number
+      default: 180
+  required: []

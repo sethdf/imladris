@@ -1,0 +1,28 @@
+summary: ''
+description: 'Automated response playbook executor — requires approval_flow approval ID'
+lock: '!inline response_playbook.script.lock'
+kind: script
+schema:
+  $schema: 'https://json-schema.org/draft/2020-12/schema'
+  type: object
+  properties:
+    playbook:
+      type: string
+      description: 'Playbook name: isolate_instance, revoke_sg_rule, snapshot_volume, disable_access_key'
+    resource:
+      type: string
+      description: 'Target resource ID'
+    approval_id:
+      type: string
+      description: 'Approval ID from approval_flow — mandatory'
+    dry_run:
+      type: boolean
+      default: false
+    params:
+      type: string
+      default: '{}'
+      description: 'Additional JSON parameters for the playbook'
+  required:
+    - playbook
+    - resource
+    - approval_id

@@ -4,9 +4,10 @@
 // Reads event/triage/feed logs, aggregates by time bucket,
 // detects trends (increasing/decreasing/stable).
 
-import { readFileSync, existsSync } from "fs";
+import { readFileSync, appendFileSync, existsSync, mkdirSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
+import { execSync } from "child_process";
 
 const HOME = homedir();
 
@@ -114,12 +115,47 @@ function detectTrend(buckets: Bucket[]): { trend: TrendResult["trend"]; change_p
   return { trend: "stable", change_pct: changePct };
 }
 
+interface AlertEntry {
+  timestamp: string;
+  metric: string;
+  change_pct: number;
+  threshold: number;
+  trend: string;
+  description: string;
+}
+
+function ensureLogDir(): string {
+  const logDir = join(HOME, ".claude", "logs");
+  if (!existsSync(logDir)) {
+    mkdirSync(logDir, { recursive: true });
+  }
+  return logDir;
+}
+
+function fireAlert(alert: AlertEntry): void {
+  const logDir = ensureLogDir();
+  const alertPath = join(logDir, "alerts.jsonl");
+  appendFileSync(alertPath, JSON.stringify(alert) + "\n");
+
+  try {
+    const msg = `Trend alert: ${alert.metric} changed ${alert.change_pct}% exceeding ${alert.threshold}% threshold`;
+    execSync(
+      `curl -s -X POST http://localhost:8888/notify -H "Content-Type: application/json" -d '${JSON.stringify({ message: msg, title: "Trend Engine Alert" })}'`,
+      { encoding: "utf-8", timeout: 5000 },
+    );
+  } catch {
+    // Voice notification is best-effort — never block on failure
+  }
+}
+
 export async function main(
   metric: string = "all",
   period: string = "week",
   lookback_days: number = 90,
   filter_field: string = "",
   filter_value: string = "",
+  alert_threshold: number = 50,
+  alert_on_increase: boolean = true,
 ) {
   const periodType = (["day", "week", "month"].includes(period) ? period : "week") as "day" | "week" | "month";
 
@@ -179,10 +215,34 @@ export async function main(
     results.push({ metric: m, period_type: periodType, buckets, trend, change_pct, description });
   }
 
+  // Predictive alerting: check if any metric exceeds the alert threshold
+  let alerts_fired = 0;
+  for (const result of results) {
+    const absChange = Math.abs(result.change_pct);
+    if (absChange < alert_threshold) continue;
+
+    // Check direction: alert_on_increase controls whether we alert on increases
+    // We always alert on decreases (something dropping fast is worth knowing)
+    if (result.trend === "increasing" && !alert_on_increase) continue;
+    if (result.trend === "stable" || result.trend === "insufficient_data") continue;
+
+    const alert: AlertEntry = {
+      timestamp: new Date().toISOString(),
+      metric: result.metric,
+      change_pct: result.change_pct,
+      threshold: alert_threshold,
+      trend: result.trend,
+      description: result.description,
+    };
+    fireAlert(alert);
+    alerts_fired++;
+  }
+
   return {
     lookback_days,
     period_type: periodType,
     metrics_analyzed: results.length,
+    alerts_fired,
     trends: results,
   };
 }

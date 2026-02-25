@@ -21,6 +21,12 @@ interface TriageFeedbackEntry {
   notes?: string;
 }
 
+interface ThresholdAdjustment {
+  action: string;
+  direction: "promote" | "demote" | "hold";
+  reason: string;
+}
+
 interface CalibrationData {
   last_updated: string;
   total_events: number;
@@ -29,6 +35,7 @@ interface CalibrationData {
   under_triage_rate: number;
   by_source: Record<string, { total: number; correct: number; accuracy: number }>;
   recommendations: string[];
+  threshold_adjustments: ThresholdAdjustment[];
 }
 
 function ensureDirs(): void {
@@ -131,6 +138,30 @@ export async function main(
       recommendations.push("Triage quality is good. No adjustments recommended.");
     }
 
+    // Generate per-action threshold adjustments based on accuracy
+    const threshold_adjustments: ThresholdAdjustment[] = [];
+    for (const [actionKey, data] of Object.entries(byAction)) {
+      if (data.accuracy < 70) {
+        threshold_adjustments.push({
+          action: actionKey,
+          direction: "demote",
+          reason: `Accuracy ${data.accuracy}% (< 70%). Move to more conservative classification.`,
+        });
+      } else if (data.accuracy > 95 && data.total >= 5) {
+        threshold_adjustments.push({
+          action: actionKey,
+          direction: "promote",
+          reason: `Accuracy ${data.accuracy}% with ${data.total} events. Can classify more aggressively.`,
+        });
+      } else {
+        threshold_adjustments.push({
+          action: actionKey,
+          direction: "hold",
+          reason: `Accuracy ${data.accuracy}% with ${data.total} events. Current thresholds adequate.`,
+        });
+      }
+    }
+
     const calibration: CalibrationData = {
       last_updated: new Date().toISOString(),
       total_events: total,
@@ -139,6 +170,7 @@ export async function main(
       under_triage_rate: Math.round(underRate * 100),
       by_source: byAction,
       recommendations,
+      threshold_adjustments,
     };
 
     // Save calibration for triage agent to read
