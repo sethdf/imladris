@@ -393,9 +393,11 @@ Resources:
           chown -R ec2-user:ec2-user /home/ec2-user/repos
 
           # Run Ansible playbook as ec2-user (cd ensures ansible.cfg + inventory.yml are found)
+          # --limit imladris-local: only target localhost (imladris-1 is for remote runs from Aurora)
           cd /home/ec2-user/repos/imladris/ansible
           sudo -u ec2-user /usr/local/bin/ansible-playbook \
             site.yml \
+            --limit imladris-local \
             -e "tailscale_auth_key=$TAILSCALE_AUTH_KEY"
       Tags:
         - Key: Name
@@ -404,9 +406,10 @@ Resources:
           Value: 'true'
         - Key: Project
           Value: Imladris
-    CreationPolicy:
-      ResourceSignal:
-        Timeout: PT15M
+    # CreationPolicy temporarily disabled for diagnostic deploy
+    # CreationPolicy:
+    #   ResourceSignal:
+    #     Timeout: PT15M
 
   # ============================================================
   # DLM Lifecycle Policy (Decision 8)

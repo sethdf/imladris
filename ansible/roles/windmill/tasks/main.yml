@@ -107,10 +107,14 @@
 # On fresh EBS: creates admin user, gets token, configures wmill CLI.
 # On existing EBS: Windmill data persists in Postgres, this block is skipped.
 
+- name: Generate Windmill admin password (if not provided)
+  ansible.builtin.set_fact:
+    windmill_admin_password: "{{ lookup('ansible.builtin.password', '/dev/null length=32 chars=ascii_letters,digits') }}"
+  when: windmill_admin_password | default('') | length == 0
+
 - name: Bootstrap Windmill admin and deploy scripts
   when:
     - windmill_health.status | default(0) == 200
-    - windmill_admin_password | default('') | length > 0
   block:
     - name: Check if wmill workspace is already configured
       ansible.builtin.stat:
@@ -209,6 +213,7 @@
         chdir: "{{ windmill_scripts_dir }}"
         creates: "{{ windmill_scripts_dir }}/wmill.yaml"
       when: windmill_scripts_dir_stat.stat.exists | default(false)
+      failed_when: false
 
     - name: Find Windmill scripts to push
       ansible.builtin.find:
