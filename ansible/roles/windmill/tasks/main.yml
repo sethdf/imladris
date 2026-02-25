@@ -250,3 +250,66 @@
         label: "{{ item.path }}"
       when: item.path not in (windmill_existing_schedules.json | default([]) | map(attribute='path') | list)
       no_log: true
+
+# --- Credential Sync: Bitwarden → Windmill Variables (Decision 13/20) ---
+# Reads all secrets from BWS, creates Windmill variables with proper naming.
+# Hyphens in BWS keys → underscores in Windmill paths.
+# Idempotent: updates existing, creates new.
+
+- name: Sync Bitwarden secrets to Windmill variables
+  when:
+    - windmill_health.status | default(0) == 200
+    - bws_access_token | default('') | length > 0
+  block:
+    - name: Read all secrets from Bitwarden Secrets Manager
+      ansible.builtin.command:
+        cmd: bws secret list
+      environment:
+        BWS_ACCESS_TOKEN: "{{ bws_access_token }}"
+      register: windmill_bws_secrets
+      changed_when: false
+      no_log: true
+
+    - name: Read wmill token for variable sync
+      ansible.builtin.command:
+        cmd: "python3 -c \"import json; print(json.loads(open('{{ windmill_wmill_config_dir }}/remotes.ndjson').read())['token'])\""
+      register: windmill_var_token
+      changed_when: false
+      no_log: true
+
+    - name: Check existing Windmill variables
+      ansible.builtin.uri:
+        url: "{{ windmill_api_base }}/api/w/{{ windmill_workspace }}/variables/list"
+        headers:
+          Authorization: "Bearer {{ windmill_var_token.stdout }}"
+        return_content: true
+      register: windmill_existing_vars
+      no_log: true
+
+    - name: Build variable sync list (hyphen→underscore conversion)
+      ansible.builtin.set_fact:
+        windmill_var_sync: >-
+          {{ windmill_bws_secrets.stdout | from_json | map(attribute='key')
+             | zip(windmill_bws_secrets.stdout | from_json | map(attribute='value'))
+             | map('join', '|||')
+             | list }}
+      no_log: true
+
+    - name: Create or update Windmill variables from BWS
+      ansible.builtin.uri:
+        url: >-
+          {{ windmill_api_base }}/api/w/{{ windmill_workspace }}/variables/{% if 'f/devops/' + item.split('|||')[0] | regex_replace('-', '_') in (windmill_existing_vars.json | default([]) | map(attribute='path') | list) %}update/f/devops/{{ item.split('|||')[0] | regex_replace('-', '_') }}{% else %}create{% endif %}
+        method: POST
+        headers:
+          Authorization: "Bearer {{ windmill_var_token.stdout }}"
+        body_format: json
+        body:
+          path: "f/devops/{{ item.split('|||')[0] | regex_replace('-', '_') }}"
+          value: "{{ item.split('|||')[1] }}"
+          is_secret: true
+          description: "Synced from Bitwarden Secrets"
+        status_code: [200, 201, 409]
+      loop: "{{ windmill_var_sync }}"
+      loop_control:
+        label: "{{ item.split('|||')[0] }}"
+      no_log: true
