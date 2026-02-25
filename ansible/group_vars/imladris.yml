@@ -108,8 +108,8 @@ memory_seed_dir: "{{ context_seed_dir }}/memory"
 # --- Windmill ---
 windmill_compose_file: "{{ imladris_repo_dir }}/docker-compose.yml"
 windmill_health_url: "http://localhost:8000/api/version"
-windmill_health_retries: 30
-windmill_health_delay: 2
+windmill_health_retries: 60
+windmill_health_delay: 5
 windmill_api_base: "http://localhost:8000"
 windmill_workspace: imladris
 windmill_admin_email: "admin@windmill.dev"
