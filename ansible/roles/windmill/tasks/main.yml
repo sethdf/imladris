@@ -14,15 +14,40 @@
 - name: Start Windmill services
   when: windmill_compose_stat.stat.exists
   block:
-    - name: Check if Windmill .env exists
+    # --- .env / DB password management ---
+    # The .env (containing WINDMILL_DB_PASSWORD) must match the Postgres data
+    # directory. On UseExistingStorage redeploy: repo is re-cloned (no .env)
+    # but PG data persists on EBS with the old password. We persist .env on
+    # EBS alongside PG data to prevent password mismatch crash loops.
+
+    - name: Check for persistent Windmill .env on EBS
+      ansible.builtin.stat:
+        path: "{{ imladris_home }}/.windmill/.env"
+      register: windmill_persistent_env
+
+    - name: Check if Windmill .env exists in repo
       ansible.builtin.stat:
         path: "{{ imladris_repo_dir }}/.env"
       register: windmill_env_stat
 
-    - name: Generate Windmill DB password
+    - name: Restore Windmill .env from EBS persistent copy
+      ansible.builtin.copy:
+        src: "{{ imladris_home }}/.windmill/.env"
+        dest: "{{ imladris_repo_dir }}/.env"
+        remote_src: true
+        owner: "{{ imladris_user }}"
+        group: "{{ imladris_user }}"
+        mode: "0600"
+      when:
+        - windmill_persistent_env.stat.exists
+        - not windmill_env_stat.stat.exists
+
+    - name: Generate Windmill DB password (fresh deploy only)
       ansible.builtin.set_fact:
         windmill_generated_password: "{{ lookup('ansible.builtin.password', '/dev/null length=32 chars=ascii_letters,digits') }}"
-      when: not windmill_env_stat.stat.exists
+      when:
+        - not windmill_persistent_env.stat.exists
+        - not windmill_env_stat.stat.exists
 
     - name: Create Windmill .env file with generated password
       ansible.builtin.copy:
@@ -31,7 +56,38 @@
         owner: "{{ imladris_user }}"
         group: "{{ imladris_user }}"
         mode: "0600"
-      when: not windmill_env_stat.stat.exists
+      when:
+        - not windmill_persistent_env.stat.exists
+        - not windmill_env_stat.stat.exists
+
+    - name: Persist Windmill .env to EBS for future deploys
+      ansible.builtin.copy:
+        src: "{{ imladris_repo_dir }}/.env"
+        dest: "{{ imladris_home }}/.windmill/.env"
+        remote_src: true
+        owner: "{{ imladris_user }}"
+        group: "{{ imladris_user }}"
+        mode: "0600"
+      when: not windmill_persistent_env.stat.exists
+
+    # --- Stale Postgres data detection ---
+    # If a fresh password was generated but PG data already exists on EBS,
+    # the data was initialized with a different password. Wipe it to prevent
+    # crash-looping containers. State restore from S3 will repopulate if available.
+    - name: Check for existing Postgres data
+      ansible.builtin.stat:
+        path: "{{ imladris_home }}/.windmill/postgres/PG_VERSION"
+      register: windmill_pg_initialized
+
+    - name: Remove stale Postgres data (fresh password requires clean init)
+      ansible.builtin.file:
+        path: "{{ imladris_home }}/.windmill/postgres"
+        state: absent
+      become: true
+      when:
+        - not windmill_persistent_env.stat.exists
+        - not windmill_env_stat.stat.exists
+        - windmill_pg_initialized.stat.exists | default(false)
 
     - name: Create Windmill Postgres data directory on EBS
       ansible.builtin.file:
