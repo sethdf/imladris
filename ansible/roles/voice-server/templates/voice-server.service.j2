@@ -1,0 +1,17 @@
+[Unit]
+Description=PAI Voice Server (ElevenLabs TTS)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart={{ bun_bin }} run {{ imladris_repo_dir }}/scripts/voice-server.ts
+Restart=on-failure
+RestartSec=5
+EnvironmentFile={{ voice_server_env_file }}
+Environment=HOME={{ imladris_home }}
+Environment=VOICE_AUDIO_DIR={{ voice_server_audio_dir }}
+WorkingDirectory={{ imladris_repo_dir }}/scripts
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,10 @@
+---
+- name: restart voice-server
+  ansible.builtin.systemd:
+    name: voice-server
+    scope: user
+    state: restarted
+  become: true
+  become_user: "{{ imladris_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ imladris_uid | default('1000') }}"

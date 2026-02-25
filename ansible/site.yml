@@ -79,3 +79,7 @@
     # Decision 42: Mosh for connection resilience
     - role: mosh
       tags: [mosh, network]
+
+    # Decision 43: Voice server (ElevenLabs TTS with HTTP audio streaming)
+    - role: voice-server
+      tags: [voice, voice-server]

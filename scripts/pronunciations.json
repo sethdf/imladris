@@ -1,0 +1,9 @@
+{
+  "_comment": "TTS pronunciation overrides for ElevenLabs. Word-boundary matching prevents mid-word replacement.",
+  "replacements": [
+    { "term": "PAI", "phonetic": "pie", "note": "Personal AI Infrastructure - rhymes with sky" },
+    { "term": "ISC", "phonetic": "I S C", "note": "Ideal State Criteria - spell out" },
+    { "term": "imladris", "phonetic": "im-LAH-dris", "note": "Tolkien elvish - stress on second syllable" },
+    { "term": "SDP", "phonetic": "S D P", "note": "ServiceDesk Plus - spell out" }
+  ]
+}

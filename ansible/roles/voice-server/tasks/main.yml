@@ -1,0 +1,67 @@
+---
+# =============================================================================
+# Voice Server Role — Decision 43
+# =============================================================================
+# Deploys PAI voice server as a systemd user service.
+# ElevenLabs TTS with HTTP audio streaming for remote playback.
+# Listens on 127.0.0.1:8888 — accessible only via Tailscale (Decision 33).
+
+- name: Create voice server audio directory
+  ansible.builtin.file:
+    path: "{{ voice_server_audio_dir }}"
+    state: directory
+    owner: "{{ imladris_user }}"
+    group: "{{ imladris_user }}"
+    mode: "0755"
+
+- name: Create systemd user directory
+  ansible.builtin.file:
+    path: "{{ imladris_home }}/.config/systemd/user"
+    state: directory
+    owner: "{{ imladris_user }}"
+    group: "{{ imladris_user }}"
+    mode: "0755"
+
+- name: Deploy voice server environment file
+  ansible.builtin.template:
+    src: voice-server.env.j2
+    dest: "{{ voice_server_env_file }}"
+    owner: "{{ imladris_user }}"
+    group: "{{ imladris_user }}"
+    mode: "0600"
+  notify: restart voice-server
+
+- name: Deploy voice server systemd unit
+  ansible.builtin.template:
+    src: voice-server.service.j2
+    dest: "{{ imladris_home }}/.config/systemd/user/voice-server.service"
+    owner: "{{ imladris_user }}"
+    group: "{{ imladris_user }}"
+    mode: "0644"
+  notify: restart voice-server
+
+# Enable lingering so user services start at boot (not just on login)
+- name: Enable loginctl linger for user services at boot
+  ansible.builtin.command:
+    cmd: loginctl enable-linger {{ imladris_user }}
+  changed_when: false
+
+- name: Reload systemd user daemon
+  ansible.builtin.command:
+    cmd: systemctl --user daemon-reload
+  become: true
+  become_user: "{{ imladris_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ imladris_uid | default('1000') }}"
+  changed_when: false
+
+- name: Enable and start voice server
+  ansible.builtin.systemd:
+    name: voice-server
+    scope: user
+    enabled: true
+    state: started
+  become: true
+  become_user: "{{ imladris_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ imladris_uid | default('1000') }}"

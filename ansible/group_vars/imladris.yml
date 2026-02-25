@@ -142,6 +142,13 @@ ai_failover_wrapper: "{{ ai_failover_dir }}/claude-failover"
 ai_provider_env: "{{ claude_dir }}/ai-provider.env"
 ai_failover_state: "{{ claude_dir }}/ai-failover-state"
 
+# --- Voice Server (Decision 43) ---
+voice_server_port: 8888
+voice_server_audio_dir: /tmp/voice-audio
+voice_server_env_file: "{{ imladris_home }}/.config/voice-server.env"
+voice_server_elevenlabs_key: ""  # Set via --extra-vars or populate env file via BWS
+bun_bin: "{{ imladris_home }}/.bun/bin/bun"
+
 # --- Settings Template ---
 settings_template_candidates:
   - "{{ imladris_repo_dir }}/settings.json.template"
