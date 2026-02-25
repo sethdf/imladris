@@ -130,6 +130,34 @@
       ansible.builtin.debug:
         msg: "{{ 'State restored from S3 backup' if state_restore_result.rc | default(1) == 0 else 'No S3 backup found or restore skipped — clean install' }}"
 
+    # After state restore, the .env may have been overwritten with an older S3
+    # backup that lacks WINDMILL_ADMIN_SECRET. Re-apply from EBS persistent copy
+    # (source of truth) to ensure both passwords are present.
+    - name: Re-apply persistent .env after state restore
+      ansible.builtin.copy:
+        src: "{{ imladris_home }}/.windmill/.env"
+        dest: "{{ imladris_repo_dir }}/.env"
+        remote_src: true
+        owner: "{{ imladris_user }}"
+        group: "{{ imladris_user }}"
+        mode: "0600"
+      become: true
+      when:
+        - s3_backup_check.rc == 0
+        - state_restore_result.rc | default(1) == 0
+        - windmill_persistent_env.stat.exists
+
+    # Restart Windmill after state restore so server reconnects to the restored
+    # DB and picks up SUPERADMIN_SECRET from the corrected .env.
+    - name: Restart Windmill services after state restore
+      ansible.builtin.command: docker compose -f {{ windmill_compose_file }} up -d --force-recreate
+      become: true
+      register: windmill_restart_result
+      changed_when: true
+      when:
+        - s3_backup_check.rc == 0
+        - state_restore_result.rc | default(1) == 0
+
     - name: Wait for Windmill healthcheck
       ansible.builtin.uri:
         url: "{{ windmill_health_url }}"
