@@ -121,23 +121,24 @@
         path: "{{ windmill_wmill_config_dir }}/remotes.ndjson"
       register: windmill_wmill_config_stat
 
-    - name: Create admin user (fresh deploy only — no auth required on empty DB)
+    # Windmill CE ships with default admin (admin@windmill.dev / changeme).
+    # Login with default creds first, then change password.
+    - name: Login to Windmill with default credentials
       ansible.builtin.uri:
-        url: "{{ windmill_api_base }}/api/users/create"
+        url: "{{ windmill_api_base }}/api/auth/login"
         method: POST
         body_format: json
         body:
           email: "{{ windmill_admin_email }}"
-          password: "{{ windmill_admin_password }}"
-          super_admin: true
-          name: "Admin"
-        status_code: [200, 201, 409, 401, 403]
-      register: windmill_user_create
+          password: "changeme"
+        status_code: [200, 403]
+        return_content: true
+      register: windmill_default_login
       failed_when: false
       no_log: true
       when: not windmill_wmill_config_stat.stat.exists
 
-    - name: Login to Windmill
+    - name: Login to Windmill with custom password (already changed)
       ansible.builtin.uri:
         url: "{{ windmill_api_base }}/api/auth/login"
         method: POST
@@ -147,16 +148,40 @@
           password: "{{ windmill_admin_password }}"
         status_code: 200
         return_content: true
-      register: windmill_login
+      register: windmill_custom_login
+      no_log: true
+      when:
+        - not windmill_wmill_config_stat.stat.exists
+        - windmill_default_login.status | default(0) != 200
+
+    - name: Set login token fact
+      ansible.builtin.set_fact:
+        windmill_login_token: "{{ windmill_default_login.content if windmill_default_login.status | default(0) == 200 else windmill_custom_login.content }}"
       no_log: true
       when: not windmill_wmill_config_stat.stat.exists
+
+    - name: Change default admin password
+      ansible.builtin.uri:
+        url: "{{ windmill_api_base }}/api/users/setpassword"
+        method: POST
+        headers:
+          Cookie: "token={{ windmill_login_token }}"
+        body_format: json
+        body:
+          password: "{{ windmill_admin_password }}"
+        status_code: [200, 204]
+      failed_when: false
+      no_log: true
+      when:
+        - not windmill_wmill_config_stat.stat.exists
+        - windmill_default_login.status | default(0) == 200
 
     - name: Create persistent API token
       ansible.builtin.uri:
         url: "{{ windmill_api_base }}/api/users/tokens/create"
         method: POST
         headers:
-          Authorization: "Bearer {{ windmill_login.content }}"
+          Cookie: "token={{ windmill_login_token }}"
         body_format: json
         body:
           label: "ansible-deploy"
