@@ -192,8 +192,18 @@
                    else 'No S3 backup found — clean install') }}
 
     # After state restore, the .env may have been overwritten with an older S3
-    # backup that lacks WINDMILL_ADMIN_SECRET. Re-apply from EBS persistent copy
-    # (source of truth) to ensure both passwords are present.
+    # backup that lacks WINDMILL_ADMIN_SECRET and has an old DB password.
+    # Re-apply from EBS persistent copy (source of truth) to restore BOTH
+    # passwords and prevent DB connection mismatch crash loops.
+    # Re-stat because windmill_persistent_env was checked before we persisted it.
+    - name: Re-check persistent .env exists (stat may be stale)
+      ansible.builtin.stat:
+        path: "{{ imladris_home }}/.windmill/.env"
+      register: windmill_persistent_env_recheck
+      when:
+        - not windmill_pre_restore_check.stat.exists
+        - s3_backup_check.rc | default(1) == 0
+
     - name: Re-apply persistent .env after state restore
       ansible.builtin.copy:
         src: "{{ imladris_home }}/.windmill/.env"
@@ -206,7 +216,7 @@
       when:
         - not windmill_pre_restore_check.stat.exists
         - s3_backup_check.rc | default(1) == 0
-        - windmill_persistent_env.stat.exists
+        - windmill_persistent_env_recheck.stat.exists | default(false)
 
     # Restart Windmill after state restore so server reconnects to the restored
     # DB and picks up SUPERADMIN_SECRET from the corrected .env.
