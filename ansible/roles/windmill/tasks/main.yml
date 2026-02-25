@@ -117,6 +117,7 @@
       ansible.builtin.stat:
         path: "{{ imladris_home }}/.windmill/postgres/PG_VERSION"
       register: windmill_pg_initialized
+      become: true
 
     - name: Remove stale Postgres data (fresh password requires clean init)
       ansible.builtin.file:
