@@ -162,18 +162,6 @@ Resources:
               - kms:List*
             Resource: '*'
 
-          - Sid: WorkstationRoleUsage
-            Effect: Allow
-            Principal:
-              AWS: !GetAtt WorkstationRole.Arn
-            Action:
-              - kms:Encrypt
-              - kms:Decrypt
-              - kms:ReEncrypt*
-              - kms:GenerateDataKey*
-              - kms:DescribeKey
-            Resource: '*'
-
       Tags:
         - Key: Name
           Value: ImladrisWorkstationKey
