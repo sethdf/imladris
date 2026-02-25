@@ -84,11 +84,12 @@ else
     log "WARNING: No env-file backup found in S3. Skipping."
 fi
 
-# 3. Restore ~/.wmill/ config
-log "Restoring ~/.wmill/ config..."
+# 3. Restore wmill config
+WMILL_CONFIG_DIR="${HOME_DIR}/.config/windmill"
+log "Restoring wmill config..."
 if check_backup_exists "latest/wmill/"; then
-    mkdir -p "${HOME_DIR}/.wmill"
-    aws s3 sync "s3://${BUCKET}/latest/wmill/" "${HOME_DIR}/.wmill/" \
+    mkdir -p "${WMILL_CONFIG_DIR}"
+    aws s3 sync "s3://${BUCKET}/latest/wmill/" "${WMILL_CONFIG_DIR}/" \
         "${SSE_ARGS[@]}"
     log "wmill config restored."
 else
