@@ -142,15 +142,23 @@
       register: windmill_compose_result
       changed_when: "'Started' in windmill_compose_result.stderr or 'Creating' in windmill_compose_result.stderr"
 
-    # --- State Restore from S3 (before Windmill health check) ---
-    # If an S3 backup exists, restore .env, Windmill DB, .wmill config, and ~/.claude/
-    # This runs BEFORE admin bootstrap so the restored DB has workspace + scripts + schedules.
+    # --- State Restore from S3 (fresh deploy only) ---
+    # If an S3 backup exists and wmill is not yet configured, restore .env,
+    # Windmill DB, .wmill config, and ~/.claude/ BEFORE admin bootstrap
+    # so the restored DB has workspace + scripts + schedules.
+    # Skipped on re-runs (wmill config already exists) to avoid disruption.
+    - name: Check if wmill config exists (pre-restore gate)
+      ansible.builtin.stat:
+        path: "{{ windmill_wmill_config_dir }}/remotes.ndjson"
+      register: windmill_pre_restore_check
+
     - name: Check if S3 state backup exists
       ansible.builtin.command:
         cmd: aws s3 ls s3://imladris-state-{{ aws_account_id }}/latest/windmill-db.sql.gz --region {{ aws_region }}
       register: s3_backup_check
       changed_when: false
       failed_when: false
+      when: not windmill_pre_restore_check.stat.exists
 
     # Stop Windmill app containers before DB restore to avoid crash-loop.
     # The restore script drops/recreates the windmill database — if the server
@@ -159,20 +167,29 @@
     - name: Stop Windmill app containers before state restore
       ansible.builtin.command: docker compose -f {{ windmill_compose_file }} stop windmill_server windmill_worker windmill_worker_native
       become: true
-      when: s3_backup_check.rc == 0
+      when:
+        - not windmill_pre_restore_check.stat.exists
+        - s3_backup_check.rc | default(1) == 0
 
     - name: Restore state from S3 backup (if available)
       ansible.builtin.command:
         cmd: bash {{ imladris_repo_dir }}/scripts/state-restore.sh
       become: true
       become_user: "{{ imladris_user }}"
-      when: s3_backup_check.rc == 0
+      when:
+        - not windmill_pre_restore_check.stat.exists
+        - s3_backup_check.rc | default(1) == 0
       register: state_restore_result
       failed_when: false
 
     - name: Report state restore result
       ansible.builtin.debug:
-        msg: "{{ 'State restored from S3 backup' if state_restore_result.rc | default(1) == 0 else 'No S3 backup found or restore skipped — clean install' }}"
+        msg: >-
+          {{ 'State restored from S3 backup'
+             if (state_restore_result.rc | default(1) == 0)
+             else ('State restore skipped — wmill already configured'
+                   if windmill_pre_restore_check.stat.exists
+                   else 'No S3 backup found — clean install') }}
 
     # After state restore, the .env may have been overwritten with an older S3
     # backup that lacks WINDMILL_ADMIN_SECRET. Re-apply from EBS persistent copy
@@ -187,7 +204,8 @@
         mode: "0600"
       become: true
       when:
-        - s3_backup_check.rc == 0
+        - not windmill_pre_restore_check.stat.exists
+        - s3_backup_check.rc | default(1) == 0
         - windmill_persistent_env.stat.exists
 
     # Restart Windmill after state restore so server reconnects to the restored
@@ -197,7 +215,9 @@
       become: true
       register: windmill_restart_result
       changed_when: true
-      when: s3_backup_check.rc == 0
+      when:
+        - not windmill_pre_restore_check.stat.exists
+        - s3_backup_check.rc | default(1) == 0
 
     - name: Wait for Windmill healthcheck
       ansible.builtin.uri:
