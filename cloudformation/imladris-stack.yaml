@@ -189,10 +189,9 @@ Resources:
 
   WorkstationKmsAlias:
     Type: AWS::KMS::Alias
-    Condition: CreateNewStorage
     Properties:
       AliasName: alias/workstation-ebs
-      TargetKeyId: !Ref WorkstationKmsKey
+      TargetKeyId: !If [CreateNewStorage, !Ref WorkstationKmsKey, !Ref ExistingKmsKeyArn]
 
   # ============================================================
   # Security Group (Decision 33)
