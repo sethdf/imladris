@@ -75,6 +75,40 @@
       become: true
       when: not windmill_persistent_env.stat.exists
 
+    # --- Migration: add WINDMILL_ADMIN_SECRET to pre-existing .env ---
+    # Instances created before the SUPERADMIN_SECRET change have .env with
+    # only WINDMILL_DB_PASSWORD. Detect and append the missing variable.
+    - name: Check if WINDMILL_ADMIN_SECRET exists in .env
+      ansible.builtin.command:
+        cmd: "grep -q '^WINDMILL_ADMIN_SECRET=' {{ imladris_repo_dir }}/.env"
+      register: admin_secret_in_env
+      changed_when: false
+      failed_when: false
+
+    - name: Generate WINDMILL_ADMIN_SECRET for existing .env (migration)
+      ansible.builtin.set_fact:
+        windmill_migrated_admin_secret: "{{ lookup('ansible.builtin.password', '/dev/null length=48 chars=ascii_letters,digits') }}"
+      when: admin_secret_in_env.rc != 0
+
+    - name: Append WINDMILL_ADMIN_SECRET to existing .env
+      ansible.builtin.lineinfile:
+        path: "{{ imladris_repo_dir }}/.env"
+        line: "WINDMILL_ADMIN_SECRET={{ windmill_migrated_admin_secret }}"
+        state: present
+        mode: "0600"
+      when: admin_secret_in_env.rc != 0
+
+    - name: Update EBS persistent .env after migration
+      ansible.builtin.copy:
+        src: "{{ imladris_repo_dir }}/.env"
+        dest: "{{ imladris_home }}/.windmill/.env"
+        remote_src: true
+        owner: "{{ imladris_user }}"
+        group: "{{ imladris_user }}"
+        mode: "0600"
+      become: true
+      when: admin_secret_in_env.rc != 0
+
     # --- Stale Postgres data detection ---
     # If a fresh password was generated but PG data already exists on EBS,
     # the data was initialized with a different password. Wipe it to prevent
