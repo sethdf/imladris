@@ -9,9 +9,9 @@
 # Deploy: docker compose up -d
 # Docs:   https://www.windmill.dev/docs/advanced/self_host
 #
-# REQUIRED: Create a .env file with WINDMILL_DB_PASSWORD set.
-#   See .env.example for reference:
-#     WINDMILL_DB_PASSWORD=<generate-a-strong-password>
+# REQUIRED: Create a .env file with these variables:
+#   WINDMILL_DB_PASSWORD=<generate-a-strong-password>
+#   WINDMILL_ADMIN_SECRET=<generate-a-strong-secret>
 
 services:
   windmill_server:
@@ -23,6 +23,7 @@ services:
       - DATABASE_URL=postgres://postgres:${WINDMILL_DB_PASSWORD}@windmill_db/windmill
       - MODE=server
       - BASE_URL=http://127.0.0.1:8000
+      - SUPERADMIN_SECRET=${WINDMILL_ADMIN_SECRET}
     depends_on:
       windmill_db:
         condition: service_healthy

@@ -43,16 +43,19 @@
         - windmill_persistent_env.stat.exists
         - not windmill_env_stat.stat.exists
 
-    - name: Generate Windmill DB password (fresh deploy only)
+    - name: Generate Windmill passwords (fresh deploy only)
       ansible.builtin.set_fact:
         windmill_generated_password: "{{ lookup('ansible.builtin.password', '/dev/null length=32 chars=ascii_letters,digits') }}"
+        windmill_generated_admin_secret: "{{ lookup('ansible.builtin.password', '/dev/null length=48 chars=ascii_letters,digits') }}"
       when:
         - not windmill_persistent_env.stat.exists
         - not windmill_env_stat.stat.exists
 
-    - name: Create Windmill .env file with generated password
+    - name: Create Windmill .env file with generated passwords
       ansible.builtin.copy:
-        content: "WINDMILL_DB_PASSWORD={{ windmill_generated_password }}"
+        content: |
+          WINDMILL_DB_PASSWORD={{ windmill_generated_password }}
+          WINDMILL_ADMIN_SECRET={{ windmill_generated_admin_secret }}
         dest: "{{ imladris_repo_dir }}/.env"
         owner: "{{ imladris_user }}"
         group: "{{ imladris_user }}"
@@ -162,111 +165,35 @@
   when: windmill_wmill_check.rc != 0
 
 # --- Windmill Admin Bootstrap (fresh deploy) ---
-# On fresh EBS: creates admin user, gets token, configures wmill CLI.
+# Uses SUPERADMIN_SECRET env var for reliable auth — no dependency on
+# the fragile "changeme" default password which Windmill CE may auto-change.
+# On fresh EBS: creates API token, configures wmill CLI.
 # On existing EBS: Windmill data persists in Postgres, this block is skipped.
 
-- name: Generate Windmill admin password (if not provided)
-  ansible.builtin.set_fact:
-    windmill_admin_password: "{{ lookup('ansible.builtin.password', '/dev/null length=32 chars=ascii_letters,digits') }}"
-  when: windmill_admin_password | default('') | length == 0
+- name: Read WINDMILL_ADMIN_SECRET from .env
+  ansible.builtin.shell:
+    cmd: "grep '^WINDMILL_ADMIN_SECRET=' {{ imladris_repo_dir }}/.env | cut -d= -f2"
+  register: windmill_admin_secret_raw
+  changed_when: false
+  no_log: true
 
-- name: Bootstrap Windmill admin and deploy scripts
+- name: Set admin secret fact
+  ansible.builtin.set_fact:
+    windmill_admin_secret: "{{ windmill_admin_secret_raw.stdout | trim }}"
+  no_log: true
+
+- name: Bootstrap Windmill wmill CLI config
   when:
     - windmill_health.status | default(0) == 200
+    - windmill_admin_secret | default('') | length > 0
   block:
     - name: Check if wmill workspace is already configured
       ansible.builtin.stat:
         path: "{{ windmill_wmill_config_dir }}/remotes.ndjson"
       register: windmill_wmill_config_stat
 
-    # Windmill CE ships with default admin (admin@windmill.dev / changeme).
-    # Login with default creds first, then change password.
-    - name: Login to Windmill with default credentials
-      ansible.builtin.uri:
-        url: "{{ windmill_api_base }}/api/auth/login"
-        method: POST
-        body_format: json
-        body:
-          email: "{{ windmill_admin_email }}"
-          password: "changeme"
-        status_code: [200, 403]
-        return_content: true
-      register: windmill_default_login
-      failed_when: false
-      no_log: true
-      when: not windmill_wmill_config_stat.stat.exists
-
-    - name: Login to Windmill with custom password (already changed)
-      ansible.builtin.uri:
-        url: "{{ windmill_api_base }}/api/auth/login"
-        method: POST
-        body_format: json
-        body:
-          email: "{{ windmill_admin_email }}"
-          password: "{{ windmill_admin_password }}"
-        status_code: [200, 401, 403]
-        return_content: true
-      register: windmill_custom_login
-      failed_when: false
-      no_log: true
-      when:
-        - not windmill_wmill_config_stat.stat.exists
-        - windmill_default_login.status | default(0) != 200
-
-    - name: Set login result fact
-      ansible.builtin.set_fact:
-        windmill_login_succeeded: "{{ (windmill_default_login.status | default(0) == 200) or (windmill_custom_login.status | default(0) == 200) }}"
-        windmill_login_token: >-
-          {{ windmill_default_login.content if windmill_default_login.status | default(0) == 200
-             else (windmill_custom_login.content if windmill_custom_login.status | default(0) == 200
-             else '') }}
-      no_log: true
-      when: not windmill_wmill_config_stat.stat.exists
-
-    - name: Warn if Windmill login failed (restored DB with unknown password)
-      ansible.builtin.debug:
-        msg: >-
-          WARNING: Could not login to Windmill with default or generated password.
-          This usually means an S3 state restore brought back a DB with a different admin password.
-          Skipping admin bootstrap — wmill CLI config will need manual setup or a fresh deploy without restore.
-      when:
-        - not windmill_wmill_config_stat.stat.exists
-        - not (windmill_login_succeeded | default(false) | bool)
-
-    - name: Change default admin password
-      ansible.builtin.uri:
-        url: "{{ windmill_api_base }}/api/users/setpassword"
-        method: POST
-        headers:
-          Cookie: "token={{ windmill_login_token }}"
-        body_format: json
-        body:
-          password: "{{ windmill_admin_password }}"
-        status_code: [200, 204]
-      failed_when: false
-      no_log: true
-      when:
-        - not windmill_wmill_config_stat.stat.exists
-        - windmill_login_succeeded | default(false) | bool
-        - windmill_default_login.status | default(0) == 200
-
-    - name: Create persistent API token
-      ansible.builtin.uri:
-        url: "{{ windmill_api_base }}/api/users/tokens/create"
-        method: POST
-        headers:
-          Cookie: "token={{ windmill_login_token }}"
-        body_format: json
-        body:
-          label: "ansible-deploy"
-        status_code: 200
-        return_content: true
-      register: windmill_new_token
-      no_log: true
-      when:
-        - not windmill_wmill_config_stat.stat.exists
-        - windmill_login_succeeded | default(false) | bool
-
+    # Use SUPERADMIN_SECRET directly as the wmill CLI token.
+    # No login required — works on fresh installs and restored DBs alike.
     - name: Create wmill config directory
       ansible.builtin.file:
         path: "{{ windmill_wmill_config_dir }}"
@@ -274,9 +201,7 @@
         owner: "{{ imladris_user }}"
         group: "{{ imladris_user }}"
         mode: "0755"
-      when:
-        - not windmill_wmill_config_stat.stat.exists
-        - windmill_login_succeeded | default(false) | bool
+      when: not windmill_wmill_config_stat.stat.exists
 
     - name: Write wmill activeWorkspace
       ansible.builtin.copy:
@@ -285,21 +210,17 @@
         owner: "{{ imladris_user }}"
         group: "{{ imladris_user }}"
         mode: "0644"
-      when:
-        - not windmill_wmill_config_stat.stat.exists
-        - windmill_login_succeeded | default(false) | bool
+      when: not windmill_wmill_config_stat.stat.exists
 
     - name: Write wmill remotes config
       ansible.builtin.copy:
-        content: '{"name":"{{ windmill_workspace }}","remote":"{{ windmill_api_base }}/","workspaceId":"{{ windmill_workspace }}","token":"{{ windmill_new_token.content }}"}'
+        content: '{"name":"{{ windmill_workspace }}","remote":"{{ windmill_api_base }}/","workspaceId":"{{ windmill_workspace }}","token":"{{ windmill_admin_secret }}"}'
         dest: "{{ windmill_wmill_config_dir }}/remotes.ndjson"
         owner: "{{ imladris_user }}"
         group: "{{ imladris_user }}"
         mode: "0600"
       no_log: true
-      when:
-        - not windmill_wmill_config_stat.stat.exists
-        - windmill_login_succeeded | default(false) | bool
+      when: not windmill_wmill_config_stat.stat.exists
 
 # --- Check wmill config before script/schedule/cred-sync blocks ---
 # If bootstrap was skipped (e.g., restored DB with unknown password), these blocks
@@ -359,18 +280,11 @@
     - windmill_config_ready.stat.exists | default(false)
     - windmill_schedules | default([]) | length > 0
   block:
-    - name: Read wmill token from config
-      ansible.builtin.command:
-        cmd: "python3 -c \"import json; print(json.loads(open('{{ windmill_wmill_config_dir }}/remotes.ndjson').read())['token'])\""
-      register: windmill_deploy_token
-      changed_when: false
-      no_log: true
-
     - name: Check existing schedules
       ansible.builtin.uri:
         url: "{{ windmill_api_base }}/api/w/{{ windmill_workspace }}/schedules/list"
         headers:
-          Authorization: "Bearer {{ windmill_deploy_token.stdout }}"
+          Authorization: "Bearer {{ windmill_admin_secret }}"
         return_content: true
       register: windmill_existing_schedules
       no_log: true
@@ -380,7 +294,7 @@
         url: "{{ windmill_api_base }}/api/w/{{ windmill_workspace }}/schedules/create"
         method: POST
         headers:
-          Authorization: "Bearer {{ windmill_deploy_token.stdout }}"
+          Authorization: "Bearer {{ windmill_admin_secret }}"
         body_format: json
         body:
           path: "{{ item.path }}"
@@ -408,19 +322,12 @@
     - windmill_config_ready.stat.exists | default(false)
     - bws_access_token | default('') | length > 0
   block:
-    - name: Read wmill token for credential sync
-      ansible.builtin.command:
-        cmd: "python3 -c \"import json; print(json.loads(open('{{ windmill_wmill_config_dir }}/remotes.ndjson').read())['token'])\""
-      register: windmill_sync_token
-      changed_when: false
-      no_log: true
-
     - name: Sync BWS secrets to Windmill variables
       ansible.builtin.command:
         cmd: python3 {{ imladris_repo_dir }}/scripts/windmill-sync.py
       environment:
         BWS_ACCESS_TOKEN: "{{ bws_access_token }}"
-        WMILL_TOKEN: "{{ windmill_sync_token.stdout }}"
+        WMILL_TOKEN: "{{ windmill_admin_secret }}"
         WMILL_API: "{{ windmill_api_base }}/api/w/{{ windmill_workspace }}"
       no_log: true
       changed_when: true
