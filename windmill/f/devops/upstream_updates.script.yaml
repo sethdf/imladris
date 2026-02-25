@@ -1,0 +1,13 @@
+summary: ''
+description: ''
+lock: '!inline f/devops/upstream_updates.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    dry_run:
+      type: boolean
+      description: ''
+      default: false
+  required: []
