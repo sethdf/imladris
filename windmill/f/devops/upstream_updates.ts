@@ -1,8 +1,8 @@
 // Windmill Script: Upstream Dependency Update Checker
-// Daily check for new releases/changes to tools imladris depends on.
+// Daily check for new releases/changes to tools and ecosystem imladris depends on.
 //
-// Monitors GitHub repos + npm for: Claude Code, PAI, OpenClaw,
-// Anthropic SDK, Bun, Windmill, and Anthropic model announcements.
+// Monitors: GitHub repos (imladris deps + competitive + OSS models),
+// npm packages, and AI research blogs via RSS.
 //
 // Runs daily at 8 AM PT. Uses seen-state to avoid duplicate reports.
 
@@ -85,6 +85,58 @@ const REPOS: MonitoredRepo[] = [
     check: "commits",
     branch: "main",
   },
+  // ── Competitive Intelligence ──
+  {
+    name: "OpenAI Codex",
+    owner: "openai",
+    repo: "codex",
+    relevance: "Competitive — coding agent patterns, tool use approaches, CLI design",
+    check: "releases",
+  },
+  {
+    name: "OpenAI Cookbook",
+    owner: "openai",
+    repo: "openai-cookbook",
+    relevance: "Competitive — API patterns, prompt engineering, tool use examples",
+    check: "commits",
+    branch: "main",
+  },
+  // ── Open Source Models ──
+  {
+    name: "Llama Models",
+    owner: "meta-llama",
+    repo: "llama-models",
+    relevance: "OSS frontier — new model weights, architecture changes, local inference options",
+    check: "releases",
+  },
+  {
+    name: "Mistral Inference",
+    owner: "mistralai",
+    repo: "mistral-inference",
+    relevance: "OSS frontier — efficient inference, new model releases, API-compatible serving",
+    check: "releases",
+  },
+  {
+    name: "Gemma",
+    owner: "google-deepmind",
+    repo: "gemma",
+    relevance: "OSS frontier — Google open weights, multimodal capabilities",
+    check: "releases",
+  },
+  {
+    name: "Hugging Face Transformers",
+    owner: "huggingface",
+    repo: "transformers",
+    relevance: "Model ecosystem — new model support, pipeline APIs, tokenizer updates",
+    check: "releases",
+  },
+  {
+    name: "Ollama",
+    owner: "ollama",
+    repo: "ollama",
+    relevance: "Local model runner — relevant for local Whisper, embeddings, offline inference",
+    check: "releases",
+  },
 ];
 
 // ── npm package monitoring ─────────────────────────────────────────
@@ -103,11 +155,47 @@ const NPM_PACKAGES: NpmPackage[] = [
   },
 ];
 
+// ── Blog / RSS Monitoring ──────────────────────────────────────────
+
+interface MonitoredBlog {
+  name: string;
+  feed_url: string;
+  relevance: string;
+}
+
+const BLOGS: MonitoredBlog[] = [
+  {
+    name: "Anthropic Blog",
+    feed_url: "https://www.anthropic.com/rss.xml",
+    relevance: "Primary vendor — model releases, API changes, safety research, Claude updates",
+  },
+  {
+    name: "OpenAI Blog",
+    feed_url: "https://openai.com/blog/rss.xml",
+    relevance: "Competitive — GPT releases, Codex updates, API changes, product launches",
+  },
+  {
+    name: "Google DeepMind Blog",
+    feed_url: "https://deepmind.google/blog/rss.xml",
+    relevance: "Competitive — Gemini/Gemma releases, research breakthroughs",
+  },
+  {
+    name: "Meta AI Blog",
+    feed_url: "https://ai.meta.com/blog/rss/",
+    relevance: "OSS ecosystem — Llama releases, open source model announcements",
+  },
+  {
+    name: "Hugging Face Blog",
+    feed_url: "https://huggingface.co/blog/feed.xml",
+    relevance: "Model ecosystem — new libraries, model releases, community tools",
+  },
+];
+
 // ── Types ──────────────────────────────────────────────────────────
 
 interface Update {
   source: string;
-  type: "release" | "commit" | "npm";
+  type: "release" | "commit" | "npm" | "blog";
   version?: string;
   title: string;
   url: string;
@@ -283,6 +371,74 @@ async function checkNpm(pkg: NpmPackage, seen: SeenState): Promise<Update[]> {
   }
 }
 
+// ── Blog / RSS Feeds ──────────────────────────────────────────────
+
+async function checkBlog(blog: MonitoredBlog, seen: SeenState): Promise<Update[]> {
+  try {
+    const res = await fetch(blog.feed_url, {
+      signal: AbortSignal.timeout(15000),
+      headers: { "User-Agent": "imladris-upstream-checker/1.0" },
+    });
+    if (!res.ok) throw new Error(`RSS ${res.status}: ${res.statusText}`);
+    const xml = await res.text();
+
+    // Simple XML extraction — handles both RSS <item> and Atom <entry>
+    const items: Update[] = [];
+    // Match <item>...</item> or <entry>...</entry> blocks
+    const entryPattern = /<(?:item|entry)[\s>]([\s\S]*?)<\/(?:item|entry)>/gi;
+    let match: RegExpExecArray | null;
+    let count = 0;
+
+    while ((match = entryPattern.exec(xml)) !== null && count < 10) {
+      const block = match[1];
+
+      // Extract title
+      const titleMatch = block.match(/<title[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/i);
+      const title = titleMatch?.[1]?.trim() || "Untitled";
+
+      // Extract link (RSS: <link>, Atom: <link href="...">)
+      const linkHrefMatch = block.match(/<link[^>]+href="([^"]+)"/i);
+      const linkTextMatch = block.match(/<link>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/link>/i);
+      const url = linkHrefMatch?.[1] || linkTextMatch?.[1]?.trim() || blog.feed_url;
+
+      // Extract date (pubDate for RSS, published/updated for Atom)
+      const dateMatch = block.match(/<(?:pubDate|published|updated)>([^<]+)<\//i);
+      const published = dateMatch?.[1]?.trim() || new Date().toISOString();
+
+      // Use URL as unique ID (most stable across feed rebuilds)
+      const id = url;
+      if (!isNew(seen, blog.name, id)) continue;
+      markSeen(seen, blog.name, id);
+
+      // Extract description/summary snippet
+      const descMatch = block.match(/<(?:description|summary|content)[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/(?:description|summary|content)>/i);
+      const body_summary = descMatch ? summarizeBody(descMatch[1]) : "";
+
+      items.push({
+        source: blog.name,
+        type: "blog",
+        title,
+        url,
+        published,
+        relevance: blog.relevance,
+        body_summary,
+      });
+      count++;
+    }
+
+    return items;
+  } catch (err: any) {
+    return [{
+      source: blog.name,
+      type: "blog",
+      title: `[ERROR] Failed to fetch feed: ${err.message}`,
+      url: blog.feed_url,
+      published: new Date().toISOString(),
+      relevance: blog.relevance,
+    }];
+  }
+}
+
 // ── Report Formatting ──────────────────────────────────────────────
 
 function formatReport(updates: Update[], catchup: CatchupInfo): string {
@@ -322,11 +478,13 @@ function formatReport(updates: Update[], catchup: CatchupInfo): string {
     lines.push("");
   }
 
-  // Action items
-  const releases = updates.filter(u => u.type === "release" && !u.title.startsWith("[ERROR]"));
-  if (releases.length > 0) {
+  // Action items for releases and important blog posts
+  const actionable = updates.filter(u =>
+    (u.type === "release" || u.type === "blog") && !u.title.startsWith("[ERROR]")
+  );
+  if (actionable.length > 0) {
     lines.push("── ACTION ITEMS ──");
-    for (const r of releases) {
+    for (const r of actionable) {
       if (r.source === "Claude Code" || r.source === "Claude Code (npm)") {
         lines.push(`   → Review Claude Code ${r.version} changelog for breaking changes before updating`);
       } else if (r.source === "Bun") {
@@ -335,6 +493,10 @@ function formatReport(updates: Update[], catchup: CatchupInfo): string {
         lines.push(`   → Pull PAI updates and check for skill/hook/agent changes`);
       } else if (r.source === "Windmill") {
         lines.push(`   → Review Windmill ${r.version} for worker/API changes before docker-compose update`);
+      } else if (r.source === "OpenAI Codex") {
+        lines.push(`   → Review OpenAI Codex ${r.version || ""} for patterns to adapt or competitive moves`);
+      } else if (r.type === "blog") {
+        lines.push(`   → Read: "${r.title}" (${r.source})`);
       } else {
         lines.push(`   → Review ${r.source} ${r.version || ""} for relevant changes`);
       }
@@ -385,6 +547,16 @@ export async function main(dry_run = false): Promise<{
     }
   }
 
+  // Check blog RSS feeds
+  for (const blog of BLOGS) {
+    try {
+      const updates = await checkBlog(blog, seen);
+      allUpdates.push(...updates);
+    } catch (err: any) {
+      errors.push(`${blog.name}: ${err.message}`);
+    }
+  }
+
   const report = formatReport(allUpdates, catchup);
 
   // Persist state and log
@@ -404,7 +576,7 @@ export async function main(dry_run = false): Promise<{
   return {
     report,
     updates_found: allUpdates.filter(u => !u.title.startsWith("[ERROR]")).length,
-    sources_checked: REPOS.length + NPM_PACKAGES.length,
+    sources_checked: REPOS.length + NPM_PACKAGES.length + BLOGS.length,
     errors,
     ...(catchup.catchup_triggered ? { catchup } : {}),
   };

@@ -27,7 +27,7 @@ afterEach(() => {
 function runScript(dryRun = true): any {
   const result = execSync(
     `bun run ${HELPER} ${SCRIPT} '[${dryRun}]'`,
-    { env: { ...process.env, HOME: testDir }, encoding: "utf-8", timeout: 30000 }
+    { env: { ...process.env, HOME: testDir }, encoding: "utf-8", timeout: 60000 }
   );
   return JSON.parse(result.trim());
 }
@@ -39,7 +39,7 @@ test("dry_run mode returns report without writing state files", () => {
   // Seen file should NOT exist in dry_run
   const seenFile = join(testDir, ".claude", "state", "upstream-seen.json");
   expect(existsSync(seenFile)).toBe(false);
-});
+}, 45000);
 
 test("non-dry-run mode writes seen state file", () => {
   const result = runScript(false);
@@ -49,14 +49,14 @@ test("non-dry-run mode writes seen state file", () => {
   const seen = JSON.parse(readFileSync(seenFile, "utf-8"));
   // Should have entries for at least some repos
   expect(Object.keys(seen).length).toBeGreaterThan(0);
-});
+}, 45000);
 
 test("second run reports fewer updates (dedup via seen state)", () => {
   const first = runScript(false);
   const second = runScript(false);
   // Second run should find fewer or equal updates (seen state filters them)
   expect(second.updates_found).toBeLessThanOrEqual(first.updates_found);
-});
+}, 90000);
 
 test("report includes relevance descriptions for found updates", () => {
   const result = runScript(true);
@@ -64,19 +64,19 @@ test("report includes relevance descriptions for found updates", () => {
     // If any updates found, report should contain "Why it matters"
     expect(result.report).toContain("Why it matters:");
   }
-});
+}, 45000);
 
-test("sources_checked covers all monitored repos plus npm", () => {
+test("sources_checked covers all monitored repos, npm, and blogs", () => {
   const result = runScript(true);
-  // 8 GitHub repos + 1 npm package = 9
-  expect(result.sources_checked).toBe(9);
-});
+  // 15 GitHub repos + 1 npm package + 5 blogs = 21
+  expect(result.sources_checked).toBe(21);
+}, 45000);
 
 test("errors array captures failures without crashing", () => {
   const result = runScript(true);
   expect(Array.isArray(result.errors)).toBe(true);
   // Script should not throw even if some repos fail
-});
+}, 45000);
 
 test("JSONL log written on non-dry-run when updates found", () => {
   const result = runScript(false);
@@ -92,7 +92,7 @@ test("JSONL log written on non-dry-run when updates found", () => {
       expect(entry.checked_at).toBeDefined();
     }
   }
-});
+}, 45000);
 
 test("no hardcoded API tokens in script source", () => {
   const source = readFileSync(SCRIPT, "utf-8");
