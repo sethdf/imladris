@@ -36,6 +36,20 @@ Parameters:
     Type: CommaDelimitedList
     Description: Comma-separated list of AWS account IDs for cross-account AssumeRole
 
+  UseExistingStorage:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: Set to true when redeploying with retained KMS key and S3 bucket from previous stack
+
+  ExistingKmsKeyArn:
+    Type: String
+    Default: ''
+    Description: ARN of existing KMS key (required when UseExistingStorage=true)
+
+Conditions:
+  CreateNewStorage: !Equals [!Ref UseExistingStorage, 'false']
+
 Resources:
   # ============================================================
   # VPC and Networking
@@ -114,6 +128,7 @@ Resources:
   # ============================================================
   WorkstationKmsKey:
     Type: AWS::KMS::Key
+    Condition: CreateNewStorage
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
@@ -172,6 +187,7 @@ Resources:
 
   WorkstationKmsAlias:
     Type: AWS::KMS::Alias
+    Condition: CreateNewStorage
     Properties:
       AliasName: alias/workstation-ebs
       TargetKeyId: !Ref WorkstationKmsKey
@@ -245,7 +261,7 @@ Resources:
                   - kms:ReEncrypt*
                   - kms:GenerateDataKey*
                   - kms:DescribeKey
-                Resource: !GetAtt WorkstationKmsKey.Arn
+                Resource: !If [CreateNewStorage, !GetAtt WorkstationKmsKey.Arn, !Ref ExistingKmsKeyArn]
         - PolicyName: BedrockAccess
           PolicyDocument:
             Version: '2012-10-17'
@@ -279,8 +295,8 @@ Resources:
                   - s3:ListBucket
                   - s3:DeleteObject
                 Resource:
-                  - !GetAtt StateBackupBucket.Arn
-                  - !Sub '${StateBackupBucket.Arn}/*'
+                  - !If [CreateNewStorage, !GetAtt StateBackupBucket.Arn, !Sub 'arn:aws:s3:::imladris-state-${AWS::AccountId}']
+                  - !If [CreateNewStorage, !Sub '${StateBackupBucket.Arn}/*', !Sub 'arn:aws:s3:::imladris-state-${AWS::AccountId}/*']
       Tags:
         - Key: Name
           Value: ImladrisWorkstationRole
@@ -316,7 +332,7 @@ Resources:
             VolumeType: gp3
             Iops: 3000
             Encrypted: true
-            KmsKeyId: !GetAtt WorkstationKmsKey.Arn
+            KmsKeyId: !If [CreateNewStorage, !GetAtt WorkstationKmsKey.Arn, !Ref ExistingKmsKeyArn]
             DeleteOnTermination: false
         - DeviceName: /dev/sdb
           VirtualName: ephemeral0
@@ -413,7 +429,7 @@ Resources:
                   - kms:DescribeKey
                   - kms:CreateGrant
                   - kms:ListGrants
-                Resource: !GetAtt WorkstationKmsKey.Arn
+                Resource: !If [CreateNewStorage, !GetAtt WorkstationKmsKey.Arn, !Ref ExistingKmsKeyArn]
       Tags:
         - Key: Name
           Value: ImladrisDlmRole
@@ -460,6 +476,7 @@ Resources:
   # ============================================================
   StateBackupBucket:
     Type: AWS::S3::Bucket
+    Condition: CreateNewStorage
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
@@ -491,6 +508,7 @@ Resources:
 
   StateBackupBucketPolicy:
     Type: AWS::S3::BucketPolicy
+    Condition: CreateNewStorage
     Properties:
       Bucket: !Ref StateBackupBucket
       PolicyDocument:
@@ -590,12 +608,14 @@ Outputs:
       Name: !Sub '${AWS::StackName}-PrivateIp'
 
   KmsKeyId:
+    Condition: CreateNewStorage
     Description: KMS key ID for EBS encryption
     Value: !Ref WorkstationKmsKey
     Export:
       Name: !Sub '${AWS::StackName}-KmsKeyId'
 
   KmsKeyArn:
+    Condition: CreateNewStorage
     Description: KMS key ARN for EBS encryption
     Value: !GetAtt WorkstationKmsKey.Arn
     Export:
@@ -620,12 +640,14 @@ Outputs:
       Name: !Sub '${AWS::StackName}-SnapshotPolicyId'
 
   StateBackupBucketName:
+    Condition: CreateNewStorage
     Description: S3 bucket for encrypted state backups
     Value: !Ref StateBackupBucket
     Export:
       Name: !Sub '${AWS::StackName}-StateBackupBucketName'
 
   StateBackupBucketArn:
+    Condition: CreateNewStorage
     Description: ARN of the state backup S3 bucket
     Value: !GetAtt StateBackupBucket.Arn
     Export:
