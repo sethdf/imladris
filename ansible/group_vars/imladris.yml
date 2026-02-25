@@ -38,6 +38,10 @@ nvme_dirs:
   - "{{ nvme_mount_point }}/cache/bun"
   - "{{ nvme_mount_point }}/cache/steampipe"
 
+# --- AWS ---
+aws_account_id: "767448074758"
+aws_region: "us-east-1"
+
 # --- System Packages ---
 system_packages:
   # curl-minimal is pre-installed on AL2023 — do NOT add curl (conflicts)

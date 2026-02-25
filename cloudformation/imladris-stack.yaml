@@ -162,6 +162,18 @@ Resources:
               - kms:List*
             Resource: '*'
 
+          - Sid: WorkstationRoleUsage
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt WorkstationRole.Arn
+            Action:
+              - kms:Encrypt
+              - kms:Decrypt
+              - kms:ReEncrypt*
+              - kms:GenerateDataKey*
+              - kms:DescribeKey
+            Resource: '*'
+
       Tags:
         - Key: Name
           Value: ImladrisWorkstationKey
@@ -303,6 +315,20 @@ Resources:
                 Resource:
                   - !GetAtt KnowledgeBucket.Arn
                   - !Sub '${KnowledgeBucket.Arn}/*'
+        - PolicyName: StateBackupAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: StateBackupBucketReadWrite
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:ListBucket
+                  - s3:DeleteObject
+                Resource:
+                  - !GetAtt StateBackupBucket.Arn
+                  - !Sub '${StateBackupBucket.Arn}/*'
       Tags:
         - Key: Name
           Value: ImladrisWorkstationRole
@@ -594,6 +620,85 @@ Resources:
                 'aws:SecureTransport': 'false'
 
   # ============================================================
+  # S3 State Backup Bucket
+  # Encrypted with same CMK as EBS. Locked to workstation role ONLY.
+  # Stores: ~/.claude/ (conversations, memory, logs, state),
+  # Windmill Postgres dump, .env, wmill config.
+  # No other principal can read this data.
+  # ============================================================
+  StateBackupBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'imladris-state-${AWS::AccountId}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: !GetAtt WorkstationKmsKey.Arn
+            BucketKeyEnabled: true
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireOldVersions
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 30
+      Tags:
+        - Key: Name
+          Value: ImladrisStateBackupBucket
+        - Key: Project
+          Value: Imladris
+
+  StateBackupBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref StateBackupBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          # Only the workstation role and root can access this bucket.
+          # Root access requires YubiKey MFA (Decision 31).
+          # No other IAM entity — not even admin SSO role — can read objects.
+          - Sid: DenyAllExceptWorkstationAndRoot
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt StateBackupBucket.Arn
+              - !Sub '${StateBackupBucket.Arn}/*'
+            Condition:
+              ArnNotLike:
+                'aws:PrincipalArn':
+                  - !GetAtt WorkstationRole.Arn
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+          # Deny any upload that doesn't use KMS encryption
+          - Sid: DenyUnencryptedUploads
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:PutObject'
+            Resource: !Sub '${StateBackupBucket.Arn}/*'
+            Condition:
+              StringNotEquals:
+                's3:x-amz-server-side-encryption': 'aws:kms'
+          # Deny non-TLS connections
+          - Sid: EnforceTlsOnly
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt StateBackupBucket.Arn
+              - !Sub '${StateBackupBucket.Arn}/*'
+            Condition:
+              Bool:
+                'aws:SecureTransport': 'false'
+
+  # ============================================================
   # Bedrock VPC Endpoint Security Group
   # Allows HTTPS only from the workstation security group.
   # ============================================================
@@ -707,6 +812,18 @@ Outputs:
     Value: !GetAtt KnowledgeBucket.Arn
     Export:
       Name: !Sub '${AWS::StackName}-KnowledgeBucketArn'
+
+  StateBackupBucketName:
+    Description: S3 bucket for encrypted state backups
+    Value: !Ref StateBackupBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-StateBackupBucketName'
+
+  StateBackupBucketArn:
+    Description: ARN of the state backup S3 bucket
+    Value: !GetAtt StateBackupBucket.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-StateBackupBucketArn'
 
   BedrockRuntimeEndpointId:
     Description: VPC endpoint ID for Bedrock runtime

@@ -46,6 +46,29 @@
       register: windmill_compose_result
       changed_when: "'Started' in windmill_compose_result.stderr or 'Creating' in windmill_compose_result.stderr"
 
+    # --- State Restore from S3 (before Windmill health check) ---
+    # If an S3 backup exists, restore .env, Windmill DB, .wmill config, and ~/.claude/
+    # This runs BEFORE admin bootstrap so the restored DB has workspace + scripts + schedules.
+    - name: Check if S3 state backup exists
+      ansible.builtin.command:
+        cmd: aws s3 ls s3://imladris-state-{{ aws_account_id }}/latest/windmill-db.sql.gz --region {{ aws_region }}
+      register: s3_backup_check
+      changed_when: false
+      failed_when: false
+
+    - name: Restore state from S3 backup (if available)
+      ansible.builtin.command:
+        cmd: bash {{ imladris_repo_dir }}/scripts/state-restore.sh
+      become: true
+      become_user: "{{ imladris_user }}"
+      when: s3_backup_check.rc == 0
+      register: state_restore_result
+      failed_when: false
+
+    - name: Report state restore result
+      ansible.builtin.debug:
+        msg: "{{ 'State restored from S3 backup' if state_restore_result.rc | default(1) == 0 else 'No S3 backup found or restore skipped — clean install' }}"
+
     - name: Wait for Windmill healthcheck
       ansible.builtin.uri:
         url: "{{ windmill_health_url }}"
@@ -277,3 +300,24 @@
         WMILL_API: "{{ windmill_api_base }}/api/w/{{ windmill_workspace }}"
       no_log: true
       changed_when: true
+
+# --- State Backup Cron (Decision 8 extension) ---
+# Backs up all stateful data to S3 every 6 hours, encrypted with CMK.
+# Complements hourly DLM EBS snapshots with portable, granular backups.
+
+- name: Install state backup cron (every 6 hours)
+  ansible.builtin.cron:
+    name: "PAI state backup to S3"
+    minute: "0"
+    hour: "*/6"
+    job: "bash {{ imladris_repo_dir }}/scripts/state-backup.sh 2>&1 | tail -5 >> {{ imladris_home }}/.claude/logs/state-backup-cron.log"
+    user: "{{ imladris_user }}"
+
+- name: Run initial state backup
+  ansible.builtin.command:
+    cmd: bash {{ imladris_repo_dir }}/scripts/state-backup.sh
+  become: true
+  become_user: "{{ imladris_user }}"
+  changed_when: true
+  failed_when: false
+  when: windmill_health.status | default(0) == 200
