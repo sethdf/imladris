@@ -537,9 +537,10 @@ Resources:
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
-          # Only the workstation role and root can access this bucket.
+          # Only the workstation role, admin principal, and root can access this bucket.
           # Root access requires YubiKey MFA (Decision 31).
-          # No other IAM entity — not even admin SSO role — can read objects.
+          # Admin principal included to prevent lockout when stack is deleted
+          # while retained bucket persists (bucket policy references deleted role).
           - Sid: DenyAllExceptWorkstationAndRoot
             Effect: Deny
             Principal: '*'
@@ -552,6 +553,7 @@ Resources:
                 'aws:PrincipalArn':
                   - !GetAtt WorkstationRole.Arn
                   - !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+                  - !Ref AdminPrincipalArn
           # Deny any upload that doesn't use KMS encryption
           - Sid: DenyUnencryptedUploads
             Effect: Deny
