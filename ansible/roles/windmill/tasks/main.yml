@@ -151,6 +151,15 @@
       changed_when: false
       failed_when: false
 
+    # Stop Windmill app containers before DB restore to avoid crash-loop.
+    # The restore script drops/recreates the windmill database — if the server
+    # is connected, DROP fails (active connections) or causes crash-loops.
+    # Keep Postgres running so the restore can connect to it.
+    - name: Stop Windmill app containers before state restore
+      ansible.builtin.command: docker compose -f {{ windmill_compose_file }} stop windmill_server windmill_worker windmill_worker_native
+      become: true
+      when: s3_backup_check.rc == 0
+
     - name: Restore state from S3 backup (if available)
       ansible.builtin.command:
         cmd: bash {{ imladris_repo_dir }}/scripts/state-restore.sh
@@ -178,7 +187,6 @@
       become: true
       when:
         - s3_backup_check.rc == 0
-        - state_restore_result.rc | default(1) == 0
         - windmill_persistent_env.stat.exists
 
     # Restart Windmill after state restore so server reconnects to the restored
@@ -188,9 +196,7 @@
       become: true
       register: windmill_restart_result
       changed_when: true
-      when:
-        - s3_backup_check.rc == 0
-        - state_restore_result.rc | default(1) == 0
+      when: s3_backup_check.rc == 0
 
     - name: Wait for Windmill healthcheck
       ansible.builtin.uri:
