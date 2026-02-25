@@ -1,0 +1,21 @@
+summary: ''
+description: ''
+lock: '!inline f/devops/entity_extract.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    payload:
+      type: string
+      description: ''
+    source:
+      type: string
+      description: ''
+      default: unknown
+    enrich:
+      type: boolean
+      description: ''
+      default: true
+  required:
+    - payload

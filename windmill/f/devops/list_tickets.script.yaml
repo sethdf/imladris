@@ -1,0 +1,21 @@
+summary: ''
+description: ''
+lock: '!inline f/devops/list_tickets.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    status:
+      type: string
+      description: ''
+      default: ''
+    limit:
+      type: number
+      description: ''
+      default: 20
+    technician:
+      type: string
+      description: ''
+      default: ''
+  required: []

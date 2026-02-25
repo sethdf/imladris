@@ -1,13 +1,38 @@
 // Windmill Script: Add Note to SDP Ticket
 // Decision 4: SDP via Windmill scripts
 
+// SDP API requires this Accept header — Bun's default Accept: */* causes 415
+const SDP_HEADERS = {
+  Accept: "application/vnd.manageengine.sdp.v3+json",
+  "Content-Type": "application/x-www-form-urlencoded",
+};
+
+async function getVariable(path: string): Promise<string | undefined> {
+  const base = process.env.BASE_INTERNAL_URL || "http://windmill_server:8000";
+  const token = process.env.WM_TOKEN;
+  const workspace = process.env.WM_WORKSPACE || "imladris";
+  if (!token) return undefined;
+  try {
+    const resp = await fetch(
+      `${base}/api/w/${workspace}/variables/get_value/${path}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    if (!resp.ok) return undefined;
+    const val = await resp.text();
+    const parsed = val.startsWith('"') ? JSON.parse(val) : val;
+    return parsed.trim();
+  } catch {
+    return undefined;
+  }
+}
+
 export async function main(
   ticket_id: string,
   note: string,
   is_public: boolean = false,
 ) {
-  const baseUrl = Bun.env.WM_VAR_F_DEVOPS_SDP_BASE_URL;
-  const apiKey = Bun.env.WM_VAR_F_DEVOPS_SDP_API_KEY;
+  const baseUrl = await getVariable("f/devops/sdp_base_url");
+  const apiKey = await getVariable("f/devops/sdp_api_key");
 
   if (!baseUrl || !apiKey) {
     return {
@@ -27,15 +52,13 @@ export async function main(
     },
   });
 
-  const url = `${baseUrl}/requests/${ticket_id}/notes?input_data=${encodeURIComponent(inputData)}`;
-
-  const response = await fetch(url, {
+  const response = await fetch(`${baseUrl}/requests/${ticket_id}/notes`, {
     method: "POST",
     headers: {
+      ...SDP_HEADERS,
       Authorization: `Zoho-oauthtoken ${apiKey}`,
-      Accept: "application/json",
-      "Content-Type": "application/x-www-form-urlencoded",
     },
+    body: `input_data=${encodeURIComponent(inputData)}`,
   });
 
   if (!response.ok) {

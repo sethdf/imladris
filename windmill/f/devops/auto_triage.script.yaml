@@ -1,0 +1,25 @@
+summary: ''
+description: ''
+lock: '!inline f/devops/auto_triage.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    source:
+      type: string
+      description: ''
+    event_type:
+      type: string
+      description: ''
+    payload:
+      type: string
+      description: ''
+    dry_run:
+      type: boolean
+      description: ''
+      default: false
+  required:
+    - source
+    - event_type
+    - payload

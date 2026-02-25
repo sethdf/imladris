@@ -1,0 +1,17 @@
+summary: ''
+description: ''
+lock: '!inline f/devops/activity_report.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    period:
+      type: string
+      description: ''
+      default: daily
+    format:
+      type: string
+      description: ''
+      default: text
+  required: []

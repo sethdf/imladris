@@ -1,0 +1,33 @@
+summary: ''
+description: ''
+lock: '!inline f/devops/triage_feedback.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    action:
+      type: string
+      description: ''
+      default: stats
+    event_id:
+      type: string
+      description: ''
+      default: ''
+    original_action:
+      type: string
+      description: ''
+      default: ''
+    original_urgency:
+      type: string
+      description: ''
+      default: ''
+    actual_outcome:
+      type: string
+      description: ''
+      default: ''
+    notes:
+      type: string
+      description: ''
+      default: ''
+  required: []

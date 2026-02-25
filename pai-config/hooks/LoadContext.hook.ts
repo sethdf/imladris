@@ -401,11 +401,68 @@ async function checkActiveProgress(paiDir: string): Promise<string | null> {
   const recentSessions = getRecentWorkSessions(paiDir);
   const projects = getProjectProgress(paiDir);
 
-  if (recentSessions.length === 0 && projects.length === 0) {
+  // Check if current-work.json has active workstreams too
+  const currentWorkPath = join(paiDir, 'state', 'current-work.json');
+  let hasWorkstreams = false;
+  if (existsSync(currentWorkPath)) {
+    try {
+      const cwCheck = JSON.parse(readFileSync(currentWorkPath, 'utf-8'));
+      hasWorkstreams = (cwCheck.active_workstreams || []).some(
+        (w: { archived?: boolean }) => !w.archived
+      );
+    } catch { /* ignore */ }
+  }
+
+  if (recentSessions.length === 0 && projects.length === 0 && !hasWorkstreams) {
     return null;
   }
 
   let summary = '\n📋 ACTIVE WORK:\n';
+
+  // Domain-grouped workstreams from current-work.json
+  if (existsSync(currentWorkPath)) {
+    try {
+      const cwRaw = JSON.parse(readFileSync(currentWorkPath, 'utf-8'));
+      const workstreams = (cwRaw.active_workstreams || []).filter(
+        (w: { archived?: boolean }) => !w.archived
+      );
+      const foreground = cwRaw.foreground || null;
+
+      if (workstreams.length > 0) {
+        // Group by domain
+        const grouped: Record<string, typeof workstreams> = {};
+        for (const ws of workstreams) {
+          const domain = (ws.domain || 'work').toUpperCase();
+          if (!grouped[domain]) grouped[domain] = [];
+          grouped[domain].push(ws);
+        }
+
+        summary += '\n  ── Workstreams ──\n';
+
+        for (const [domain, items] of Object.entries(grouped)) {
+          summary += `\n  ${domain}:\n`;
+          for (const ws of items) {
+            const isFg = ws.name === foreground;
+            const marker = isFg ? '▶' : ' ';
+            const domainBadge = ws.domain === 'personal' ? '[P]' : '[W]';
+            const age = (() => {
+              const diff = Date.now() - new Date(ws.last_updated).getTime();
+              const mins = Math.floor(diff / 60000);
+              if (mins < 60) return `${mins}m ago`;
+              const hours = Math.floor(mins / 60);
+              if (hours < 24) return `${hours}h ago`;
+              const days = Math.floor(hours / 24);
+              return `${days}d ago`;
+            })();
+            const cs = ws.criteria_summary || '-';
+            summary += `    ${marker} ${domainBadge} ${ws.name} — ${ws.status} (${cs}) | ${age}\n`;
+          }
+        }
+      }
+    } catch (err) {
+      console.error(`⚠️ Failed to read current-work.json for dashboard: ${err}`);
+    }
+  }
 
   // Recent sessions first (last 48h, most relevant)
   if (recentSessions.length > 0) {

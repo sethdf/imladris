@@ -1,0 +1,21 @@
+summary: ''
+description: ''
+lock: '!inline f/devops/close_ticket.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    ticket_id:
+      type: string
+      description: ''
+    resolution:
+      type: string
+      description: ''
+      default: ''
+    status:
+      type: string
+      description: ''
+      default: Resolved
+  required:
+    - ticket_id

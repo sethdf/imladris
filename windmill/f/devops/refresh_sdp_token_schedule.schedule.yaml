@@ -1,0 +1,7 @@
+schedule: "0 */45 * * * *"
+on_failure: ""
+script_path: f/devops/refresh_sdp_token
+args: {}
+timezone: America/Los_Angeles
+is_flow: false
+enabled: true

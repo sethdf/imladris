@@ -1,0 +1,21 @@
+summary: ''
+description: ''
+lock: '!inline f/devops/add_note.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    ticket_id:
+      type: string
+      description: ''
+    note:
+      type: string
+      description: ''
+    is_public:
+      type: boolean
+      description: ''
+      default: false
+  required:
+    - ticket_id
+    - note

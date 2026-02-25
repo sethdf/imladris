@@ -1,0 +1,9 @@
+schedule: "0 0 17 * * *"
+on_failure: ""
+script_path: f/devops/activity_report
+args:
+  period: daily
+  format: text
+timezone: America/Los_Angeles
+is_flow: false
+enabled: true

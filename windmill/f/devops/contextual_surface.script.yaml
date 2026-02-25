@@ -1,0 +1,21 @@
+summary: ''
+description: ''
+lock: '!inline f/devops/contextual_surface.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    lookback_hours:
+      type: number
+      description: ''
+      default: 24
+    min_relevance:
+      type: number
+      description: ''
+      default: 2
+    dry_run:
+      type: boolean
+      description: ''
+      default: false
+  required: []

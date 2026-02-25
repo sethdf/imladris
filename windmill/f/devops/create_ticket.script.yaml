@@ -1,0 +1,29 @@
+summary: ''
+description: ''
+lock: '!inline f/devops/create_ticket.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    subject:
+      type: string
+      description: ''
+    description:
+      type: string
+      description: ''
+    priority:
+      type: string
+      description: ''
+      default: Medium
+    category:
+      type: string
+      description: ''
+      default: ''
+    requester_email:
+      type: string
+      description: ''
+      default: ''
+  required:
+    - subject
+    - description

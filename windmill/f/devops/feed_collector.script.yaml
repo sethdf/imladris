@@ -1,0 +1,21 @@
+summary: ''
+description: ''
+lock: '!inline f/devops/feed_collector.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    custom_feeds:
+      type: string
+      description: ''
+      default: ''
+    include_nvd:
+      type: boolean
+      description: ''
+      default: true
+    dry_run:
+      type: boolean
+      description: ''
+      default: false
+  required: []

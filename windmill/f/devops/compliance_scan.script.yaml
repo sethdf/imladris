@@ -1,0 +1,17 @@
+summary: ''
+description: ''
+lock: '!inline f/devops/compliance_scan.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    benchmark:
+      type: string
+      description: ''
+      default: aws_compliance.benchmark.cis_v300
+    compare_last:
+      type: boolean
+      description: ''
+      default: true
+  required: []

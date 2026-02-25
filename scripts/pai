@@ -7,6 +7,7 @@
  *   pai shelve             Save current workstream state and exit
  *   pai jobs               List all active workstreams
  *   pai archive "name"     Archive a completed workstream
+ *   pai cleanup            Archive all stale workstreams (>7 days)
  *
  * The PRD is the saved game state. This CLI manages the mapping
  * between human-friendly names and PRD files on disk.
@@ -301,8 +302,11 @@ function cmdJobs(): void {
                         ws.status === 'BLOCKED' ? '\x1b[31m' : '\x1b[36m';
 
     const age = timeSince(ws.last_updated);
+    const staleMs = 7 * 24 * 60 * 60 * 1000;
+    const isStale = (Date.now() - new Date(ws.last_updated).getTime()) > staleMs;
+    const staleBadge = isStale ? ' \x1b[33m[STALE]\x1b[0m' : '';
 
-    console.log(`${marker} ${domainBadge} \x1b[1m${ws.name}\x1b[0m`);
+    console.log(`${marker} ${domainBadge} \x1b[1m${ws.name}\x1b[0m${staleBadge}`);
     console.log(`    ${statusColor}${ws.status}\x1b[0m | Phase: ${ws.phase || '-'} | ${ws.criteria_summary} | ${age}`);
     if (ws.last_action) {
       console.log(`    ${ws.last_action}`);
@@ -334,6 +338,39 @@ function cmdArchive(name: string): void {
   console.log(`\x1b[90mArchived:\x1b[0m ${ws.name}`);
 }
 
+function cmdCleanup(): void {
+  const state = readState();
+  const staleMs = 7 * 24 * 60 * 60 * 1000;
+  const now = Date.now();
+
+  const stale = state.active_workstreams.filter(
+    w => !w.archived && (now - new Date(w.last_updated).getTime()) > staleMs
+  );
+
+  if (stale.length === 0) {
+    console.log('No stale workstreams found (threshold: 7 days).');
+    return;
+  }
+
+  console.log(`\x1b[1mArchiving ${stale.length} stale workstream(s):\x1b[0m\n`);
+
+  for (const ws of stale) {
+    const age = timeSince(ws.last_updated);
+    ws.archived = true;
+    ws.status = 'ARCHIVED';
+    ws.last_updated = new Date().toISOString();
+
+    if (state.foreground === ws.name) {
+      state.foreground = null;
+    }
+
+    console.log(`  \x1b[90mArchived:\x1b[0m ${ws.name} (was ${age})`);
+  }
+
+  writeState(state);
+  console.log(`\n${stale.length} workstream(s) archived.`);
+}
+
 // ========================================
 // Utilities
 // ========================================
@@ -356,13 +393,15 @@ function printUsage(): void {
   pai shelve             Save current workstream and exit
   pai jobs               List all active workstreams
   pai archive "name"     Archive a completed workstream
+  pai cleanup            Archive all stale workstreams (>7 days)
 
 \x1b[1mEXAMPLES:\x1b[0m
   pai work "AWS security audit"
   pai work "SDP #4521"
   pai jobs
   pai shelve
-  pai archive "AWS security audit"`);
+  pai archive "AWS security audit"
+  pai cleanup`);
 }
 
 // ========================================
@@ -395,6 +434,10 @@ switch (command) {
       process.exit(1);
     }
     cmdArchive(args.slice(1).join(' '));
+    break;
+
+  case 'cleanup':
+    cmdCleanup();
     break;
 
   default:

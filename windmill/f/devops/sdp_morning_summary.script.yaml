@@ -1,0 +1,17 @@
+summary: ''
+description: ''
+lock: '!inline f/devops/sdp_morning_summary.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    technician:
+      type: string
+      description: ''
+      default: ''
+    format:
+      type: string
+      description: ''
+      default: text
+  required: []

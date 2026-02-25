@@ -1,0 +1,29 @@
+summary: ''
+description: ''
+lock: '!inline f/devops/trend_engine.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    metric:
+      type: string
+      description: ''
+      default: all
+    period:
+      type: string
+      description: ''
+      default: week
+    lookback_days:
+      type: number
+      description: ''
+      default: 90
+    filter_field:
+      type: string
+      description: ''
+      default: ''
+    filter_value:
+      type: string
+      description: ''
+      default: ''
+  required: []

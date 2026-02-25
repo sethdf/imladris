@@ -40,6 +40,7 @@ services:
       - DATABASE_URL=postgres://postgres:${WINDMILL_DB_PASSWORD}@windmill_db/windmill
       - MODE=worker
       - WORKER_GROUP=default
+      - BASE_INTERNAL_URL=http://windmill_server:8000
     depends_on:
       windmill_db:
         condition: service_healthy
@@ -51,6 +52,7 @@ services:
       - DATABASE_URL=postgres://postgres:${WINDMILL_DB_PASSWORD}@windmill_db/windmill
       - MODE=worker
       - WORKER_GROUP=native
+      - BASE_INTERNAL_URL=http://windmill_server:8000
     depends_on:
       windmill_db:
         condition: service_healthy

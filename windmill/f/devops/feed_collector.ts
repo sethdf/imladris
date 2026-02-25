@@ -133,13 +133,22 @@ export async function main(
 
   // Parse feed URLs
   let feedUrls = DEFAULT_FEEDS;
-  const envFeeds = Bun.env.WM_VAR_F_DEVOPS_FEED_URLS;
-  if (envFeeds) {
-    try {
-      feedUrls = JSON.parse(envFeeds);
-    } catch {
-      // Keep defaults
+  try {
+    const base = process.env.BASE_INTERNAL_URL || "http://windmill_server:8000";
+    const token = process.env.WM_TOKEN;
+    const workspace = process.env.WM_WORKSPACE || "imladris";
+    if (token) {
+      const resp = await fetch(
+        `${base}/api/w/${workspace}/variables/get_value/f/devops/feed_urls`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (resp.ok) {
+        const envFeeds = await resp.text();
+        if (envFeeds) feedUrls = JSON.parse(envFeeds);
+      }
     }
+  } catch {
+    // Keep defaults — variable may not exist
   }
   if (custom_feeds) {
     try {

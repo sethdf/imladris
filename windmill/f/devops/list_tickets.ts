@@ -2,16 +2,41 @@
 // Decision 4: SDP via Windmill scripts
 //
 // Requires Windmill variables:
-//   f/devops/sdp_base_url   — e.g., https://sdpondemand.manageengine.com/api/v3
-//   f/devops/sdp_api_key    — OAuth token from Bitwarden sync
+//   f/devops/sdp_base_url   — e.g., https://sdpondemand.manageengine.com/app/itdesk/api/v3
+//   f/devops/sdp_api_key    — Zoho OAuth access token (refreshed by refresh_sdp_token cron)
+
+// SDP API requires this Accept header — Bun's default Accept: */* causes 415
+const SDP_HEADERS = {
+  Accept: "application/vnd.manageengine.sdp.v3+json",
+  "Content-Type": "application/x-www-form-urlencoded",
+};
+
+async function getVariable(path: string): Promise<string | undefined> {
+  const base = process.env.BASE_INTERNAL_URL || "http://windmill_server:8000";
+  const token = process.env.WM_TOKEN;
+  const workspace = process.env.WM_WORKSPACE || "imladris";
+  if (!token) return undefined;
+  try {
+    const resp = await fetch(
+      `${base}/api/w/${workspace}/variables/get_value/${path}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    if (!resp.ok) return undefined;
+    const val = await resp.text();
+    const parsed = val.startsWith('"') ? JSON.parse(val) : val;
+    return parsed.trim();
+  } catch {
+    return undefined;
+  }
+}
 
 export async function main(
-  status: string = "open",
+  status: string = "",
   limit: number = 20,
   technician: string = "",
 ) {
-  const baseUrl = Bun.env.WM_VAR_F_DEVOPS_SDP_BASE_URL;
-  const apiKey = Bun.env.WM_VAR_F_DEVOPS_SDP_API_KEY;
+  const baseUrl = await getVariable("f/devops/sdp_base_url");
+  const apiKey = await getVariable("f/devops/sdp_api_key");
 
   if (!baseUrl || !apiKey) {
     return {
@@ -25,21 +50,20 @@ export async function main(
       row_count: limit,
       sort_field: "created_time",
       sort_order: "desc",
-      search_criteria: [
-        { field: "status.name", condition: "is", value: status },
-        ...(technician
-          ? [{ field: "technician.name", condition: "is", value: technician }]
-          : []),
-      ],
     },
   };
+
+  const criteria: Record<string, unknown>[] = [];
+  if (status) criteria.push({ field: "status.name", condition: "is", value: status });
+  if (technician) criteria.push({ field: "technician.name", condition: "is", value: technician });
+  if (criteria.length > 0) listInfo.list_info = { ...listInfo.list_info as object, search_criteria: criteria };
 
   const url = `${baseUrl}/requests?input_data=${encodeURIComponent(JSON.stringify(listInfo))}`;
 
   const response = await fetch(url, {
     headers: {
+      ...SDP_HEADERS,
       Authorization: `Zoho-oauthtoken ${apiKey}`,
-      Accept: "application/json",
     },
   });
 
@@ -55,7 +79,7 @@ export async function main(
 
   return {
     count: requests.length,
-    status_filter: status,
+    status_filter: status || "all",
     tickets: requests.map((r: Record<string, unknown>) => ({
       id: (r as any).id,
       subject: (r as any).subject,
