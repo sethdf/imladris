@@ -50,6 +50,7 @@ system_packages:
   - jq
   - unzip
   - tmux
+  - cronie
   # mosh requires EPEL — installed separately in packages role
 
 # --- Docker ---
