@@ -14,6 +14,11 @@ TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
 
 SSE_ARGS=(--sse aws:kms --sse-kms-key-id "${KMS_KEY}" --region "${REGION}")
 
+# Use /tmp if TMPDIR doesn't exist (NVMe may not be mounted in cron context)
+if [[ ! -d "${TMPDIR:-/tmp}" ]]; then
+    export TMPDIR=/tmp
+fi
+
 # Ensure log directory exists
 mkdir -p "$(dirname "${LOG_FILE}")"
 
@@ -50,12 +55,17 @@ log "Claude directory sync complete."
 # 2. Dump Windmill Postgres → gzip → upload
 log "Dumping Windmill Postgres database..."
 DUMP_FILE="${TMPDIR:-/tmp}/windmill-db-backup.sql.gz"
-docker exec imladris-windmill_db-1 pg_dump -U postgres windmill | gzip > "${DUMP_FILE}"
-log "Uploading windmill-db.sql.gz to S3..."
-aws s3 cp "${DUMP_FILE}" "s3://${BUCKET}/latest/windmill-db.sql.gz" \
-    "${SSE_ARGS[@]}" \
-    2>&1 | tee -a "${LOG_FILE}"
-log "Windmill DB backup complete."
+DB_CONTAINER=$(docker ps --format '{{.Names}}' | grep windmill_db || echo "")
+if [[ -z "${DB_CONTAINER}" ]]; then
+    log "WARNING: Windmill DB container not running, skipping DB backup."
+else
+    docker exec "${DB_CONTAINER}" pg_dump -U postgres windmill | gzip > "${DUMP_FILE}"
+    log "Uploading windmill-db.sql.gz to S3..."
+    aws s3 cp "${DUMP_FILE}" "s3://${BUCKET}/latest/windmill-db.sql.gz" \
+        "${SSE_ARGS[@]}" \
+        2>&1 | tee -a "${LOG_FILE}"
+    log "Windmill DB backup complete."
+fi
 
 # 3. Upload .env file
 log "Uploading .env file..."

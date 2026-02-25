@@ -98,18 +98,19 @@ fi
 # 4. Restore Windmill Postgres database
 log "Restoring Windmill Postgres database..."
 if check_backup_exists "latest/windmill-db.sql.gz"; then
-    wait_for_docker "imladris-windmill_db-1"
+    DB_CONTAINER=$(docker ps --format '{{.Names}}' | grep windmill_db || echo "imladris-windmill_db-1")
+    wait_for_docker "${DB_CONTAINER}"
 
     DUMP_FILE="${TMPDIR:-/tmp}/windmill-db-restore.sql.gz"
     aws s3 cp "s3://${BUCKET}/latest/windmill-db.sql.gz" "${DUMP_FILE}" \
         "${SSE_ARGS[@]}"
 
     log "Dropping and recreating windmill database..."
-    docker exec imladris-windmill_db-1 psql -U postgres -c "DROP DATABASE IF EXISTS windmill;" 2>/dev/null || true
-    docker exec imladris-windmill_db-1 psql -U postgres -c "CREATE DATABASE windmill;" 2>/dev/null
+    docker exec "${DB_CONTAINER}" psql -U postgres -c "DROP DATABASE IF EXISTS windmill;" 2>/dev/null || true
+    docker exec "${DB_CONTAINER}" psql -U postgres -c "CREATE DATABASE windmill;" 2>/dev/null
 
     log "Loading database dump..."
-    gunzip -c "${DUMP_FILE}" | docker exec -i imladris-windmill_db-1 psql -U postgres windmill
+    gunzip -c "${DUMP_FILE}" | docker exec -i "${DB_CONTAINER}" psql -U postgres windmill
 
     rm -f "${DUMP_FILE}"
     log "Windmill database restored."
