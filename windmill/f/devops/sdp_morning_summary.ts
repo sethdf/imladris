@@ -8,6 +8,7 @@
 import { appendFileSync, existsSync, mkdirSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
+import { shouldCatchUp, recordRun, type CatchupInfo } from "./catchup_lib.ts";
 
 const HOME = homedir();
 const SUMMARY_LOG = join(HOME, ".claude", "logs", "morning-summaries.jsonl");
@@ -80,10 +81,15 @@ function ensureDirs(): void {
   if (!existsSync(logDir)) mkdirSync(logDir, { recursive: true });
 }
 
+const TWENTY_FOUR_HOURS_MS = 24 * 3600000;
+
 export async function main(
   technician: string = "",
   format: string = "text",
 ) {
+  // Cron catchup: detect missed runs after instance downtime (weekday 8 AM schedule)
+  const catchup = shouldCatchUp("sdp_morning_summary", TWENTY_FOUR_HOURS_MS);
+
   const baseUrl = await getVariable("f/devops/sdp_base_url");
   const apiKey = await getVariable("f/devops/sdp_api_key");
 
@@ -233,8 +239,10 @@ export async function main(
       text += `  #${t.id} ${t.subject} — ${t.last_updated_time?.display_value}\n`;
     }
 
-    return { report: text };
+    recordRun("sdp_morning_summary");
+    return { report: text, ...(catchup.catchup_triggered ? { catchup } : {}) };
   }
 
-  return summary;
+  recordRun("sdp_morning_summary");
+  return { ...summary, ...(catchup.catchup_triggered ? { catchup } : {}) };
 }

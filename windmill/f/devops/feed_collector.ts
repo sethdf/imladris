@@ -10,6 +10,7 @@
 import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
+import { shouldCatchUp, recordRun, type CatchupInfo } from "./catchup_lib.ts";
 
 const HOME = homedir();
 const FEED_LOG = join(HOME, ".claude", "logs", "feed-events.jsonl");
@@ -124,12 +125,17 @@ async function fetchNvdRecent(): Promise<FeedItem[]> {
   }
 }
 
+const SIX_HOURS_MS = 6 * 3600000;
+
 export async function main(
   custom_feeds: string = "",
   include_nvd: boolean = true,
   dry_run: boolean = false,
 ) {
   ensureDirs();
+
+  // Cron catchup: detect missed runs after instance downtime
+  const catchup = shouldCatchUp("feed_collector", SIX_HOURS_MS);
 
   // Parse feed URLs
   let feedUrls = DEFAULT_FEEDS;
@@ -216,6 +222,8 @@ export async function main(
   const critical = newItems.filter((i) => i.severity === "CRITICAL");
   const high = newItems.filter((i) => i.severity === "HIGH");
 
+  if (!dry_run) recordRun("feed_collector");
+
   return {
     new_items: newItems.length,
     total_seen: seen.size,
@@ -230,5 +238,6 @@ export async function main(
       severity: i.severity || "N/A",
     })),
     dry_run,
+    ...(catchup.catchup_triggered ? { catchup } : {}),
   };
 }

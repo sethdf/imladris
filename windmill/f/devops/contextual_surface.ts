@@ -8,6 +8,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { join, dirname } from "path";
 import { homedir } from "os";
+import { shouldCatchUp, recordRun, type CatchupInfo } from "./catchup_lib.ts";
 
 const HOME = homedir();
 const STATE_PATH = join(HOME, ".claude", "state", "current-work.json");
@@ -90,11 +91,16 @@ function scoreRelevance(item: FeedItem, keywords: string[]): number {
   return score;
 }
 
+const TWELVE_HOURS_MS = 12 * 3600000;
+
 export async function main(
   lookback_hours: number = 24,
   min_relevance: number = 2,
   dry_run: boolean = false,
 ) {
+  // Cron catchup: detect missed runs after instance downtime
+  const catchup = shouldCatchUp("contextual_surface", TWELVE_HOURS_MS);
+
   // Read active workstreams
   if (!existsSync(STATE_PATH)) {
     return { message: "No active workstreams" };
@@ -173,11 +179,14 @@ export async function main(
     });
   }
 
+  if (!dry_run) recordRun("contextual_surface");
+
   return {
     workstreams_checked: workstreams.length,
     feed_items_scanned: feedItems.length,
     lookback_hours,
     results,
     dry_run,
+    ...(catchup.catchup_triggered ? { catchup } : {}),
   };
 }
