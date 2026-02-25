@@ -415,10 +415,9 @@ Resources:
           Value: 'true'
         - Key: Project
           Value: Imladris
-    # CreationPolicy temporarily disabled for diagnostic deploy
-    # CreationPolicy:
-    #   ResourceSignal:
-    #     Timeout: PT15M
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT15M
 
   # ============================================================
   # DLM Lifecycle Policy (Decision 8)
