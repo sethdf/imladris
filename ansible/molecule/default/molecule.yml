@@ -1,0 +1,122 @@
+---
+driver:
+  name: podman
+
+platforms:
+  - name: imladris-test
+    image: localhost/al2023-ansible:latest
+    pre_build_image: true
+    privileged: true
+    command: /usr/sbin/init
+    tmpfs:
+      /run: rw,nosuid,nodev
+      /tmp: rw,nosuid,nodev
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:ro
+    groups:
+      - imladris
+
+provisioner:
+  name: ansible
+  playbooks:
+    converge: converge.yml
+    verify: verify.yml
+  env:
+    ANSIBLE_ROLES_PATH: "${MOLECULE_PROJECT_DIRECTORY}/roles"
+  inventory:
+    group_vars:
+      imladris:
+        # Override vars that would fail in container environment
+        tailscale_auth_key: "SKIP_IN_TEST"
+        bws_access_token: ""
+        windmill_admin_password: "testpassword123"
+        # Standard vars from group_vars/imladris.yml
+        imladris_user: ec2-user
+        imladris_home: "/home/ec2-user"
+        repos_dir: "/home/ec2-user/repos"
+        claude_dir: "/home/ec2-user/.claude"
+        imladris_repo_dir: "/home/ec2-user/repos/imladris"
+        aws_account_id: "767448074758"
+        aws_region: "us-east-1"
+        nvme_mount_point: /local
+        nvme_fs_label: nvme-local
+        nvme_mount_opts: "defaults,nofail,noatime,discard"
+        nvme_dirs:
+          - /local/worktrees
+          - /local/tmp
+          - /local/cache/npm
+          - /local/cache/bun
+          - /local/cache/steampipe
+          - /local/cache/triage
+        system_packages:
+          - wget
+          - git
+          - jq
+          - tar
+          - unzip
+          - tmux
+          - cronie
+        docker_data_root: "/local/docker"
+        docker_packages:
+          - docker
+        tailscale_hostname: imladris-test
+        nodejs_version: "20"
+        git_repos:
+          - name: imladris
+            url: https://github.com/sethdf/imladris.git
+        claude_symlinks:
+          - src: "/home/ec2-user/repos/imladris/pai-config/skills"
+            dest: "/home/ec2-user/.claude/skills"
+          - src: "/home/ec2-user/repos/imladris/pai-config/agents"
+            dest: "/home/ec2-user/.claude/agents"
+          - src: "/home/ec2-user/repos/imladris/pai-config/hooks"
+            dest: "/home/ec2-user/.claude/hooks"
+        claude_runtime_dirs:
+          - "/home/ec2-user/.claude/MEMORY/WORK"
+          - "/home/ec2-user/.claude/MEMORY/STATE"
+          - "/home/ec2-user/.claude/MEMORY/LEARNING/REFLECTIONS"
+          - "/home/ec2-user/.claude/projects"
+          - "/home/ec2-user/.claude/logs"
+          - "/home/ec2-user/.claude/state"
+        context_seed_dir: "/home/ec2-user/repos/imladris/context"
+        memory_seed_dir: "/home/ec2-user/repos/imladris/context/memory"
+        windmill_compose_file: "/home/ec2-user/repos/imladris/docker-compose.yml"
+        windmill_health_url: "http://localhost:8000/api/version"
+        windmill_health_retries: 30
+        windmill_health_delay: 2
+        windmill_api_base: "http://localhost:8000"
+        windmill_workspace: imladris
+        windmill_admin_email: "admin@windmill.dev"
+        windmill_scripts_dir: "/home/ec2-user/repos/imladris/windmill"
+        windmill_wmill_config_dir: "/home/ec2-user/.config/windmill"
+        windmill_schedules:
+          - path: f/devops/feed_collector_schedule
+            schedule: "0 0 */6 * * *"
+            script_path: f/devops/feed_collector
+        steampipe_install_url: "https://steampipe.io/install/steampipe.sh"
+        steampipe_plugins:
+          - aws
+        mcp_tools_arch: linux-amd64
+        mcp_tools_url: "https://github.com/nicholasgasior/mcp-tools/releases/latest/download/mcp-tools-linux-amd64"
+        ai_failover_dir: "/home/ec2-user/repos/imladris/ai-failover"
+        ai_failover_wrapper: "/home/ec2-user/repos/imladris/ai-failover/claude-failover"
+        ai_provider_env: "/home/ec2-user/.claude/ai-provider.env"
+        ai_failover_state: "/home/ec2-user/.claude/ai-failover-state"
+        voice_server_port: 8888
+        voice_server_audio_dir: /tmp/voice-audio
+        voice_server_env_file: "/home/ec2-user/.config/voice-server.env"
+        voice_server_elevenlabs_key: ""
+        bun_bin: "/home/ec2-user/.bun/bin/bun"
+        settings_template_candidates:
+          - "/home/ec2-user/repos/imladris/settings.json.template"
+
+verifier:
+  name: ansible
+
+scenario:
+  test_sequence:
+    - dependency
+    - create
+    - converge
+    - verify
+    - destroy

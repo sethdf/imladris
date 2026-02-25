@@ -1,0 +1,86 @@
+---
+# =============================================================================
+# Molecule Converge — Tests container-safe Ansible roles
+# =============================================================================
+# SKIPPED roles (need real hardware/network/Docker):
+#   - nvme (requires /dev/nvme* block devices)
+#   - tailscale (requires auth key + network auth)
+#   - windmill (requires Docker-in-Docker + Compose)
+#
+# TESTED roles (13 of 16):
+#   packages, docker (config only), ssm-disable, nodejs, bun, bitwarden,
+#   repos, claude-code, steampipe, mcp-tools, ai-failover, mosh, voice-server
+
+- name: Converge — test Ansible roles in containers
+  hosts: imladris
+  gather_facts: true
+
+  vars:
+    molecule_test: true  # Flag for roles to skip container-incompatible tasks
+
+  pre_tasks:
+    - name: Install Python dependencies for Ansible modules
+      ansible.builtin.dnf:
+        name:
+          - python3-dnf
+          - python3-libselinux
+          - python3-pip
+        state: present
+
+    - name: Ensure ec2-user .bashrc exists
+      ansible.builtin.file:
+        path: "{{ imladris_home }}/.bashrc"
+        state: touch
+        owner: "{{ imladris_user }}"
+        group: "{{ imladris_user }}"
+        mode: "0644"
+
+  roles:
+    # --- Tier 1: Package installs (most likely to succeed) ---
+
+    - role: packages
+      tags: [packages]
+
+    - role: nodejs
+      tags: [nodejs]
+
+    - role: bun
+      tags: [bun]
+
+    - role: bitwarden
+      tags: [bitwarden]
+
+    - role: mcp-tools
+      tags: [mcp-tools]
+
+    - role: ssm-disable
+      tags: [ssm]
+
+    # --- Tier 2: Git + file operations ---
+
+    - role: repos
+      tags: [repos]
+
+    - role: claude-code
+      tags: [claude-code]
+
+    - role: ai-failover
+      tags: [ai-failover]
+
+    # --- Tier 3: Complex installs ---
+
+    - role: steampipe
+      tags: [steampipe]
+
+    - role: mosh
+      tags: [mosh]
+
+    # --- Tier 4: Docker (config only, no daemon) ---
+
+    - role: docker
+      tags: [docker]
+
+    # --- Tier 5: Voice server (files + unit, service may not start) ---
+
+    - role: voice-server
+      tags: [voice-server]

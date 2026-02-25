@@ -49,6 +49,7 @@ system_packages:
   - wget
   - git
   - jq
+  - tar
   - unzip
   - tmux
   - cronie

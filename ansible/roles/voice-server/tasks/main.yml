@@ -5,6 +5,11 @@
 # Deploys PAI voice server as a systemd user service.
 # ElevenLabs TTS with HTTP audio streaming for remote playback.
 # Listens on 127.0.0.1:8888 — accessible only via Tailscale (Decision 33).
+#
+# Note: systemd user service management (linger, daemon-reload, start)
+# uses failed_when: false because during first boot (UserData), the
+# user session infrastructure may not be fully ready. The service files
+# are deployed regardless, and linger ensures it starts on next boot.
 
 - name: Create voice server audio directory
   ansible.builtin.file:
@@ -40,11 +45,31 @@
     mode: "0644"
   notify: restart voice-server
 
+# Ensure XDG_RUNTIME_DIR exists for the user (may not during first boot)
+- name: Create XDG_RUNTIME_DIR for user
+  ansible.builtin.file:
+    path: "/run/user/{{ imladris_uid | default('1000') }}"
+    state: directory
+    owner: "{{ imladris_user }}"
+    group: "{{ imladris_user }}"
+    mode: "0700"
+  become: true
+  failed_when: false
+  when: not (molecule_test | default(false))
+
 # Enable lingering so user services start at boot (not just on login)
 - name: Enable loginctl linger for user services at boot
   ansible.builtin.command:
     cmd: loginctl enable-linger {{ imladris_user }}
   changed_when: false
+  failed_when: false
+  register: voice_server_linger_result
+  when: not (molecule_test | default(false))
+
+- name: Report linger status
+  ansible.builtin.debug:
+    msg: "loginctl enable-linger {{ 'succeeded' if voice_server_linger_result.rc | default(1) == 0 else 'failed (will retry on first login)' }}"
+  when: not (molecule_test | default(false))
 
 - name: Reload systemd user daemon
   ansible.builtin.command:
@@ -53,7 +78,11 @@
   become_user: "{{ imladris_user }}"
   environment:
     XDG_RUNTIME_DIR: "/run/user/{{ imladris_uid | default('1000') }}"
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ imladris_uid | default('1000') }}/bus"
   changed_when: false
+  failed_when: false
+  register: voice_server_daemon_reload
+  when: not (molecule_test | default(false))
 
 - name: Enable and start voice server
   ansible.builtin.systemd:
@@ -65,3 +94,14 @@
   become_user: "{{ imladris_user }}"
   environment:
     XDG_RUNTIME_DIR: "/run/user/{{ imladris_uid | default('1000') }}"
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ imladris_uid | default('1000') }}/bus"
+  failed_when: false
+  register: voice_server_start_result
+  when: not (molecule_test | default(false))
+
+- name: Report voice server status
+  ansible.builtin.debug:
+    msg: >-
+      Voice server {{ 'started successfully' if voice_server_start_result.changed | default(false)
+      else 'service deployment complete (may start on first login via linger)' }}
+  when: not (molecule_test | default(false))

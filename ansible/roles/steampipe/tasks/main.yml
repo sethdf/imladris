@@ -24,11 +24,13 @@
   register: steampipe_plugins_list
   changed_when: false
   failed_when: false
-  become: false
+  become: true
+  become_user: "{{ imladris_user }}"
 
 - name: Install Steampipe plugins
   ansible.builtin.command: steampipe plugin install {{ item }}
   loop: "{{ steampipe_plugins }}"
   when: item not in (steampipe_plugins_list.stdout | default(''))
-  become: false
+  become: true
+  become_user: "{{ imladris_user }}"
   changed_when: true

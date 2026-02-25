@@ -4,3 +4,4 @@
     name: docker
     state: restarted
   become: true
+  when: not (molecule_test | default(false))

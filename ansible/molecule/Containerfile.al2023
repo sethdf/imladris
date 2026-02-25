@@ -1,0 +1,29 @@
+FROM amazonlinux:2023
+
+# Install systemd + python3 (required for Ansible)
+RUN dnf install -y \
+    systemd \
+    python3 \
+    python3-pip \
+    sudo \
+    iproute \
+    procps-ng \
+    && dnf clean all
+
+# Create ec2-user with sudo (matches production)
+RUN useradd -m -s /bin/bash ec2-user \
+    && echo "ec2-user ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/ec2-user
+
+# Remove unnecessary systemd units that cause issues in containers
+RUN (cd /lib/systemd/system/sysinit.target.wants/ && for i in *; do \
+    [ "$i" = "systemd-tmpfiles-setup.service" ] || rm -f "$i"; done) \
+    && rm -f /lib/systemd/system/multi-user.target.wants/* \
+    && rm -f /etc/systemd/system/*.wants/* \
+    && rm -f /lib/systemd/system/local-fs.target.wants/* \
+    && rm -f /lib/systemd/system/sockets.target.wants/*udev* \
+    && rm -f /lib/systemd/system/sockets.target.wants/*initctl* \
+    && rm -f /lib/systemd/system/basic.target.wants/* \
+    && rm -f /lib/systemd/system/anaconda.target.wants/*
+
+VOLUME ["/sys/fs/cgroup"]
+CMD ["/usr/sbin/init"]

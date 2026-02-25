@@ -8,3 +8,6 @@
   become_user: "{{ imladris_user }}"
   environment:
     XDG_RUNTIME_DIR: "/run/user/{{ imladris_uid | default('1000') }}"
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ imladris_uid | default('1000') }}/bus"
+  failed_when: false
+  when: not (molecule_test | default(false))

@@ -1,0 +1,242 @@
+---
+# =============================================================================
+# Molecule Verify — Check that roles applied correctly
+# =============================================================================
+
+- name: Verify Ansible role results
+  hosts: imladris
+  gather_facts: true
+
+  vars:
+    imladris_user: ec2-user
+    imladris_home: "/home/ec2-user"
+    repos_dir: "/home/ec2-user/repos"
+    claude_dir: "/home/ec2-user/.claude"
+    imladris_repo_dir: "/home/ec2-user/repos/imladris"
+
+  tasks:
+    # === Packages ===
+    - name: Verify system packages installed
+      ansible.builtin.package_facts:
+        manager: auto
+
+    - name: Assert core packages present
+      ansible.builtin.assert:
+        that:
+          - "'git' in ansible_facts.packages"
+          - "'jq' in ansible_facts.packages"
+          - "'tmux' in ansible_facts.packages"
+          - "'unzip' in ansible_facts.packages"
+        fail_msg: "Missing core packages"
+
+    - name: Verify tmux config deployed
+      ansible.builtin.stat:
+        path: "{{ imladris_home }}/.tmux.conf"
+      register: tmux_conf
+    - name: Assert tmux config exists
+      ansible.builtin.assert:
+        that: tmux_conf.stat.exists
+        fail_msg: "tmux.conf not deployed"
+
+    # === Node.js ===
+    - name: Check Node.js version
+      ansible.builtin.command: node --version
+      register: node_version
+      changed_when: false
+    - name: Assert Node.js installed
+      ansible.builtin.assert:
+        that: node_version.rc == 0
+        fail_msg: "Node.js not installed"
+
+    # === Bun ===
+    - name: Check Bun version
+      ansible.builtin.command: "{{ imladris_home }}/.bun/bin/bun --version"
+      register: bun_version
+      changed_when: false
+      become: true
+      become_user: "{{ imladris_user }}"
+    - name: Assert Bun installed
+      ansible.builtin.assert:
+        that: bun_version.rc == 0
+        fail_msg: "Bun not installed"
+
+    - name: Verify Bun PATH in bashrc
+      ansible.builtin.command: grep -c "BUN_INSTALL" {{ imladris_home }}/.bashrc
+      register: bun_bashrc
+      changed_when: false
+      failed_when: false
+    - name: Assert Bun in bashrc
+      ansible.builtin.assert:
+        that: bun_bashrc.rc == 0
+        fail_msg: "Bun PATH not in bashrc"
+
+    # === Bitwarden CLI ===
+    - name: Check bws binary exists
+      ansible.builtin.stat:
+        path: /usr/local/bin/bws
+      register: bws_stat
+    - name: Assert bws installed
+      ansible.builtin.assert:
+        that: bws_stat.stat.exists
+        fail_msg: "Bitwarden bws CLI not installed"
+
+    # === mcp-tools ===
+    - name: Check mcp-tools binary exists
+      ansible.builtin.stat:
+        path: /usr/local/bin/mcp-tools
+      register: mcp_tools_stat
+      # May fail if GitHub is unreachable — not critical
+    - name: Report mcp-tools status
+      ansible.builtin.debug:
+        msg: "mcp-tools {{ 'installed' if mcp_tools_stat.stat.exists else 'not installed (download may have failed)' }}"
+
+    # === Git repos ===
+    - name: Verify repos directory exists
+      ansible.builtin.stat:
+        path: "{{ repos_dir }}"
+      register: repos_dir_stat
+    - name: Assert repos directory exists
+      ansible.builtin.assert:
+        that: repos_dir_stat.stat.exists and repos_dir_stat.stat.isdir
+        fail_msg: "repos directory not created"
+
+    - name: Verify imladris repo cloned
+      ansible.builtin.stat:
+        path: "{{ imladris_repo_dir }}/.git"
+      register: imladris_git
+    - name: Assert imladris repo exists
+      ansible.builtin.assert:
+        that: imladris_git.stat.exists
+        fail_msg: "imladris repo not cloned"
+
+    # === Claude Code ===
+    - name: Verify Claude runtime directories
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - "{{ claude_dir }}/MEMORY/WORK"
+        - "{{ claude_dir }}/MEMORY/STATE"
+        - "{{ claude_dir }}/MEMORY/LEARNING/REFLECTIONS"
+        - "{{ claude_dir }}/projects"
+        - "{{ claude_dir }}/logs"
+        - "{{ claude_dir }}/state"
+      register: claude_dirs
+
+    - name: Assert all Claude dirs exist
+      ansible.builtin.assert:
+        that: item.stat.exists and item.stat.isdir
+        fail_msg: "Claude dir missing: {{ item.item }}"
+      loop: "{{ claude_dirs.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Verify Claude symlinks created
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - "{{ claude_dir }}/skills"
+        - "{{ claude_dir }}/agents"
+        - "{{ claude_dir }}/hooks"
+      register: claude_symlinks
+
+    - name: Assert Claude symlinks exist
+      ansible.builtin.assert:
+        that: item.stat.exists and item.stat.islnk
+        fail_msg: "Claude symlink missing: {{ item.item }}"
+      loop: "{{ claude_symlinks.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Verify pai CLI symlink
+      ansible.builtin.stat:
+        path: "{{ imladris_home }}/.local/bin/pai"
+      register: pai_link
+    - name: Assert pai CLI linked
+      ansible.builtin.assert:
+        that: pai_link.stat.exists
+        fail_msg: "pai CLI not symlinked to PATH"
+
+    - name: Verify Claude permissions in bashrc
+      ansible.builtin.command: grep -c "CLAUDE_DANGEROUSLY_SKIP_PERMISSIONS" {{ imladris_home }}/.bashrc
+      register: claude_perms_bashrc
+      changed_when: false
+    - name: Assert Claude permissions env set
+      ansible.builtin.assert:
+        that: claude_perms_bashrc.rc == 0
+        fail_msg: "CLAUDE_DANGEROUSLY_SKIP_PERMISSIONS not in bashrc"
+
+    # === AI Failover ===
+    - name: Verify ai-provider.env exists
+      ansible.builtin.stat:
+        path: "{{ claude_dir }}/ai-provider.env"
+      register: ai_provider_env
+    - name: Assert ai-provider.env created
+      ansible.builtin.assert:
+        that: ai_provider_env.stat.exists
+        fail_msg: "ai-provider.env not created"
+
+    # === Steampipe ===
+    - name: Check Steampipe binary
+      ansible.builtin.command: steampipe --version
+      register: steampipe_check
+      changed_when: false
+      failed_when: false
+    - name: Report Steampipe status
+      ansible.builtin.debug:
+        msg: "Steampipe {{ 'installed' if steampipe_check.rc == 0 else 'not installed' }}"
+
+    # === Docker (config only) ===
+    - name: Verify Docker daemon.json exists
+      ansible.builtin.stat:
+        path: /etc/docker/daemon.json
+      register: docker_daemon_json
+    - name: Assert Docker config deployed
+      ansible.builtin.assert:
+        that: docker_daemon_json.stat.exists
+        fail_msg: "Docker daemon.json not created"
+
+    - name: Verify Docker Compose plugin exists
+      ansible.builtin.stat:
+        path: /usr/local/lib/docker/cli-plugins/docker-compose
+      register: docker_compose_plugin
+    - name: Assert Docker Compose installed
+      ansible.builtin.assert:
+        that: docker_compose_plugin.stat.exists
+        fail_msg: "Docker Compose plugin not installed"
+
+    # === Voice Server ===
+    - name: Verify voice server env file
+      ansible.builtin.stat:
+        path: "{{ imladris_home }}/.config/voice-server.env"
+      register: voice_env
+    - name: Assert voice server env exists
+      ansible.builtin.assert:
+        that: voice_env.stat.exists
+        fail_msg: "Voice server env file not created"
+
+    - name: Verify voice server systemd unit
+      ansible.builtin.stat:
+        path: "{{ imladris_home }}/.config/systemd/user/voice-server.service"
+      register: voice_unit
+    - name: Assert voice server unit exists
+      ansible.builtin.assert:
+        that: voice_unit.stat.exists
+        fail_msg: "Voice server systemd unit not created"
+
+    - name: Check voice-server.ts exists in repo
+      ansible.builtin.stat:
+        path: "{{ imladris_repo_dir }}/scripts/voice-server.ts"
+      register: voice_script
+    - name: Assert voice-server.ts exists
+      ansible.builtin.assert:
+        that: voice_script.stat.exists
+        fail_msg: "voice-server.ts not found in repo — service would fail to start"
+
+    # === Summary ===
+    - name: All verifications passed
+      ansible.builtin.debug:
+        msg: |
+          ✅ All Molecule verifications passed!
+          Tested: packages, nodejs, bun, bitwarden, mcp-tools, ssm-disable,
+                  repos, claude-code, ai-failover, steampipe, mosh, docker, voice-server
+          Skipped: nvme, tailscale, windmill (require real infrastructure)

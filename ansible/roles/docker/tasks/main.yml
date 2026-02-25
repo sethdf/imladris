@@ -23,9 +23,13 @@
     path: /usr/local/lib/docker/cli-plugins/docker-compose
   register: docker_compose_stat
 
+- name: Detect architecture for Docker Compose
+  ansible.builtin.set_fact:
+    docker_compose_arch: "{{ 'aarch64' if ansible_architecture == 'aarch64' else 'x86_64' }}"
+
 - name: Install Docker Compose plugin binary
   ansible.builtin.get_url:
-    url: "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-aarch64"
+    url: "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-{{ docker_compose_arch }}"
     dest: /usr/local/lib/docker/cli-plugins/docker-compose
     mode: "0755"
   become: true
@@ -52,6 +56,7 @@
     enabled: true
     state: started
   become: true
+  when: not (molecule_test | default(false))
 
 - name: Add user to docker group
   ansible.builtin.user:
