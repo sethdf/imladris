@@ -348,6 +348,9 @@ Resources:
           cleanup_and_signal() {
             EXIT_CODE=$?
             echo "=== Bootstrap finished with exit code $EXIT_CODE at $(date -u) ==="
+            # Dump last 300 lines to serial console for EC2 get-console-output debugging
+            echo "=== ANSIBLE LOG (last 300 lines) ===" > /dev/ttyS0 2>/dev/null || true
+            tail -300 /var/log/imladris-bootstrap.log > /dev/ttyS0 2>/dev/null || true
             # Upload bootstrap log to S3 for post-mortem (best-effort)
             aws s3 cp /var/log/imladris-bootstrap.log \
               s3://imladris-state-${AWS::AccountId}/bootstrap-logs/$(date -u +%Y%m%d-%H%M%S)-exit${!EXIT_CODE}.log \
@@ -357,15 +360,7 @@ Resources:
           }
           trap cleanup_and_signal EXIT
 
-          # Read Tailscale auth key from SSM (encrypted with workstation CMK)
-          TAILSCALE_AUTH_KEY=$(aws ssm get-parameter \
-            --name "/imladris/tailscale-auth-key" \
-            --with-decryption \
-            --query 'Parameter.Value' \
-            --output text \
-            --region ${AWS::Region})
-
-          # Wait for internet connectivity (IGW propagation can lag instance launch)
+          # Wait for internet connectivity FIRST (IGW propagation can lag instance launch)
           for i in $(seq 1 30); do
             if curl -sf --max-time 5 https://github.com >/dev/null 2>&1; then
               echo "Internet connectivity confirmed (attempt $i)"
@@ -374,6 +369,20 @@ Resources:
             echo "Waiting for internet... (attempt $i/30)"
             sleep 10
           done
+
+          # Read Tailscale auth key from SSM (encrypted with workstation CMK)
+          # Retry: IAM role credentials may take a few seconds after boot
+          for i in $(seq 1 5); do
+            TAILSCALE_AUTH_KEY=$(aws ssm get-parameter \
+              --name "/imladris/tailscale-auth-key" \
+              --with-decryption \
+              --query 'Parameter.Value' \
+              --output text \
+              --region ${AWS::Region} 2>&1) && break
+            echo "SSM get-parameter failed (attempt $i/5), retrying in 5s..."
+            sleep 5
+          done
+          test -n "$TAILSCALE_AUTH_KEY" || { echo "FATAL: Failed to retrieve Tailscale auth key from SSM"; exit 1; }
 
           # Install Ansible and git
           dnf install -y git python3-pip
@@ -406,9 +415,10 @@ Resources:
           Value: 'true'
         - Key: Project
           Value: Imladris
-    CreationPolicy:
-      ResourceSignal:
-        Timeout: PT15M
+    # CreationPolicy temporarily disabled for diagnostic deploy
+    # CreationPolicy:
+    #   ResourceSignal:
+    #     Timeout: PT15M
 
   # ============================================================
   # DLM Lifecycle Policy (Decision 8)
