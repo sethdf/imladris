@@ -74,13 +74,17 @@ aws s3 cp "${HOME_DIR}/repos/imladris/.env" "s3://${BUCKET}/latest/env-file" \
     2>&1 | tee -a "${LOG_FILE}"
 log ".env upload complete."
 
-# 4. Sync ~/.wmill/ to S3
-log "Syncing ~/.wmill/ to S3..."
-aws s3 sync "${HOME_DIR}/.wmill/" "s3://${BUCKET}/latest/wmill/" \
-    --delete \
-    "${SSE_ARGS[@]}" \
-    2>&1 | tee -a "${LOG_FILE}"
-log "wmill config sync complete."
+# 4. Sync ~/.wmill/ to S3 (if it exists)
+if [[ -d "${HOME_DIR}/.wmill" ]]; then
+    log "Syncing ~/.wmill/ to S3..."
+    aws s3 sync "${HOME_DIR}/.wmill/" "s3://${BUCKET}/latest/wmill/" \
+        --delete \
+        "${SSE_ARGS[@]}" \
+        2>&1 | tee -a "${LOG_FILE}"
+    log "wmill config sync complete."
+else
+    log "No ~/.wmill/ directory found, skipping."
+fi
 
 # 5. Create daily snapshot if it doesn't exist yet
 DAILY_PREFIX="daily/${TODAY}/"
