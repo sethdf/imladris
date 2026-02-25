@@ -114,6 +114,8 @@ Resources:
   # ============================================================
   WorkstationKmsKey:
     Type: AWS::KMS::Key
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       Description: Imladris workstation EBS encryption key — MFA-locked admin
       KeyUsage: ENCRYPT_DECRYPT
@@ -458,6 +460,8 @@ Resources:
   # ============================================================
   StateBackupBucket:
     Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       BucketName: !Sub 'imladris-state-${AWS::AccountId}'
       BucketEncryption:
