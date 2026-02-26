@@ -388,15 +388,16 @@
       register: windmill_script_files
       when: windmill_scripts_dir_stat.stat.exists | default(false)
 
-    - name: Push Windmill scripts
-      ansible.builtin.command:
-        cmd: "wmill script push f/devops/{{ item.path | basename }}"
+    - name: Push Windmill scripts (parallel batch)
+      ansible.builtin.shell:
+        cmd: |
+          cd {{ windmill_scripts_dir }}
+          ls f/devops/*.ts | grep -v '.script.' | xargs -P4 -I{} wmill script push {}
         chdir: "{{ windmill_scripts_dir }}"
-      loop: "{{ windmill_script_files.files | default([]) }}"
-      loop_control:
-        label: "{{ item.path | basename }}"
       changed_when: true
-      when: windmill_scripts_dir_stat.stat.exists | default(false)
+      when:
+        - windmill_scripts_dir_stat.stat.exists | default(false)
+        - windmill_script_files.files | default([]) | length > 0
 
 # --- Windmill Cron Schedules ---
 # Creates schedules via API. Idempotent: checks if schedule exists first.
