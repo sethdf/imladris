@@ -144,6 +144,24 @@
       loop_control:
         label: "{{ item.item | default('unknown') }}"
 
+    # --- Step 6b: Apply Imladris Hooks (additive to PAI) ---
+    # PAI owns ~/.claude/hooks/ directory. This script symlinks imladris-specific
+    # hooks into that directory and merges registrations into settings.json.
+    # Safe to run after PAI updates — only adds, never removes PAI hooks.
+
+    - name: Check if apply-imladris-hooks script exists
+      ansible.builtin.stat:
+        path: "{{ imladris_repo_dir }}/scripts/apply-imladris-hooks.sh"
+      register: apply_hooks_script_stat
+
+    - name: Apply imladris hooks on top of PAI
+      ansible.builtin.shell: >
+        bash {{ imladris_repo_dir }}/scripts/apply-imladris-hooks.sh
+        --repo-dir {{ imladris_repo_dir }}
+      become: false
+      changed_when: true
+      when: apply_hooks_script_stat.stat.exists | default(false)
+
     # --- pai CLI (Decision 22: Workstream Management, Layer 3) ---
 
     - name: Create local bin directory

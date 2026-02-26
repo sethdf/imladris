@@ -83,14 +83,14 @@ git_repos:
     url: https://github.com/sethdf/dotfiles.git
 
 # --- Claude Code Symlinks (Decision 34) ---
-# Source: imladris/pai-config/ (PAI runtime snapshot — skills, hooks, agents)
+# Source: imladris/pai-config/ (PAI runtime snapshot — skills, agents only)
+# NOTE: hooks dir is NOT symlinked. PAI owns ~/.claude/hooks/ (installed via AI).
+# Imladris adds individual hook symlinks via apply-imladris-hooks.sh.
 claude_symlinks:
   - src: "{{ imladris_repo_dir }}/pai-config/skills"
     dest: "{{ claude_dir }}/skills"
   - src: "{{ imladris_repo_dir }}/pai-config/agents"
     dest: "{{ claude_dir }}/agents"
-  - src: "{{ imladris_repo_dir }}/pai-config/hooks"
-    dest: "{{ claude_dir }}/hooks"
 
 # --- Claude Runtime Directories ---
 claude_runtime_dirs:

@@ -7,12 +7,14 @@
  * environment state. Enables cold-start recovery (Decision 7) by
  * maintaining a persistent record of what the session was doing.
  *
- * TRIGGER: PostToolUse (matcher: Bash)
- * Detects phase transitions from voice curl commands.
+ * TRIGGER: PostToolUse (matcher: Bash|TaskCreate|TaskUpdate)
+ * Detects phase transitions from voice curl commands AND ISC changes.
  *
  * INPUT (stdin JSON):
- * - tool_name: "Bash"
- * - tool_input: { command: "curl ... notify ... phase" }
+ * - tool_name: "Bash" | "TaskCreate" | "TaskUpdate"
+ * - tool_input: { command: "curl ... notify ... phase" } (Bash)
+ *               { subject, description, ... } (TaskCreate)
+ *               { taskId, status, ... } (TaskUpdate)
  * - session_id: Current session identifier
  *
  * OUTPUT:
@@ -152,6 +154,58 @@ function detectPhase(command: string): string | null {
 }
 
 // ========================================
+// Event Handlers
+// ========================================
+
+function handleBash(input: HookInput): void {
+  const command = (input.tool_input?.command as string) || '';
+
+  // Only process voice curl phase announcements
+  if (!command.includes('localhost:8888/notify')) return;
+
+  const phase = detectPhase(command);
+  if (!phase) return;
+
+  const cw = readCurrentWork();
+  cw.last_updated = new Date().toISOString();
+  cw.session_id = input.session_id || cw.session_id;
+
+  const fg = getForegroundWorkstream(cw);
+  if (fg) {
+    fg.phase = phase;
+    fg.last_action = `Entered ${phase} phase`;
+    fg.last_updated = new Date().toISOString();
+  }
+
+  atomicWrite(CURRENT_WORK_PATH, JSON.stringify(cw, null, 2));
+}
+
+function handleIscEvent(input: HookInput): void {
+  const cw = readCurrentWork();
+  cw.last_updated = new Date().toISOString();
+  cw.session_id = input.session_id || cw.session_id;
+
+  const fg = getForegroundWorkstream(cw);
+  if (!fg) return; // No workstream to update
+
+  if (input.tool_name === 'TaskCreate') {
+    const subject = (input.tool_input?.subject as string) || '';
+    if (subject.startsWith('ISC-')) {
+      fg.last_action = `Created: ${subject}`;
+      fg.last_updated = new Date().toISOString();
+    }
+  } else if (input.tool_name === 'TaskUpdate') {
+    const status = (input.tool_input?.status as string) || '';
+    if (status === 'completed' || status === 'in_progress') {
+      fg.last_action = `ISC ${status}`;
+      fg.last_updated = new Date().toISOString();
+    }
+  }
+
+  atomicWrite(CURRENT_WORK_PATH, JSON.stringify(cw, null, 2));
+}
+
+// ========================================
 // Main
 // ========================================
 
@@ -170,43 +224,14 @@ async function main(): Promise<void> {
 
     const input: HookInput = JSON.parse(raw);
 
-    // Only process Bash commands
-    if (input.tool_name !== 'Bash') {
-      console.log(JSON.stringify({ continue: true }));
-      return;
+    // Route by tool type
+    if (input.tool_name === 'Bash') {
+      handleBash(input);
+    } else if (input.tool_name === 'TaskCreate' || input.tool_name === 'TaskUpdate') {
+      handleIscEvent(input);
+    } else {
+      // Unknown tool — skip
     }
-
-    const command = (input.tool_input?.command as string) || '';
-
-    // Check if this is a voice curl (phase announcement)
-    if (!command.includes('localhost:8888/notify')) {
-      console.log(JSON.stringify({ continue: true }));
-      return;
-    }
-
-    // Extract phase from the curl message
-    const phase = detectPhase(command);
-    if (!phase) {
-      console.log(JSON.stringify({ continue: true }));
-      return;
-    }
-
-    // Update current-work.json (multi-workstream aware)
-    const cw = readCurrentWork();
-    cw.last_updated = new Date().toISOString();
-    cw.session_id = input.session_id || cw.session_id;
-
-    const actionDesc = `Entered ${phase} phase`;
-
-    // Update foreground workstream if one exists
-    const fg = getForegroundWorkstream(cw);
-    if (fg) {
-      fg.phase = phase;
-      fg.last_action = actionDesc;
-      fg.last_updated = new Date().toISOString();
-    }
-
-    atomicWrite(CURRENT_WORK_PATH, JSON.stringify(cw, null, 2));
 
     console.log(JSON.stringify({ continue: true }));
   } catch (err) {
