@@ -285,10 +285,6 @@ Resources:
                   - ssm:GetParameters
                   - ssm:PutParameter
                 Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/imladris/*'
-              - Sid: CfnSignalBootstrap
-                Effect: Allow
-                Action: cloudformation:SignalResource
-                Resource: !Sub 'arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${AWS::StackName}/*'
         - PolicyName: PackerBuild
           PolicyDocument:
             Version: '2012-10-17'
@@ -397,8 +393,8 @@ Resources:
           set -euxo pipefail
           exec > /var/log/imladris-bootstrap.log 2>&1
 
-          # Upload logs to S3 and signal CloudFormation on exit (success or failure)
-          cleanup_and_signal() {
+          # Upload logs to S3 and SSM on exit (success or failure)
+          cleanup_on_exit() {
             EXIT_CODE=$?
             echo "=== Bootstrap finished with exit code $EXIT_CODE at $(date -u) ==="
             # Dump last 300 lines to serial console for EC2 get-console-output debugging
@@ -421,10 +417,8 @@ Resources:
                 --overwrite \
                 --region ${AWS::Region} 2>/dev/null || true
             fi
-            # Signal CF immediately (fail-fast on errors instead of waiting for timeout)
-            /opt/aws/bin/cfn-signal -e $EXIT_CODE --stack ${AWS::StackName} --resource WorkstationInstance --region ${AWS::Region}
           }
-          trap cleanup_and_signal EXIT
+          trap cleanup_on_exit EXIT
 
           # Wait for internet connectivity FIRST (IGW propagation can lag instance launch)
           for i in $(seq 1 30); do
@@ -487,9 +481,6 @@ Resources:
           Value: 'true'
         - Key: Project
           Value: Imladris
-    CreationPolicy:
-      ResourceSignal:
-        Timeout: PT15M
 
   # ============================================================
   # DLM Lifecycle Policy (Decision 8)
