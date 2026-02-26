@@ -64,6 +64,16 @@
         - not windmill_persistent_env.stat.exists
         - not windmill_env_stat.stat.exists
 
+    - name: Create persistent Windmill directory on EBS
+      ansible.builtin.file:
+        path: "{{ imladris_home }}/.windmill"
+        state: directory
+        owner: "{{ imladris_user }}"
+        group: "{{ imladris_user }}"
+        mode: "0755"
+      become: true
+      when: not windmill_persistent_env.stat.exists
+
     - name: Persist Windmill .env to EBS for future deploys
       ansible.builtin.copy:
         src: "{{ imladris_repo_dir }}/.env"
