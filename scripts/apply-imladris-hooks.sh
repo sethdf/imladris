@@ -62,6 +62,12 @@ if [[ ! -d "$CLAUDE_DIR" ]]; then
   exit 1
 fi
 
+# If hooks dir is a symlink (old Ansible setup), replace with real directory
+if [[ -L "$HOOKS_DIR" ]]; then
+  echo "  FIX: Replacing hooks symlink with real directory"
+  rm "$HOOKS_DIR"
+fi
+
 # Ensure hooks directory exists (PAI installer should create it, but be safe)
 mkdir -p "$HOOKS_DIR"
 
@@ -174,6 +180,33 @@ ensureEventHook(settings.hooks.UserPromptSubmit,
 // CrossWorkstreamLearning (SessionEnd — no matcher, flat wrapper)
 ensureEventHook(settings.hooks.SessionEnd,
   'bun run \$HOME/.claude/hooks/CrossWorkstreamLearning.hook.ts');
+
+// --- Clean stale hook references (files that don't exist) ---
+const home = process.env.HOME || '/home/' + require('os').userInfo().username;
+function cleanStale(eventArray) {
+  if (eventArray === undefined || eventArray === null) return eventArray;
+  return eventArray.map(entry => {
+    if (entry.hooks) {
+      entry.hooks = entry.hooks.filter(h => {
+        if (h.command === undefined) return true;
+        const expanded = h.command
+          .replace(/\\\$HOME/g, home)
+          .replace(/\\\${HOME}/g, home)
+          .replace(/\\\$\\{PAI_DIR\\}/g, home + '/.claude');
+        const hookPath = expanded.trim().split(' ').pop();
+        if (hookPath && hookPath.endsWith('.ts') && require('fs').existsSync(hookPath) === false) {
+          console.log('  CLEAN: removed stale ref ' + hookPath.split('/').pop());
+          return false;
+        }
+        return true;
+      });
+    }
+    return entry;
+  }).filter(entry => entry.hooks === undefined || entry.hooks.length > 0);
+}
+for (const event of Object.keys(settings.hooks)) {
+  settings.hooks[event] = cleanStale(settings.hooks[event]);
+}
 
 // Write back atomically
 const tmp = path + '.tmp.' + Date.now();
