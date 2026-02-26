@@ -473,7 +473,10 @@
       loop: "{{ windmill_schedules }}"
       loop_control:
         label: "{{ item.path }}"
-      when: item.path not in (windmill_existing_schedules.json | default([]) | map(attribute='path') | list)
+      when:
+        - windmill_existing_schedules.json is defined
+        - windmill_existing_schedules.json is iterable
+        - item.path not in (windmill_existing_schedules.json | map(attribute='path') | list)
       failed_when: false
       register: windmill_schedule_results
 
@@ -484,6 +487,10 @@
           | map(attribute='status', default='skipped')
           | list }}
       when: windmill_schedule_results is defined
+  rescue:
+    - name: Schedule deployment failed (non-fatal)
+      ansible.builtin.debug:
+        msg: "Windmill schedule deployment failed — schedules can be created manually via wmill CLI"
 
 # --- Credential Sync: Bitwarden → Windmill Variables (Decision 13/20) ---
 # Uses Python script to handle JSON-valued secrets safely.
@@ -505,6 +512,10 @@
         WMILL_API: "{{ windmill_api_base }}/api/w/{{ windmill_workspace }}"
       no_log: true
       changed_when: true
+  rescue:
+    - name: BWS sync failed (non-fatal)
+      ansible.builtin.debug:
+        msg: "Bitwarden secrets sync failed — run windmill-sync.py manually after boot"
 
 - name: "[progress] Windmill role complete"
   ansible.builtin.command:
