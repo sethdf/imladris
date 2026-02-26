@@ -102,7 +102,7 @@ source "amazon-ebs" "imladris" {
 
   # AMI configuration
   ami_name        = "imladris-{{timestamp}}"
-  ami_description = "Imladris cloud workstation — pre-baked with packages, Docker, Bun, Node.js, Claude Code CLI"
+  ami_description = "Imladris cloud workstation - pre-baked with packages, Docker, Bun, Node.js, Claude Code CLI"
 
   ami_users = []  # Private AMI
 
