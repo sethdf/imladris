@@ -349,8 +349,11 @@ Resources:
             EXIT_CODE=$?
             echo "=== Bootstrap finished with exit code $EXIT_CODE at $(date -u) ==="
             # Dump last 300 lines to serial console for EC2 get-console-output debugging
-            echo "=== ANSIBLE LOG (last 300 lines) ===" > /dev/ttyS0 2>/dev/null || true
-            tail -300 /var/log/imladris-bootstrap.log > /dev/ttyS0 2>/dev/null || true
+            # ARM/Graviton uses /dev/hvc0; x86 uses /dev/ttyS0
+            CONSOLE_DEV=/dev/ttyS0
+            [ -e /dev/hvc0 ] && CONSOLE_DEV=/dev/hvc0
+            echo "=== ANSIBLE LOG (last 300 lines) ===" > $CONSOLE_DEV 2>/dev/null || true
+            tail -300 /var/log/imladris-bootstrap.log > $CONSOLE_DEV 2>/dev/null || true
             # Upload bootstrap log to S3 for post-mortem (best-effort)
             aws s3 cp /var/log/imladris-bootstrap.log \
               s3://imladris-state-${AWS::AccountId}/bootstrap-logs/$(date -u +%Y%m%d-%H%M%S)-exit${!EXIT_CODE}.log \
@@ -427,7 +430,7 @@ Resources:
           Value: Imladris
     CreationPolicy:
       ResourceSignal:
-        Timeout: PT15M
+        Timeout: PT25M
 
   # ============================================================
   # DLM Lifecycle Policy (Decision 8)
