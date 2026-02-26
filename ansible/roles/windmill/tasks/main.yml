@@ -343,6 +343,40 @@
       no_log: true
       when: not windmill_wmill_config_stat.stat.exists
 
+# --- Ensure workspace exists ---
+# Windmill CE creates a default 'admins' workspace but not custom ones.
+# The SUPERADMIN_SECRET bearer token can create workspaces via API.
+
+- name: Check if workspace exists in Windmill
+  ansible.builtin.uri:
+    url: "{{ windmill_api_base }}/api/w/{{ windmill_workspace }}/scripts/list"
+    headers:
+      Authorization: "Bearer {{ windmill_admin_secret }}"
+    status_code: [200, 404]
+    timeout: 10
+  register: windmill_workspace_check
+  failed_when: false
+  when:
+    - windmill_health.status | default(0) == 200
+    - windmill_admin_secret | default('') | length > 0
+
+- name: Create Windmill workspace
+  ansible.builtin.uri:
+    url: "{{ windmill_api_base }}/api/workspaces/create"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ windmill_admin_secret }}"
+    body_format: json
+    body:
+      id: "{{ windmill_workspace }}"
+      name: "{{ windmill_workspace }}"
+    status_code: [200, 201, 409]
+    timeout: 10
+  when:
+    - windmill_health.status | default(0) == 200
+    - windmill_admin_secret | default('') | length > 0
+    - windmill_workspace_check.status | default(200) == 404
+
 # --- Check wmill config before script/schedule/cred-sync blocks ---
 # If bootstrap was skipped (e.g., restored DB with unknown password), these blocks
 # depend on remotes.ndjson existing from a previous run or state restore.

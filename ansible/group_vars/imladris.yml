@@ -118,15 +118,33 @@ windmill_admin_password: ""
 windmill_scripts_dir: "{{ imladris_repo_dir }}/windmill"
 windmill_wmill_config_dir: "{{ imladris_home }}/.config/windmill"
 windmill_schedules:
+  - path: f/devops/refresh_sdp_token_schedule
+    schedule: "0 */45 * * * *"
+    script_path: f/devops/refresh_sdp_token
   - path: f/devops/feed_collector_schedule
     schedule: "0 0 */6 * * *"
     script_path: f/devops/feed_collector
   - path: f/devops/activity_report_schedule
-    schedule: "0 0 7 * * *"
+    schedule: "0 0 10 * * *"
     script_path: f/devops/activity_report
   - path: f/devops/contextual_surface_schedule
     schedule: "0 0 */12 * * *"
     script_path: f/devops/contextual_surface
+  - path: f/devops/sdp_morning_summary_schedule
+    schedule: "0 0 8 * * 1-5"
+    script_path: f/devops/sdp_morning_summary
+  - path: f/devops/compliance_scan_schedule
+    schedule: "0 0 7 * * 1"
+    script_path: f/devops/compliance_scan
+  - path: f/devops/cost_report_schedule
+    schedule: "0 0 7 * * *"
+    script_path: f/devops/cost_report
+  - path: f/devops/cross_correlate_schedule
+    schedule: "0 0 */12 * * *"
+    script_path: f/devops/cross_correlate
+  - path: f/devops/upstream_updates_schedule
+    schedule: "0 0 8 * * *"
+    script_path: f/devops/upstream_updates
 
 # --- Steampipe ---
 steampipe_install_url: "https://steampipe.io/install/steampipe.sh"
