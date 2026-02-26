@@ -66,6 +66,18 @@
         mode: "0755"
       loop: "{{ claude_runtime_dirs }}"
 
+    # --- Pre-approve home directory as trusted workspace ---
+    # Prevents interactive "trust this folder?" prompt on every Claude start
+
+    - name: Pre-approve home directory for Claude workspace trust
+      ansible.builtin.copy:
+        content: "{{ imladris_home }}\n"
+        dest: "{{ claude_dir }}/.approvedDirectories"
+        owner: "{{ imladris_user }}"
+        group: "{{ imladris_user }}"
+        mode: "0644"
+        force: false
+
     # --- Context Seeding (skip if already exists) ---
 
     - name: Check if CLAUDE.md exists
