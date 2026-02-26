@@ -317,6 +317,19 @@ Resources:
                 Condition:
                   StringEquals:
                     'aws:RequestedRegion': !Ref 'AWS::Region'
+              - Sid: PackerKMSEncrypt
+                Effect: Allow
+                Action:
+                  - kms:Encrypt
+                  - kms:Decrypt
+                  - kms:ReEncrypt*
+                  - kms:GenerateDataKey*
+                  - kms:DescribeKey
+                  - kms:CreateGrant
+                Resource: !If
+                  - CreateNewStorage
+                  - !GetAtt KmsKey.Arn
+                  - !Ref ExistingKmsKeyArn
               - Sid: PackerPassRole
                 Effect: Allow
                 Action: iam:PassRole
