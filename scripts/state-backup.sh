@@ -74,6 +74,17 @@ aws s3 cp "${HOME_DIR}/repos/imladris/.env" "s3://${BUCKET}/latest/env-file" \
     2>&1 | tee -a "${LOG_FILE}"
 log ".env upload complete."
 
+# 3b. Upload ~/.claude.json (Claude Code config — lives in home root, not ~/.claude/)
+if [[ -f "${HOME_DIR}/.claude.json" ]]; then
+    log "Uploading .claude.json..."
+    aws s3 cp "${HOME_DIR}/.claude.json" "s3://${BUCKET}/latest/claude-config.json" \
+        "${SSE_ARGS[@]}" \
+        2>&1 | tee -a "${LOG_FILE}"
+    log ".claude.json upload complete."
+else
+    log "No .claude.json found, skipping."
+fi
+
 # 4. Sync wmill config to S3 (if it exists)
 WMILL_CONFIG_DIR="${HOME_DIR}/.config/windmill"
 if [[ -d "${WMILL_CONFIG_DIR}" ]]; then

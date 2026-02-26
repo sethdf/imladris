@@ -72,6 +72,17 @@ else
     log "WARNING: No claude/ backup found in S3. Skipping."
 fi
 
+# 1b. Restore ~/.claude.json (Claude Code config — lives in home root, not ~/.claude/)
+log "Restoring .claude.json..."
+if check_backup_exists "latest/claude-config.json"; then
+    aws s3 cp "s3://${BUCKET}/latest/claude-config.json" "${HOME_DIR}/.claude.json" \
+        "${SSE_ARGS[@]}"
+    chmod 600 "${HOME_DIR}/.claude.json"
+    log ".claude.json restored (chmod 600)."
+else
+    log "WARNING: No claude-config.json backup found in S3. Skipping."
+fi
+
 # 2. Restore .env file
 log "Restoring .env file..."
 if check_backup_exists "latest/env-file"; then
