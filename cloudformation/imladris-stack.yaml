@@ -320,7 +320,7 @@ Resources:
               - Sid: PackerPassRole
                 Effect: Allow
                 Action: iam:PassRole
-                Resource: !GetAtt WorkstationRole.Arn
+                Resource: !Sub 'arn:aws:iam::${AWS::AccountId}:role/ImladrisWorkstationRole'
         - PolicyName: StateBackupAccess
           PolicyDocument:
             Version: '2012-10-17'
