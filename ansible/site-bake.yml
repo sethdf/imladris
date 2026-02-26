@@ -72,6 +72,7 @@
 
   post_tasks:
     # Pre-pull Windmill Docker images so boot-time compose up is instant
+    # Non-fatal: if pulls fail (network timeout), boot-time compose will pull them
     - name: Pull Windmill Docker images
       ansible.builtin.command: "docker pull {{ item }}"
       become: true
@@ -80,6 +81,15 @@
         - ghcr.io/windmill-labs/windmill-lsp:latest
         - postgres:16
       changed_when: true
+      failed_when: false
+      register: docker_pull_results
+
+    - name: Report Docker pull results
+      ansible.builtin.debug:
+        msg: "{{ item.item }}: {{ 'pulled' if item.rc == 0 else 'FAILED (will pull at boot)' }}"
+      loop: "{{ docker_pull_results.results }}"
+      loop_control:
+        label: "{{ item.item }}"
 
     # Install wmill CLI so it's available at boot (windmill role uses it)
     - name: Check if wmill CLI is installed
