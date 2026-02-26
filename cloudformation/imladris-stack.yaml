@@ -25,8 +25,8 @@ Parameters:
 
   AmiId:
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
-    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64
-    Description: SSM parameter path for AMI lookup (Amazon Linux 2023 ARM64)
+    Default: /imladris/ami-id
+    Description: SSM parameter containing baked AMI ID from Packer
 
   AdminPrincipalArn:
     Type: String
@@ -404,14 +404,7 @@ Resources:
               --region ${AWS::Region} 2>/dev/null || true
           }
 
-          # Install Ansible and git
-          progress "installing packages"
-          dnf install -y git python3-pip
-          pip3 install ansible-core
-          sudo -u ec2-user /usr/local/bin/ansible-galaxy collection install ansible.posix
-          progress "packages installed"
-
-          # Clone imladris repo
+          # Clone imladris repo (Ansible + tools pre-installed in baked AMI)
           progress "cloning repo"
           mkdir -p /home/ec2-user/repos
           for i in $(seq 1 3); do
@@ -425,12 +418,12 @@ Resources:
           chown -R ec2-user:ec2-user /home/ec2-user/repos
           progress "repo cloned"
 
-          # Run Ansible playbook as ec2-user (cd ensures ansible.cfg + inventory.yml are found)
+          # Run boot-only Ansible playbook (bake-phase roles already in AMI)
           # --limit imladris-local: only target localhost (imladris-1 is for remote runs from Aurora)
           progress "starting ansible"
           cd /home/ec2-user/repos/imladris/ansible
           sudo -u ec2-user /usr/local/bin/ansible-playbook \
-            site.yml \
+            site-boot.yml \
             --limit imladris-local \
             -e "tailscale_auth_key=$TAILSCALE_AUTH_KEY"
           progress "ansible complete"
@@ -443,7 +436,7 @@ Resources:
           Value: Imladris
     CreationPolicy:
       ResourceSignal:
-        Timeout: PT45M
+        Timeout: PT10M
 
   # ============================================================
   # DLM Lifecycle Policy (Decision 8)

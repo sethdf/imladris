@@ -1,0 +1,95 @@
+---
+# =============================================================================
+# Imladris AMI Bake Playbook
+# =============================================================================
+# Runs during Packer AMI build. Installs all deterministic packages and tools
+# that never change between deploys. The resulting AMI eliminates 3-4 failure
+# categories (Docker GPG, Bun download, Node.js timeout, mosh build).
+#
+# Paired with site-boot.yml which handles instance-specific configuration.
+# The original site.yml remains unchanged for full converge runs from Aurora.
+#
+# Usage (called by Packer, not directly):
+#   ansible-playbook site-bake.yml --limit imladris-local
+#
+# MIXED roles (run in both bake and boot) use ami_bake_phase to gate tasks:
+#   - nvme: detects no NVMe at bake time, sets nvme_available=false, skips
+#   - docker: installs Docker+Compose, skips NVMe seed (no NVMe at bake)
+#   - claude-code: installs CLI only, skips symlinks/dirs/settings (no repo at boot)
+#   - voice-server: deploys unit files + env template, skips service start
+
+- name: Bake Imladris AMI
+  hosts: imladris
+  gather_facts: true
+
+  vars:
+    ami_bake_phase: true
+
+  roles:
+    # NVMe: gracefully detects no instance store on m7g.large build instance
+    - role: nvme
+      tags: [nvme, storage]
+
+    # System packages (wget, git, jq, tar, unzip, tmux, cronie, EPEL)
+    - role: packages
+      tags: [packages, base]
+
+    # Docker + Compose (install, enable, pull images in post_tasks)
+    - role: docker
+      tags: [docker, containers]
+
+    # Node.js 20 via dnf module
+    - role: nodejs
+      tags: [nodejs, runtime]
+
+    # Bun runtime
+    - role: bun
+      tags: [bun, runtime]
+
+    # Bitwarden Secrets CLI binary (no credentials)
+    - role: bitwarden
+      tags: [bitwarden, secrets]
+
+    # Steampipe + AWS plugin
+    - role: steampipe
+      tags: [steampipe, query]
+
+    # mcp-tools binary
+    - role: mcp-tools
+      tags: [mcp-tools, mcp]
+
+    # Mosh (EPEL install — eliminates slow source build)
+    - role: mosh
+      tags: [mosh, network]
+
+    # Claude Code CLI install only (ami_bake_phase=true skips boot config)
+    - role: claude-code
+      tags: [claude, claude-code]
+
+    # Voice server unit files + env template (service start skipped at bake)
+    - role: voice-server
+      tags: [voice, voice-server]
+
+  post_tasks:
+    # Pre-pull Windmill Docker images so boot-time compose up is instant
+    - name: Pull Windmill Docker images
+      ansible.builtin.command: "docker pull {{ item }}"
+      become: true
+      loop:
+        - ghcr.io/windmill-labs/windmill:latest
+        - ghcr.io/windmill-labs/windmill-lsp:latest
+        - postgres:16
+      changed_when: true
+
+    # Install wmill CLI so it's available at boot (windmill role uses it)
+    - name: Check if wmill CLI is installed
+      ansible.builtin.command: wmill --version
+      register: wmill_bake_check
+      changed_when: false
+      failed_when: false
+
+    - name: Install Windmill CLI via npm
+      ansible.builtin.command: npm install -g windmill-cli
+      become: true
+      changed_when: true
+      when: wmill_bake_check.rc != 0

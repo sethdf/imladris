@@ -35,6 +35,27 @@
   become: true
   when: not docker_compose_stat.stat.exists
 
+# --- Seed NVMe Docker data-root from baked images (boot-time, NVMe instances only) ---
+# At AMI bake time, Docker images are pulled to /var/lib/docker (EBS default).
+# At boot on NVMe instances, daemon.json sets data-root to /local/docker.
+# This one-time rsync copies baked images to NVMe so Docker sees them immediately.
+
+- name: Seed NVMe Docker data-root from baked images
+  when:
+    - nvme_available | default(false) | bool
+    - not (ami_bake_phase | default(false))
+  block:
+    - name: Check if NVMe Docker dir has images
+      ansible.builtin.stat:
+        path: "{{ docker_data_root }}/image"
+      register: docker_nvme_check
+
+    - name: Copy baked Docker data to NVMe (one-time)
+      ansible.builtin.command: rsync -a /var/lib/docker/ {{ docker_data_root }}/
+      become: true
+      changed_when: true
+      when: not (docker_nvme_check.stat.exists | default(false))
+
 - name: Ensure /etc/docker directory exists
   ansible.builtin.file:
     path: /etc/docker

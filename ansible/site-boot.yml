@@ -1,0 +1,62 @@
+---
+# =============================================================================
+# Imladris Boot Playbook
+# =============================================================================
+# Runs at instance startup on a pre-baked AMI. Handles instance-specific
+# configuration: NVMe setup, Tailscale auth, repo clone, Windmill bootstrap,
+# and all tasks that depend on runtime state or credentials.
+#
+# Paired with site-bake.yml which pre-installs deterministic packages.
+# The original site.yml remains unchanged for full converge runs from Aurora.
+#
+# Usage (called from UserData):
+#   ansible-playbook site-boot.yml --limit imladris-local \
+#     -e tailscale_auth_key=$TAILSCALE_AUTH_KEY
+#
+# Extra vars for secrets (never stored in files):
+#   -e tailscale_auth_key=YOUR_KEY_HERE
+#   -e bws_access_token=YOUR_BWS_TOKEN
+
+- name: Boot Imladris instance
+  hosts: imladris
+  gather_facts: true
+
+  vars:
+    ami_bake_phase: false
+
+  roles:
+    # NVMe: on m7gd instances, formats+mounts NVMe instance store
+    - role: nvme
+      tags: [nvme, storage]
+
+    # Docker: seed NVMe data-root from baked images, re-apply daemon.json, restart
+    - role: docker
+      tags: [docker, containers]
+
+    # Tailscale VPN (needs auth key from SSM)
+    - role: tailscale
+      tags: [tailscale, network]
+
+    # Disable SSM agent (must run after SSM param retrieval in UserData)
+    - role: ssm-disable
+      tags: [ssm, security, hardening]
+
+    # Clone repositories (fresh clone ensures latest code)
+    - role: repos
+      tags: [repos, git]
+
+    # Claude Code boot config (symlinks, dirs, settings, context seed, pai CLI)
+    - role: claude-code
+      tags: [claude, claude-code]
+
+    # AI failover wrapper (needs repo for wrapper script)
+    - role: ai-failover
+      tags: [ai-failover, failover]
+
+    # Windmill (Docker Compose up, state restore, workspace, scripts, schedules)
+    - role: windmill
+      tags: [windmill, automation]
+
+    # Voice server: linger, daemon-reload, service start
+    - role: voice-server
+      tags: [voice, voice-server]
