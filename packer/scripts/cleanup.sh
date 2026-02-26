@@ -17,7 +17,7 @@ rm -rf /home/ec2-user/repos/imladris
 # Remove SSH authorized keys (Packer adds its own temp key)
 echo "Cleaning SSH keys..."
 rm -f /home/ec2-user/.ssh/authorized_keys
-rm -f /root/.ssh/authorized_keys
+sudo rm -f /root/.ssh/authorized_keys
 
 # Clear package manager cache
 echo "Cleaning package cache..."
