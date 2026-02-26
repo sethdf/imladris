@@ -440,7 +440,16 @@
       loop_control:
         label: "{{ item.path }}"
       when: item.path not in (windmill_existing_schedules.json | default([]) | map(attribute='path') | list)
-      no_log: true
+      failed_when: false
+      register: windmill_schedule_results
+
+    - name: Report schedule creation results
+      ansible.builtin.debug:
+        msg: >-
+          Schedule results: {{ windmill_schedule_results.results | default([])
+          | map(attribute='status', default='skipped')
+          | list }}
+      when: windmill_schedule_results is defined
 
 # --- Credential Sync: Bitwarden → Windmill Variables (Decision 13/20) ---
 # Uses Python script to handle JSON-valued secrets safely.
