@@ -60,9 +60,17 @@ VPC_ID=$(get_output "VpcId")
 SUBNET_ID=$(get_output "SubnetId")
 KMS_KEY_ARN=$(get_output "KmsKeyArn")
 
+# KmsKeyArn output is conditional (only present when CreateNewStorage=true).
+# Fall back to the KMS alias if the output isn't available.
+if [[ -z "$KMS_KEY_ARN" || "$KMS_KEY_ARN" == "None" ]]; then
+  log "KmsKeyArn not in stack outputs (UseExistingStorage=true). Looking up via alias..."
+  KMS_KEY_ARN=$(aws kms describe-key --key-id alias/workstation-ebs \
+    --query "KeyMetadata.Arn" --output text --region "$REGION" 2>/dev/null)
+fi
+
 [[ -n "$VPC_ID" ]] || die "Could not read VpcId from stack '$STACK_NAME'"
 [[ -n "$SUBNET_ID" ]] || die "Could not read SubnetId from stack '$STACK_NAME'"
-[[ -n "$KMS_KEY_ARN" ]] || die "Could not read KmsKeyArn from stack '$STACK_NAME'"
+[[ -n "$KMS_KEY_ARN" ]] || die "Could not determine KMS key ARN (not in stack outputs and alias/workstation-ebs not found)"
 
 log "VPC:    $VPC_ID"
 log "Subnet: $SUBNET_ID"
