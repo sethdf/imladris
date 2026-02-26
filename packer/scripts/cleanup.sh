@@ -36,7 +36,7 @@ npm cache clean --force 2>/dev/null || true
 # Clear bash history
 echo "Cleaning shell history..."
 rm -f /home/ec2-user/.bash_history
-rm -f /root/.bash_history
+sudo rm -f /root/.bash_history
 unset HISTFILE
 
 # Clear log files
