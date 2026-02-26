@@ -374,7 +374,7 @@
 
     - name: Initialize wmill in scripts directory
       ansible.builtin.command:
-        cmd: wmill init
+        cmd: timeout 30 wmill init
         chdir: "{{ windmill_scripts_dir }}"
         creates: "{{ windmill_scripts_dir }}/wmill.yaml"
       when: windmill_scripts_dir_stat.stat.exists | default(false)
@@ -388,13 +388,14 @@
       register: windmill_script_files
       when: windmill_scripts_dir_stat.stat.exists | default(false)
 
-    - name: Push Windmill scripts (parallel batch)
+    - name: Push Windmill scripts (parallel batch, 60s timeout per script)
       ansible.builtin.shell:
         cmd: |
           cd {{ windmill_scripts_dir }}
-          ls f/devops/*.ts | grep -v '.script.' | xargs -P4 -I{} wmill script push {}
+          ls f/devops/*.ts | grep -v '.script.' | xargs -P4 -I{} timeout 60 wmill script push {}
         chdir: "{{ windmill_scripts_dir }}"
       changed_when: true
+      failed_when: false
       when:
         - windmill_scripts_dir_stat.stat.exists | default(false)
         - windmill_script_files.files | default([]) | length > 0
@@ -414,8 +415,10 @@
         headers:
           Authorization: "Bearer {{ windmill_admin_secret }}"
         return_content: true
+        timeout: 30
       register: windmill_existing_schedules
       no_log: true
+      failed_when: false
 
     - name: Create Windmill schedules
       ansible.builtin.uri:
