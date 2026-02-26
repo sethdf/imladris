@@ -146,11 +146,23 @@
         mode: "0755"
       become: true
 
+    - name: "[progress] Docker compose starting (image pull may take several minutes)"
+      ansible.builtin.command:
+        cmd: "aws ssm put-parameter --name /imladris/bootstrap-progress --value '{{ ansible_date_time.time }} windmill: docker compose starting' --type String --overwrite --region {{ aws_region }}"
+      changed_when: false
+      failed_when: false
+
     - name: Start Windmill via Docker Compose
       ansible.builtin.command: docker compose -f {{ windmill_compose_file }} up -d
       become: true
       register: windmill_compose_result
       changed_when: "'Started' in windmill_compose_result.stderr or 'Creating' in windmill_compose_result.stderr"
+
+    - name: "[progress] Docker compose up complete"
+      ansible.builtin.command:
+        cmd: "aws ssm put-parameter --name /imladris/bootstrap-progress --value '{{ ansible_date_time.time }} windmill: docker compose up done' --type String --overwrite --region {{ aws_region }}"
+      changed_when: false
+      failed_when: false
 
     # --- State Restore from S3 (fresh deploy only) ---
     # If an S3 backup exists and wmill is not yet configured, restore .env,
@@ -344,6 +356,12 @@
 # Pushes all TypeScript scripts from repo to Windmill via wmill CLI.
 # Idempotent: wmill push overwrites existing scripts.
 
+- name: "[progress] Starting script deployment"
+  ansible.builtin.command:
+    cmd: "aws ssm put-parameter --name /imladris/bootstrap-progress --value '{{ ansible_date_time.time }} windmill: starting script push (24 scripts)' --type String --overwrite --region {{ aws_region }}"
+  changed_when: false
+  failed_when: false
+
 - name: Deploy Windmill scripts
   when:
     - windmill_health.status | default(0) == 200
@@ -440,6 +458,12 @@
         WMILL_API: "{{ windmill_api_base }}/api/w/{{ windmill_workspace }}"
       no_log: true
       changed_when: true
+
+- name: "[progress] Windmill role complete"
+  ansible.builtin.command:
+    cmd: "aws ssm put-parameter --name /imladris/bootstrap-progress --value '{{ ansible_date_time.time }} windmill: role complete' --type String --overwrite --region {{ aws_region }}"
+  changed_when: false
+  failed_when: false
 
 # --- State Backup Cron (Decision 8 extension) ---
 # Backs up all stateful data to S3 every 6 hours, encrypted with CMK.

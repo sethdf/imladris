@@ -443,7 +443,7 @@ Resources:
           Value: Imladris
     CreationPolicy:
       ResourceSignal:
-        Timeout: PT35M
+        Timeout: PT45M
 
   # ============================================================
   # DLM Lifecycle Policy (Decision 8)
