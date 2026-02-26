@@ -283,6 +283,7 @@ Resources:
                 Action:
                   - ssm:GetParameter
                   - ssm:GetParameters
+                  - ssm:PutParameter
                 Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/imladris/*'
         - PolicyName: StateBackupAccess
           PolicyDocument:
@@ -354,6 +355,16 @@ Resources:
             aws s3 cp /var/log/imladris-bootstrap.log \
               s3://imladris-state-${AWS::AccountId}/bootstrap-logs/$(date -u +%Y%m%d-%H%M%S)-exit${!EXIT_CODE}.log \
               --region ${AWS::Region} 2>/dev/null || true
+            # Write last 100 lines to SSM for debugging from Aurora (best-effort)
+            if [ $EXIT_CODE -ne 0 ]; then
+              LOG_TAIL=$(tail -100 /var/log/imladris-bootstrap.log 2>/dev/null | head -c 4096)
+              aws ssm put-parameter \
+                --name "/imladris/bootstrap-failure-log" \
+                --value "$LOG_TAIL" \
+                --type String \
+                --overwrite \
+                --region ${AWS::Region} 2>/dev/null || true
+            fi
             # Signal CF immediately (fail-fast on errors instead of waiting for timeout)
             /opt/aws/bin/cfn-signal -e $EXIT_CODE --stack ${AWS::StackName} --resource WorkstationInstance --region ${AWS::Region}
           }
