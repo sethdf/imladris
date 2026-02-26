@@ -82,12 +82,19 @@ cd "$REPO_DIR"
 packer init "$PACKER_DIR/imladris.pkr.hcl"
 
 log "Starting Packer build..."
-BUILD_OUTPUT=$(packer build \
+BUILD_LOG=$(mktemp)
+packer build \
   -var "vpc_id=$VPC_ID" \
   -var "subnet_id=$SUBNET_ID" \
   -var "kms_key_id=$KMS_KEY_ARN" \
   -var "region=$REGION" \
-  "$PACKER_DIR/imladris.pkr.hcl" 2>&1 | tee /dev/stderr)
+  "$PACKER_DIR/imladris.pkr.hcl" 2>&1 | tee "$BUILD_LOG"
+PACKER_EXIT=${PIPESTATUS[0]}
+BUILD_OUTPUT=$(cat "$BUILD_LOG")
+rm -f "$BUILD_LOG"
+if [[ $PACKER_EXIT -ne 0 ]]; then
+  die "Packer build failed (exit $PACKER_EXIT)"
+fi
 
 # Extract AMI ID from Packer output
 AMI_ID=$(echo "$BUILD_OUTPUT" | grep -oP 'ami-[0-9a-f]+' | tail -1)
