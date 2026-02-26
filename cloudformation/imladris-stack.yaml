@@ -328,7 +328,7 @@ Resources:
                   - kms:CreateGrant
                 Resource: !If
                   - CreateNewStorage
-                  - !GetAtt KmsKey.Arn
+                  - !Sub 'arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/*'
                   - !Ref ExistingKmsKeyArn
               - Sid: PackerPassRole
                 Effect: Allow
