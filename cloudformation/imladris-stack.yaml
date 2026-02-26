@@ -285,6 +285,10 @@ Resources:
                   - ssm:GetParameters
                   - ssm:PutParameter
                 Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/imladris/*'
+              - Sid: CfnSignalBootstrap
+                Effect: Allow
+                Action: cloudformation:SignalResource
+                Resource: !Sub 'arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${AWS::StackName}/*'
         - PolicyName: PackerBuild
           PolicyDocument:
             Version: '2012-10-17'
