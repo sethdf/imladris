@@ -11,6 +11,16 @@
     group: "{{ imladris_user }}"
     mode: "0755"
 
+# --- Git credential helper: BWS → GitHub PAT ---
+# Allows `git push` to work automatically by fetching the GitHub PAT
+# from Bitwarden Secrets Manager on each auth request.
+- name: Configure git credential helper for BWS
+  ansible.builtin.command:
+    cmd: git config --global credential.helper "{{ imladris_repo_dir }}/scripts/git-credential-bws.sh"
+  become: true
+  become_user: "{{ imladris_user }}"
+  changed_when: true
+
 - name: Clone repositories
   ansible.builtin.git:
     repo: "{{ item.url }}"
