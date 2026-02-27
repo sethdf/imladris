@@ -146,6 +146,18 @@
         mode: "0755"
       become: true
 
+    # Ensure cache directory exists for Windmill worker volume mount.
+    # On NVMe instances, /local/cache/triage is created by the nvme role.
+    # On non-NVMe instances, create it as a regular EBS directory.
+    - name: Create triage cache directory for Windmill workers
+      ansible.builtin.file:
+        path: /local/cache/triage
+        state: directory
+        owner: "{{ imladris_user }}"
+        group: "{{ imladris_user }}"
+        mode: "0755"
+      become: true
+
     - name: "[progress] Docker compose starting (image pull may take several minutes)"
       ansible.builtin.command:
         cmd: "aws ssm put-parameter --name /imladris/bootstrap-progress --value '{{ ansible_date_time.time }} windmill: docker compose starting' --type String --overwrite --region {{ aws_region }}"
@@ -542,7 +554,6 @@
     hour: "3"
     job: "bash {{ imladris_repo_dir }}/scripts/cache-evict.sh 2>&1 >> {{ imladris_home }}/.claude/logs/cache-evict.log"
     user: "{{ imladris_user }}"
-  when: nvme_available | default(false) | bool
 
 - name: Run initial state backup
   ansible.builtin.command:

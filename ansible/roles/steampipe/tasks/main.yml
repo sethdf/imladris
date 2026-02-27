@@ -34,3 +34,52 @@
   become: true
   become_user: "{{ imladris_user }}"
   changed_when: true
+
+# --- Steampipe Service (network listen mode for Windmill workers) ---
+# Exposes Steampipe's postgres wire protocol on all interfaces (port 9193)
+# so Docker containers (Windmill workers) can query via 172.17.0.1:9193.
+
+- name: Check if Steampipe service is running
+  ansible.builtin.command: pgrep -f "steampipe plugin-manager"
+  register: steampipe_service_check
+  changed_when: false
+  failed_when: false
+
+- name: Start Steampipe service in network listen mode
+  ansible.builtin.command: steampipe service start --database-listen network
+  become: true
+  become_user: "{{ imladris_user }}"
+  changed_when: true
+  when: steampipe_service_check.rc != 0
+
+- name: Install Steampipe service systemd unit
+  ansible.builtin.copy:
+    content: |
+      [Unit]
+      Description=Steampipe Service (Postgres wire protocol)
+      After=network.target
+
+      [Service]
+      Type=forking
+      User={{ imladris_user }}
+      ExecStart=/usr/local/bin/steampipe service start --database-listen network
+      ExecStop=/usr/local/bin/steampipe service stop
+      Restart=on-failure
+      RestartSec=10
+      Environment=HOME={{ imladris_home }}
+
+      [Install]
+      WantedBy=multi-user.target
+    dest: /etc/systemd/system/steampipe.service
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  register: steampipe_unit
+
+- name: Enable Steampipe service on boot
+  ansible.builtin.systemd:
+    name: steampipe
+    enabled: true
+    daemon_reload: "{{ steampipe_unit.changed }}"
+  become: true

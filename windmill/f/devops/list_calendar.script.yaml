@@ -1,0 +1,23 @@
+summary: List M365 Calendar Events
+description: Fetch upcoming calendar events from Microsoft 365 via Graph API for work intake.
+lock: []
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    user_email:
+      type: string
+      default: sfoley@buxtonco.com
+      description: User email/UPN to fetch calendar for
+    days_ahead:
+      type: integer
+      default: 7
+      description: Number of days ahead to look for events
+    limit:
+      type: integer
+      default: 50
+      description: Maximum number of events to return
+  required: []
+is_template: false
+kind: script
+language: bun

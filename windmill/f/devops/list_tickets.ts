@@ -45,17 +45,20 @@ export async function main(
     };
   }
 
+  // SDP API breaks technician filter when combined with status filter in search_criteria.
+  // Workaround: only send technician to API, filter status client-side.
+  const fetchLimit = status ? limit * 3 : limit; // over-fetch when client-side filtering
   const listInfo: Record<string, unknown> = {
     list_info: {
-      row_count: limit,
+      row_count: fetchLimit,
       sort_field: "created_time",
       sort_order: "desc",
     },
   };
 
   const criteria: Record<string, unknown>[] = [];
-  if (status) criteria.push({ field: "status.name", condition: "is", value: status });
   if (technician) criteria.push({ field: "technician.name", condition: "is", value: technician });
+  if (!technician && status) criteria.push({ field: "status.name", condition: "is", value: status });
   if (criteria.length > 0) listInfo.list_info = { ...listInfo.list_info as object, search_criteria: criteria };
 
   const url = `${baseUrl}/requests?input_data=${encodeURIComponent(JSON.stringify(listInfo))}`;
@@ -75,7 +78,20 @@ export async function main(
   }
 
   const data = await response.json();
-  const requests = data.requests || [];
+  let requests = data.requests || [];
+
+  // Client-side status filter (SDP breaks combined criteria)
+  if (status && technician) {
+    const exclude = ["Closed", "Resolved"];
+    if (status.toLowerCase() === "open") {
+      requests = requests.filter((r: any) => !exclude.includes(r.status?.name));
+    } else {
+      requests = requests.filter((r: any) => r.status?.name === status);
+    }
+  }
+
+  // Trim to requested limit after filtering
+  requests = requests.slice(0, limit);
 
   // Cache each ticket for cross-source correlation (ephemeral NVMe cache)
   try {
@@ -97,13 +113,17 @@ export async function main(
   return {
     count: requests.length,
     status_filter: status || "all",
+    technician_filter: technician || "all",
     tickets: requests.map((r: Record<string, unknown>) => ({
-      id: (r as any).id,
+      id: (r as any).display_id,
+      internal_id: (r as any).id,
       subject: (r as any).subject,
       status: (r as any).status?.name,
       priority: (r as any).priority?.name,
       technician: (r as any).technician?.name,
+      requester: (r as any).requester?.name,
       created: (r as any).created_time?.display_value,
+      due: (r as any).due_by_time?.display_value,
     })),
   };
 }

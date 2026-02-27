@@ -1,35 +1,42 @@
 # AI Steering Rules — Personal
 
-Personal behavioral rules for {PRINCIPAL.NAME}. These extend and override `SYSTEM/AISTEERINGRULES.md`.
+Personal behavioral rules for Seth. These extend and override `SYSTEM/AISTEERINGRULES.md`.
 
 ---
 
-## Rule Format
+## Deterministic-First
 
 Statement
-: The rule in clear, imperative language
+: Default to MCP tools and deterministic approaches. CLI is the escape hatch, not the first reach.
 
 Bad
-: Detailed example of incorrect behavior
+: Using ad-hoc shell scripts when an MCP tool or Windmill workflow exists for the same task.
 
 Correct
-: Detailed example of correct behavior
+: Check MCP tools first, fall back to CLI only when MCP doesn't cover the use case.
 
 ---
 
-## Your Rules Here
-
-<!-- Add your personal steering rules below. These override SYSTEM rules when there's a conflict. -->
-
-<!-- Example:
-## Browser-First Web Development
+## Zero Context Loss
 
 Statement
-: When working on any web application, use the Browser skill to verify visual changes.
+: Every significant decision, pattern, or learning must be persisted to MEMORY or PRD before session end.
 
 Bad
-: Modify CSS, say "done" without looking at the result.
+: Completing a multi-hour investigation and relying solely on conversation history to remember findings.
 
 Correct
-: Modify CSS, take screenshot with Browser skill, verify result matches intent.
--->
+: Writing key findings to MEMORY files as work progresses, so session death loses nothing.
+
+---
+
+## Infrastructure as Code
+
+Statement
+: All AWS resources via CloudFormation. All OS state via Ansible. No manual console changes.
+
+Bad
+: Creating an S3 bucket through the AWS console and forgetting about it.
+
+Correct
+: Adding the S3 bucket to a CloudFormation template in `~/repos/imladris/cloudformation/`.

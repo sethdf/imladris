@@ -42,6 +42,9 @@ services:
       - MODE=worker
       - WORKER_GROUP=default
       - BASE_INTERNAL_URL=http://windmill_server:8000
+      - CACHE_DIR=/local/cache/triage
+    volumes:
+      - /local/cache:/local/cache
     depends_on:
       windmill_db:
         condition: service_healthy
@@ -54,6 +57,9 @@ services:
       - MODE=worker
       - WORKER_GROUP=native
       - BASE_INTERNAL_URL=http://windmill_server:8000
+      - CACHE_DIR=/local/cache/triage
+    volumes:
+      - /local/cache:/local/cache
     depends_on:
       windmill_db:
         condition: service_healthy

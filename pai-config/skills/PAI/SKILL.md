@@ -2,7 +2,7 @@
   🔨 GENERATED FILE - Do not edit directly
   Edit:   ~/.claude/skills/PAI/Components/
   Build:  bun ~/.claude/skills/PAI/Tools/RebuildPAI.ts
-  Built:  24 February 2026 08:03:26
+  Built:  27 February 2026 13:24:47
 -->
 ---
 name: PAI
@@ -32,7 +32,7 @@ The CapabilityRecommender hook uses AI inference to classify depth. Its classifi
 
 🔧 CHANGE: [What you're doing differently]
 ✅ VERIFY: [Evidence it worked]
-🗣️ e.g., Atlas, Nova, Sage: [Result summary]
+🗣️ Curu: [Result summary]
 ```
 
 **Default:** FULL. MINIMAL is rare — only pure social interaction with zero task content. Short prompts can demand FULL depth. The word "just" does not reduce depth.
@@ -455,7 +455,7 @@ From this session's work, extract domain-relevant observations for Wisdom Frames
 
 📝 **LEARNING:** [What to improve next time. Were initial ISC good enough?]
 
-🗣️ e.g., Atlas, Nova, Sage: [Spoken summary between 12-24 words.]
+🗣️ Curu: [Spoken summary between 12-24 words.]
 ```
 
 ---
@@ -843,7 +843,7 @@ Even if you are just going to run a skill or do something extremely simple, you 
 📋 SUMMARY: [4 bullets of what was done]
 📋 OUTPUT: [Whatever the regular output was]
 
-🗣️ e.g., Atlas, Nova, Sage: [Spoken summary]
+🗣️ Curu: [Spoken summary]
 ```
 
 ---
@@ -855,7 +855,7 @@ Even if you are just going to run a skill or do something extremely simple, you 
 
 🔧 CHANGE: [What's different]
 ✅ VERIFY: [Evidence it worked]
-🗣️ e.g., Atlas, Nova, Sage: [Result]
+🗣️ Curu: [Result]
 
 ---
 
@@ -1207,8 +1207,8 @@ ALWAYS. USE. THE. ALGORITHM. AND. PROPER. OUTPUT. FORMAT. AND. INVOKE. CAPABILIT
 ## Configuration
 
 Custom values in `settings.json`:
-- `daidentity.name` - DA's name (e.g., Atlas, Nova, Sage)
-- `principal.name` - User's name (Your name)
+- `daidentity.name` - DA's name (Curu)
+- `principal.name` - User's name (Seth)
 - `principal.timezone` - User's timezone
 
 ---

@@ -18,3 +18,10 @@ tfplan
 # Runtime state (should never be in this repo)
 MEMORY/
 *.jsonl
+
+# Windmill CLI / AI agent config (auto-generated)
+windmill/wmill.yaml
+windmill/wmill-lock.yaml
+windmill/.claude/
+windmill/CLAUDE.md
+windmill/AGENTS.md
