@@ -1,0 +1,30 @@
+summary: Verify Remediation
+description: >-
+  Re-runs the same read-only Steampipe probes from the original investigation
+  to confirm whether a remediation action actually fixed the issue.
+  All operations are strictly read-only — verification, not remediation.
+lock: []
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    item_id:
+      type: string
+      description: The investigation item ID to verify
+    original_investigation:
+      type: string
+      description: JSON string of the original investigation result (entities, probes, diagnosis)
+    playbook_result:
+      type: string
+      description: JSON string of what response_playbook.ts returned
+    approval_id:
+      type: string
+      description: Approval ID from approval_flow — links back for audit trail
+  required:
+    - item_id
+    - original_investigation
+    - playbook_result
+    - approval_id
+is_template: false
+kind: script
+language: bun

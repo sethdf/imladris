@@ -1,0 +1,286 @@
+summary: 'Triage-to-Remediation Flow'
+description: >-
+  End-to-end DevOps triage pipeline: classifies an incoming event, investigates it,
+  proposes a fix, gates on human approval, executes remediation, verifies the fix,
+  and closes the ticket if successful.
+value:
+  modules:
+    # ── Step 1: Run the triage pipeline (classify, investigate, propose fix) ──
+    - id: triage_pipeline
+      summary: 'Classify, investigate, and propose fix'
+      value:
+        type: script
+        path: f/devops/triage_pipeline
+        input_transforms:
+          source:
+            type: javascript
+            expr: flow_input.source
+          content:
+            type: javascript
+            expr: flow_input.content
+          item_id:
+            type: javascript
+            expr: flow_input.item_id
+          event_type:
+            type: javascript
+            expr: flow_input.event_type
+
+    # ── Step 2: Branch — only continue if a fix was proposed ──
+    - id: check_fixable
+      summary: 'Branch on pipeline_status'
+      value:
+        type: branchone
+        branches:
+          - summary: 'Fix proposed — proceed to approval'
+            expr: "results.triage_pipeline.pipeline_status === 'fix_proposed'"
+            modules:
+              # ── Step 3: Format approval request and send notification ──
+              - id: request_approval
+                summary: 'Request human approval for proposed action'
+                value:
+                  type: script
+                  path: f/devops/approval_flow
+                  input_transforms:
+                    operation:
+                      type: javascript
+                      expr: results.triage_pipeline.proposed_action.action
+                    resource:
+                      type: javascript
+                      expr: results.triage_pipeline.investigation.entities[0].value
+                    severity:
+                      type: javascript
+                      expr: results.triage_pipeline.investigation.severity || "high"
+                    requested_by:
+                      type: static
+                      value: 'triage_flow'
+
+              # ── Step 4: Windmill suspend — waits for human approve/reject ──
+              - id: approval_gate
+                summary: 'Pause for human approval in Windmill UI'
+                suspend:
+                  required_events: 1
+                  timeout: 86400
+                  self_approval_disabled: false
+                value:
+                  type: rawscript
+                  language: bun
+                  content: |
+                    export async function main(
+                      approval_id: string,
+                      operation: string,
+                      resource: string,
+                      severity: string
+                    ) {
+                      return {
+                        message: "Waiting for human approval",
+                        approval_id,
+                        operation,
+                        resource,
+                        severity
+                      };
+                    }
+                  input_transforms:
+                    approval_id:
+                      type: javascript
+                      expr: results.request_approval.approval_id
+                    operation:
+                      type: javascript
+                      expr: results.request_approval.operation
+                    resource:
+                      type: javascript
+                      expr: results.request_approval.resource
+                    severity:
+                      type: javascript
+                      expr: results.request_approval.severity
+
+              # ── Step 5: Execute the approved remediation playbook ──
+              - id: execute_remediation
+                summary: 'Run the response playbook (approved)'
+                value:
+                  type: script
+                  path: f/devops/response_playbook
+                  input_transforms:
+                    playbook:
+                      type: javascript
+                      expr: results.triage_pipeline.proposed_action.action
+                    resource:
+                      type: javascript
+                      expr: results.triage_pipeline.investigation.entities[0].value
+                    approval_id:
+                      type: javascript
+                      expr: results.request_approval.approval_id
+                    dry_run:
+                      type: static
+                      value: false
+                    params:
+                      type: javascript
+                      expr: "JSON.stringify(results.triage_pipeline.proposed_action.params || {})"
+
+              # ── Step 6: Verify the remediation was effective ──
+              - id: verify_fix
+                summary: 'Verify remediation succeeded'
+                value:
+                  type: script
+                  path: f/devops/verify_remediation
+                  input_transforms:
+                    item_id:
+                      type: javascript
+                      expr: flow_input.item_id
+                    original_investigation:
+                      type: javascript
+                      expr: results.triage_pipeline.investigation
+                    playbook_result:
+                      type: javascript
+                      expr: results.execute_remediation
+                    approval_id:
+                      type: javascript
+                      expr: results.request_approval.approval_id
+
+              # ── Step 7: Branch — close ticket if verified ──
+              - id: close_if_verified
+                summary: 'Close ticket if fix is verified'
+                value:
+                  type: branchone
+                  branches:
+                    - summary: 'Verified and has ticket — close it'
+                      expr: "results.verify_fix.verified === true && flow_input.item_id && flow_input.item_id !== ''"
+                      modules:
+                        - id: close_ticket
+                          summary: 'Close the originating ticket'
+                          value:
+                            type: script
+                            path: f/devops/close_ticket
+                            input_transforms:
+                              ticket_id:
+                                type: javascript
+                                expr: flow_input.item_id
+                              resolution:
+                                type: javascript
+                                expr: >-
+                                  `Auto-remediated: ${results.execute_remediation.playbook} on ${results.execute_remediation.resource}. Verified at ${results.verify_fix.verified_at || new Date().toISOString()}.`
+                              status:
+                                type: static
+                                value: Resolved
+                  default:
+                    - id: log_verified_no_close
+                      summary: 'Log verification result (no ticket to close)'
+                      value:
+                        type: rawscript
+                        language: bun
+                        content: |
+                          export async function main(verified: boolean, item_id: string, verification_detail: string) {
+                            console.log(`Verification result: verified=${verified}, item_id=${item_id}`);
+                            console.log(`Detail: ${verification_detail}`);
+                            return { verified, item_id, logged: true };
+                          }
+                        input_transforms:
+                          verified:
+                            type: javascript
+                            expr: "results.verify_fix.verified || false"
+                          item_id:
+                            type: javascript
+                            expr: flow_input.item_id
+                          verification_detail:
+                            type: javascript
+                            expr: "JSON.stringify(results.verify_fix)"
+        default:
+          # ── No fix proposed — log and exit ──
+          - id: log_result
+            summary: 'Log triage result (no fix proposed)'
+            value:
+              type: rawscript
+              language: bun
+              content: |
+                export async function main(pipeline_status: string, source: string, item_id: string, summary: string) {
+                  console.log(`Triage complete — no remediation needed`);
+                  console.log(`  Status:  ${pipeline_status}`);
+                  console.log(`  Source:  ${source}`);
+                  console.log(`  Item:    ${item_id}`);
+                  console.log(`  Summary: ${summary}`);
+                  return { pipeline_status, source, item_id, summary, remediation: false };
+                }
+              input_transforms:
+                pipeline_status:
+                  type: javascript
+                  expr: "results.triage_pipeline.pipeline_status || 'unknown'"
+                source:
+                  type: javascript
+                  expr: flow_input.source
+                item_id:
+                  type: javascript
+                  expr: flow_input.item_id
+                summary:
+                  type: javascript
+                  expr: "results.triage_pipeline.summary || results.triage_pipeline.triage?.summary || 'No summary'"
+
+  # ── Failure handler — catch any step failure ──
+  failure_module:
+    id: failure
+    summary: 'Handle flow failure'
+    value:
+      type: rawscript
+      language: bun
+      content: |
+        export async function main(error_message: string, failed_step: string, source: string, item_id: string) {
+          console.error(`Triage flow FAILED at step: ${failed_step}`);
+          console.error(`Error: ${error_message}`);
+          console.error(`Source: ${source}, Item: ${item_id}`);
+
+          // Attempt voice notification on failure
+          try {
+            await fetch("http://localhost:8888/notify", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                message: `Triage flow failed at ${failed_step}. ${error_message}`,
+                title: "Triage Flow Failure",
+              }),
+            });
+          } catch {
+            // Voice server unavailable — non-fatal
+          }
+
+          return {
+            failed: true,
+            step: failed_step,
+            error: error_message,
+            source,
+            item_id,
+            timestamp: new Date().toISOString(),
+          };
+        }
+      input_transforms:
+        error_message:
+          type: javascript
+          expr: "error.message || 'Unknown error'"
+        failed_step:
+          type: javascript
+          expr: "error.step_id || 'unknown'"
+        source:
+          type: javascript
+          expr: flow_input.source
+        item_id:
+          type: javascript
+          expr: flow_input.item_id
+
+schema:
+  $schema: 'https://json-schema.org/draft/2020-12/schema'
+  type: object
+  properties:
+    source:
+      type: string
+      description: 'Event source (e.g. m365, sdp, aws, github)'
+      default: m365
+    content:
+      type: string
+      description: 'Raw event content / alert body'
+    item_id:
+      type: string
+      description: 'Source ticket or alert ID (used for closing)'
+      default: ''
+    event_type:
+      type: string
+      description: 'Type of event (e.g. alert, incident, change)'
+      default: alert
+  required:
+    - content

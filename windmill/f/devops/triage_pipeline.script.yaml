@@ -1,0 +1,31 @@
+summary: Triage Pipeline Orchestrator
+description: >-
+  Central coordinator for the triage pipeline. Classifies incoming items
+  (email, ticket, alert) via claude -p, then investigates QUEUE/NOTIFY items
+  via Steampipe probes, and proposes fixes for human approval. AUTO items are
+  cached and returned immediately. All investigation is read-only.
+lock: []
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    source:
+      type: string
+      default: m365
+      description: "Source system: m365, sdp, slack, github, aws"
+    content:
+      type: string
+      description: The alert/email/ticket text to triage and investigate
+    item_id:
+      type: string
+      default: ""
+      description: Optional item ID for tracking across pipeline stages
+    event_type:
+      type: string
+      default: alert
+      description: "Event type: alert, ticket, email, webhook"
+  required:
+    - content
+is_template: false
+kind: script
+language: bun

@@ -1,0 +1,27 @@
+summary: Mark Alert Emails as Read
+description: Identifies automated alert senders and bulk-marks their unread emails as read in M365 via Graph API JSON batching.
+lock: []
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    user_email:
+      type: string
+      default: sfoley@buxtonco.com
+      description: M365 user email to process
+    dry_run:
+      type: boolean
+      default: false
+      description: If true, only count matches without marking read
+    max_emails:
+      type: number
+      default: 5000
+      description: Maximum emails to process per run
+    extra_senders:
+      type: string
+      default: ""
+      description: Comma-separated additional sender addresses to include
+  required: []
+is_template: false
+kind: script
+language: bun

@@ -1,0 +1,6 @@
+summary: 'Triage-to-Remediation Flow'
+description: >-
+  End-to-end DevOps triage pipeline: classifies an incoming event, investigates it,
+  proposes a fix, gates on human approval, executes remediation, verifies the fix,
+  and closes the ticket if successful. Decision 28 approval gate ensures no
+  destructive action runs without explicit human sign-off.
