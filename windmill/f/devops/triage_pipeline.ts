@@ -183,11 +183,19 @@ Rules:
     ).trim();
     try { unlinkSync(tmpFile); } catch { /* cleanup best-effort */ }
 
-    // claude -p --output-format json may wrap in envelope
+    // claude -p --output-format json wraps in envelope: {result: "..."}
     const parsed = JSON.parse(result);
-    const text = typeof parsed === "string"
+    let text = typeof parsed === "string"
       ? parsed
       : parsed.result || parsed.content || JSON.stringify(parsed);
+    // Extract JSON object from response (handles markdown wrappers, leading text, etc.)
+    if (typeof text === "string") {
+      const jsonStart = text.indexOf("{");
+      const jsonEnd = text.lastIndexOf("}");
+      if (jsonStart >= 0 && jsonEnd > jsonStart) {
+        text = text.slice(jsonStart, jsonEnd + 1);
+      }
+    }
     const inner = typeof text === "string" ? JSON.parse(text) : text;
 
     // Validate the classification
@@ -347,6 +355,7 @@ export async function main(
   content: string = "",
   item_id: string = "",
   event_type: string = "alert",
+  classify_only: boolean = false,
 ): Promise<PipelineResult> {
   const startTime = Date.now();
 
@@ -378,9 +387,13 @@ export async function main(
   const classification = classify(source, event_type, content);
   console.log(`[pipeline] Classification: ${classification.action} (${classification.urgency}) — ${classification.summary}`);
 
-  // ── SHORT-CIRCUIT: AUTO items ──
-  if (classification.action === "AUTO") {
-    console.log(`[pipeline] AUTO — logging to cache and returning immediately.`);
+  // ── SHORT-CIRCUIT: AUTO items or classify_only mode ──
+  if (classification.action === "AUTO" || classify_only) {
+    const status = classification.action === "AUTO" ? "auto_resolved" : "classified";
+    const nextStep = classification.action === "AUTO"
+      ? "No action needed. Item logged to cache."
+      : `Classified as ${classification.action}. Investigation skipped (classify_only mode).`;
+    console.log(`[pipeline] ${classify_only ? "classify_only" : "AUTO"} — returning without investigation.`);
     const result: PipelineResult = {
       item_id: resolvedItemId,
       source,
@@ -388,8 +401,8 @@ export async function main(
       classification,
       investigation: null,
       proposed_action: null,
-      pipeline_status: "auto_resolved",
-      next_step: "No action needed. Item logged to cache.",
+      pipeline_status: status,
+      next_step: nextStep,
       timestamp: new Date().toISOString(),
       duration_ms: Date.now() - startTime,
     };

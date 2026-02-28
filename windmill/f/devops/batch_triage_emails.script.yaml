@@ -1,0 +1,32 @@
+summary: Batch Triage Emails
+description: >-
+  Layered email triage: L1a dedup, L1b rules, L2 AI classification.
+  L1 layers are instant (glob pattern match + dedup hash); only L2 AI calls
+  are rate-limited. Paginates through ALL unread M365 emails via Graph API
+  @odata.nextLink, classifies via cascade, marks AUTO emails as read, stores
+  results in SQLite, returns layer breakdown.
+lock: []
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    days_back:
+      type: number
+      default: 30
+      description: How many days back to fetch unread emails
+    batch_size:
+      type: number
+      default: 50
+      description: Maximum number of emails to process in this run
+    delay_ms:
+      type: number
+      default: 2000
+      description: Milliseconds to wait between triage calls (rate limiting)
+    dry_run:
+      type: boolean
+      default: false
+      description: If true, classify but don't mark emails as read
+  required: []
+is_template: false
+kind: script
+language: bun

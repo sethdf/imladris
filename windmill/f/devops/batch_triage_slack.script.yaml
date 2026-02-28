@@ -1,0 +1,35 @@
+summary: Batch Triage Slack Messages
+description: >-
+  Layered Slack message triage: L1a dedup, L1b rules, L2 AI classification.
+  Pulls unread messages from all conversations (channels, DMs, group DMs),
+  classifies via cascade, marks channels as read via conversations.mark,
+  stores results in SQLite, returns layer breakdown. Top-level messages only.
+lock: []
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    max_channels:
+      type: number
+      default: 100
+      description: Maximum number of channels to process
+    max_messages_per_channel:
+      type: number
+      default: 50
+      description: Maximum unread messages to process per channel
+    delay_ms:
+      type: number
+      default: 2000
+      description: Milliseconds between Slack API calls (rate limiting)
+    dry_run:
+      type: boolean
+      default: false
+      description: If true, classify but don't mark channels as read
+    channel_filter:
+      type: string
+      default: ""
+      description: Filter channels by name or ID (empty = all)
+  required: []
+is_template: false
+kind: script
+language: bun

@@ -97,6 +97,70 @@ export function init(): boolean {
       CREATE INDEX IF NOT EXISTS idx_entity_item ON entity_index(item_id);
     `);
 
+    // ── Triage pipeline tables ──
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS triage_rules (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        source_pattern TEXT DEFAULT '',
+        sender_pattern TEXT DEFAULT '',
+        subject_pattern TEXT DEFAULT '',
+        action TEXT NOT NULL DEFAULT 'AUTO',
+        urgency TEXT NOT NULL DEFAULT 'low',
+        domain TEXT NOT NULL DEFAULT 'work',
+        summary_template TEXT DEFAULT '',
+        enabled INTEGER NOT NULL DEFAULT 1,
+        priority INTEGER NOT NULL DEFAULT 100,
+        hit_count INTEGER NOT NULL DEFAULT 0,
+        override_count INTEGER NOT NULL DEFAULT 0,
+        source TEXT DEFAULT 'seed',
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+      CREATE INDEX IF NOT EXISTS idx_triage_rules_priority ON triage_rules(priority);
+      CREATE INDEX IF NOT EXISTS idx_triage_rules_enabled ON triage_rules(enabled);
+
+      CREATE TABLE IF NOT EXISTS triage_results (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source TEXT NOT NULL DEFAULT 'm365',
+        message_id TEXT NOT NULL,
+        subject TEXT NOT NULL DEFAULT '',
+        sender TEXT NOT NULL DEFAULT '',
+        received_at TEXT DEFAULT '',
+        action TEXT NOT NULL,
+        urgency TEXT NOT NULL DEFAULT 'low',
+        summary TEXT NOT NULL DEFAULT '',
+        reasoning TEXT NOT NULL DEFAULT '',
+        domain TEXT NOT NULL DEFAULT 'work',
+        classified_by TEXT NOT NULL DEFAULT 'L2_ai',
+        rule_id INTEGER DEFAULT NULL,
+        dedup_hash TEXT DEFAULT '',
+        occurrence_count INTEGER NOT NULL DEFAULT 1,
+        human_override TEXT DEFAULT NULL,
+        override_notes TEXT DEFAULT '',
+        marked_read INTEGER NOT NULL DEFAULT 0,
+        metadata TEXT DEFAULT '{}',
+        task_id TEXT DEFAULT NULL,
+        classified_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+      CREATE INDEX IF NOT EXISTS idx_triage_results_dedup ON triage_results(dedup_hash, classified_at);
+      CREATE INDEX IF NOT EXISTS idx_triage_results_source ON triage_results(source);
+      CREATE INDEX IF NOT EXISTS idx_triage_results_action ON triage_results(action);
+      CREATE INDEX IF NOT EXISTS idx_triage_results_classified_by ON triage_results(classified_by);
+      CREATE INDEX IF NOT EXISTS idx_triage_results_message ON triage_results(message_id);
+      CREATE INDEX IF NOT EXISTS idx_triage_results_task ON triage_results(task_id);
+    `);
+
+    // Migration: add task_id column to existing triage_results tables
+    try {
+      db.exec("ALTER TABLE triage_results ADD COLUMN task_id TEXT DEFAULT NULL");
+    } catch {
+      // Column already exists — expected on subsequent runs
+    }
+    try {
+      db.exec("CREATE INDEX IF NOT EXISTS idx_triage_results_task ON triage_results(task_id)");
+    } catch { /* index may already exist */ }
+
     // FTS5 — try to create, gracefully handle if unavailable
     try {
       db.exec(`
@@ -380,5 +444,283 @@ export function getRaw(itemId: string): unknown | null {
   } catch {
     db.close();
     return null;
+  }
+}
+
+// ── Triage pipeline helpers ──
+
+/** Glob-to-regex matcher: * matches any chars, case-insensitive */
+export function globMatch(pattern: string, text: string): boolean {
+  if (!pattern) return false;
+  // Escape regex special chars except *, then convert * to .*
+  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
+  return new RegExp(`^${escaped}$`, "i").test(text);
+}
+
+export interface TriageRule {
+  id: number;
+  name: string;
+  source_pattern: string;
+  sender_pattern: string;
+  subject_pattern: string;
+  action: string;
+  urgency: string;
+  domain: string;
+  summary_template: string;
+  enabled: number;
+  priority: number;
+  hit_count: number;
+  override_count: number;
+  source: string;
+  created_at: number;
+  updated_at: number;
+}
+
+/** Find the first matching enabled rule, ordered by priority (lower = higher priority) */
+export function matchRule(source: string, sender: string, subject: string): TriageRule | null {
+  const db = getDb();
+  if (!db) return null;
+  try {
+    init();
+    const rules = db.prepare(
+      "SELECT * FROM triage_rules WHERE enabled = 1 ORDER BY priority ASC, id ASC"
+    ).all() as TriageRule[];
+    db.close();
+
+    for (const rule of rules) {
+      const sourceMatch = !rule.source_pattern || globMatch(rule.source_pattern, source);
+      const senderMatch = !rule.sender_pattern || globMatch(rule.sender_pattern, sender);
+      const subjectMatch = !rule.subject_pattern || globMatch(rule.subject_pattern, subject);
+      if (sourceMatch && senderMatch && subjectMatch) {
+        return rule;
+      }
+    }
+    return null;
+  } catch {
+    db.close();
+    return null;
+  }
+}
+
+/** Increment hit_count for a rule */
+export function incrementRuleHit(ruleId: number): void {
+  const db = getDb();
+  if (!db) return;
+  try {
+    init();
+    db.run("UPDATE triage_rules SET hit_count = hit_count + 1, updated_at = unixepoch() WHERE id = ?", [ruleId]);
+    db.close();
+  } catch {
+    db.close();
+  }
+}
+
+export interface DedupResult {
+  found: boolean;
+  existing?: {
+    action: string;
+    urgency: string;
+    summary: string;
+    reasoning: string;
+    domain: string;
+    rule_id: number | null;
+    classified_by: string;
+    id: number;
+  };
+}
+
+/** Check for dedup match within time window (default 4 hours = 14400s) */
+export function checkDedup(hash: string, windowSeconds: number = 14400): DedupResult {
+  const db = getDb();
+  if (!db) return { found: false };
+  try {
+    init();
+    const cutoff = Math.floor(Date.now() / 1000) - windowSeconds;
+    const row = db.prepare(
+      `SELECT id, action, urgency, summary, reasoning, domain, rule_id, classified_by
+       FROM triage_results
+       WHERE dedup_hash = ? AND classified_at >= ?
+       ORDER BY classified_at DESC LIMIT 1`
+    ).get(hash, cutoff) as any | undefined;
+
+    if (row) {
+      db.run(
+        "UPDATE triage_results SET occurrence_count = occurrence_count + 1 WHERE id = ?",
+        [row.id]
+      );
+      db.close();
+      return { found: true, existing: row };
+    }
+    db.close();
+    return { found: false };
+  } catch {
+    db.close();
+    return { found: false };
+  }
+}
+
+export interface TriageResultInput {
+  source: string;
+  message_id: string;
+  subject: string;
+  sender: string;
+  received_at: string;
+  action: string;
+  urgency: string;
+  summary: string;
+  reasoning: string;
+  domain: string;
+  classified_by: string;
+  rule_id?: number | null;
+  dedup_hash: string;
+  marked_read: number;
+  metadata?: string;
+  task_id?: string | null;
+}
+
+/** Insert a triage classification result */
+export function storeTriageResult(result: TriageResultInput): number | null {
+  const db = getDb();
+  if (!db) return null;
+  try {
+    init();
+    const stmt = db.prepare(
+      `INSERT INTO triage_results
+       (source, message_id, subject, sender, received_at, action, urgency, summary, reasoning, domain, classified_by, rule_id, dedup_hash, marked_read, metadata)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+    const info = stmt.run(
+      result.source,
+      result.message_id,
+      result.subject,
+      result.sender,
+      result.received_at,
+      result.action,
+      result.urgency,
+      result.summary,
+      result.reasoning,
+      result.domain,
+      result.classified_by,
+      result.rule_id ?? null,
+      result.dedup_hash,
+      result.marked_read,
+      result.metadata || "{}",
+    );
+    db.close();
+    return (info as any).lastInsertRowid ?? null;
+  } catch {
+    db.close();
+    return null;
+  }
+}
+
+/** Aggregate triage stats by layer, action, and source */
+export function triageStats(): {
+  total: number;
+  by_layer: Record<string, number>;
+  by_action: Record<string, number>;
+  by_source: Record<string, number>;
+  rules_total: number;
+  rules_enabled: number;
+} {
+  const db = getDb();
+  if (!db) return { total: 0, by_layer: {}, by_action: {}, by_source: {}, rules_total: 0, rules_enabled: 0 };
+  try {
+    init();
+    const total = (db.prepare("SELECT COUNT(*) as c FROM triage_results").get() as any)?.c || 0;
+
+    const byLayer: Record<string, number> = {};
+    for (const r of db.prepare("SELECT classified_by, COUNT(*) as c FROM triage_results GROUP BY classified_by").all() as any[]) {
+      byLayer[r.classified_by] = r.c;
+    }
+
+    const byAction: Record<string, number> = {};
+    for (const r of db.prepare("SELECT action, COUNT(*) as c FROM triage_results GROUP BY action").all() as any[]) {
+      byAction[r.action] = r.c;
+    }
+
+    const bySource: Record<string, number> = {};
+    for (const r of db.prepare("SELECT source, COUNT(*) as c FROM triage_results GROUP BY source").all() as any[]) {
+      bySource[r.source] = r.c;
+    }
+
+    const rulesTotal = (db.prepare("SELECT COUNT(*) as c FROM triage_rules").get() as any)?.c || 0;
+    const rulesEnabled = (db.prepare("SELECT COUNT(*) as c FROM triage_rules WHERE enabled = 1").get() as any)?.c || 0;
+
+    db.close();
+    return { total, by_layer: byLayer, by_action: byAction, by_source: bySource, rules_total: rulesTotal, rules_enabled: rulesEnabled };
+  } catch {
+    db.close();
+    return { total: 0, by_layer: {}, by_action: {}, by_source: {}, rules_total: 0, rules_enabled: 0 };
+  }
+}
+
+/** Update task_id for all triage_results rows matching a dedup_hash */
+export function updateTaskId(dedup_hash: string, task_id: string): number {
+  const db = getDb();
+  if (!db) return 0;
+  try {
+    init();
+    const info = db.run(
+      "UPDATE triage_results SET task_id = ? WHERE dedup_hash = ? AND task_id IS NULL",
+      [task_id, dedup_hash],
+    );
+    db.close();
+    return (info as any).changes ?? 0;
+  } catch {
+    db.close();
+    return 0;
+  }
+}
+
+export interface ActionableItem {
+  id: number;
+  source: string;
+  message_id: string;
+  subject: string;
+  sender: string;
+  received_at: string;
+  action: string;
+  urgency: string;
+  summary: string;
+  reasoning: string;
+  domain: string;
+  classified_by: string;
+  dedup_hash: string;
+  metadata: string;
+}
+
+/** Get unprocessed actionable items (QUEUE/NOTIFY, no task_id, work domain only) */
+export function getUnprocessedActionable(limit: number = 20, priorityFilter?: string): ActionableItem[] {
+  const db = getDb();
+  if (!db) return [];
+  try {
+    init();
+    const urgencyOrder = "CASE urgency WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END";
+    let sql: string;
+    let params: any[];
+
+    if (priorityFilter) {
+      sql = `SELECT id, source, message_id, subject, sender, received_at, action, urgency, summary, reasoning, domain, classified_by, dedup_hash, metadata
+             FROM triage_results
+             WHERE action = ? AND task_id IS NULL AND domain = 'work'
+             ORDER BY ${urgencyOrder} ASC, classified_at DESC
+             LIMIT ?`;
+      params = [priorityFilter, limit];
+    } else {
+      sql = `SELECT id, source, message_id, subject, sender, received_at, action, urgency, summary, reasoning, domain, classified_by, dedup_hash, metadata
+             FROM triage_results
+             WHERE action IN ('QUEUE', 'NOTIFY') AND task_id IS NULL AND domain = 'work'
+             ORDER BY ${urgencyOrder} ASC, classified_at DESC
+             LIMIT ?`;
+      params = [limit];
+    }
+
+    const rows = db.prepare(sql).all(...params) as ActionableItem[];
+    db.close();
+    return rows;
+  } catch {
+    db.close();
+    return [];
   }
 }

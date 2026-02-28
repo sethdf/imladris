@@ -1,0 +1,34 @@
+summary: Create SDP Task
+description: >-
+  Creates a standalone SDP Task (not a Request). Tasks are self-appointed work
+  items for internal tracking. Used by process_actionable to create tasks from
+  triaged QUEUE/NOTIFY items.
+lock: []
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    title:
+      type: string
+      description: Task title
+    description:
+      type: string
+      description: Task description
+    priority:
+      type: string
+      description: "Priority: Urgent, High, Medium, Low"
+      default: Medium
+    owner:
+      type: string
+      description: Task owner name (empty = unassigned)
+      default: ""
+    status:
+      type: string
+      description: "Initial status: Open, In Progress, etc."
+      default: Open
+  required:
+    - title
+    - description
+is_template: false
+kind: script
+language: bun

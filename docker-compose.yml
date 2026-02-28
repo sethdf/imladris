@@ -37,14 +37,45 @@ services:
   windmill_worker:
     image: ghcr.io/windmill-labs/windmill:latest
     restart: always
+    entrypoint: ["/scripts/native-worker-entrypoint.sh"]
+    command: ["windmill"]
     environment:
       - DATABASE_URL=postgres://postgres:${WINDMILL_DB_PASSWORD}@windmill_db/windmill
       - MODE=worker
       - WORKER_GROUP=default
       - BASE_INTERNAL_URL=http://windmill_server:8000
       - CACHE_DIR=/local/cache/triage
+      - HOME=/home/ec2-user
+      - NUM_WORKERS=4
     volumes:
       - /local/cache:/local/cache
+      - /usr/lib/nodejs20/lib/node_modules/@anthropic-ai:/usr/lib/node_modules/@anthropic-ai:ro
+      - /home/ec2-user/.claude:/home/ec2-user/.claude:rw
+      - /home/ec2-user/.claude.json:/home/ec2-user/.claude.json:rw
+      - ./scripts/native-worker-entrypoint.sh:/scripts/native-worker-entrypoint.sh:ro
+    depends_on:
+      windmill_db:
+        condition: service_healthy
+
+  windmill_worker_2:
+    image: ghcr.io/windmill-labs/windmill:latest
+    restart: always
+    entrypoint: ["/scripts/native-worker-entrypoint.sh"]
+    command: ["windmill"]
+    environment:
+      - DATABASE_URL=postgres://postgres:${WINDMILL_DB_PASSWORD}@windmill_db/windmill
+      - MODE=worker
+      - WORKER_GROUP=default
+      - BASE_INTERNAL_URL=http://windmill_server:8000
+      - CACHE_DIR=/local/cache/triage
+      - HOME=/home/ec2-user
+      - NUM_WORKERS=4
+    volumes:
+      - /local/cache:/local/cache
+      - /usr/lib/nodejs20/lib/node_modules/@anthropic-ai:/usr/lib/node_modules/@anthropic-ai:ro
+      - /home/ec2-user/.claude:/home/ec2-user/.claude:rw
+      - /home/ec2-user/.claude.json:/home/ec2-user/.claude.json:rw
+      - ./scripts/native-worker-entrypoint.sh:/scripts/native-worker-entrypoint.sh:ro
     depends_on:
       windmill_db:
         condition: service_healthy
@@ -52,14 +83,21 @@ services:
   windmill_worker_native:
     image: ghcr.io/windmill-labs/windmill:latest
     restart: always
+    entrypoint: ["/scripts/native-worker-entrypoint.sh"]
+    command: ["windmill"]
     environment:
       - DATABASE_URL=postgres://postgres:${WINDMILL_DB_PASSWORD}@windmill_db/windmill
       - MODE=worker
       - WORKER_GROUP=native
       - BASE_INTERNAL_URL=http://windmill_server:8000
       - CACHE_DIR=/local/cache/triage
+      - HOME=/home/ec2-user
     volumes:
       - /local/cache:/local/cache
+      - /usr/lib/nodejs20/lib/node_modules/@anthropic-ai:/usr/lib/node_modules/@anthropic-ai:ro
+      - /home/ec2-user/.claude:/home/ec2-user/.claude:rw
+      - /home/ec2-user/.claude.json:/home/ec2-user/.claude.json:rw
+      - ./scripts/native-worker-entrypoint.sh:/scripts/native-worker-entrypoint.sh:ro
     depends_on:
       windmill_db:
         condition: service_healthy

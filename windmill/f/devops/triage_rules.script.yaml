@@ -1,0 +1,80 @@
+summary: Triage Rule Management
+description: >-
+  Manage heuristic rules for Layer 1 email/message classification.
+  Rules use glob patterns (* = any) matched against source, sender, and
+  subject fields. Actions: seed (create default rules), list, add, remove,
+  enable (toggle), test (check if a subject/sender matches), stats.
+lock: []
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    action:
+      type: string
+      default: list
+      description: "Action to perform: seed, list, add, remove, enable, test, stats"
+      enum:
+        - seed
+        - list
+        - add
+        - remove
+        - enable
+        - test
+        - stats
+    name:
+      type: string
+      default: ""
+      description: Rule name (for add/remove/enable)
+    source_pattern:
+      type: string
+      default: ""
+      description: "Glob pattern for source (e.g. slack, m365)"
+    sender_pattern:
+      type: string
+      default: ""
+      description: "Glob pattern for sender (e.g. *site24x7*)"
+    subject_pattern:
+      type: string
+      default: ""
+      description: "Glob pattern for subject (e.g. *has cleared*)"
+    rule_action:
+      type: string
+      default: AUTO
+      description: "Classification action for the rule: NOTIFY, QUEUE, AUTO"
+      enum:
+        - NOTIFY
+        - QUEUE
+        - AUTO
+    urgency:
+      type: string
+      default: low
+      description: "Urgency level: critical, high, medium, low"
+      enum:
+        - critical
+        - high
+        - medium
+        - low
+    summary_template:
+      type: string
+      default: ""
+      description: Optional summary template for rule-matched items
+    rule_id:
+      type: number
+      default: 0
+      description: Rule ID (for remove/enable by ID)
+    test_source:
+      type: string
+      default: ""
+      description: "Source to test against rules (e.g. slack, m365)"
+    test_subject:
+      type: string
+      default: ""
+      description: Subject line to test against rules (for test action)
+    test_sender:
+      type: string
+      default: ""
+      description: Sender address to test against rules (for test action)
+  required: []
+is_template: false
+kind: script
+language: bun
