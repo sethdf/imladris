@@ -10,6 +10,9 @@
 .terraform.lock.hcl
 tfplan
 
+# Dependencies
+node_modules/
+
 # OS
 .DS_Store
 *.swp

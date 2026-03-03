@@ -28,7 +28,9 @@ Resources:
         Statement:
           - Effect: Allow
             Principal:
-              AWS: !Sub 'arn:aws:iam::${WorkstationAccountId}:role/ImladrisWorkstationRole'
+              AWS:
+                - !Sub 'arn:aws:iam::${WorkstationAccountId}:role/imladris-instance-role'
+                - !Sub 'arn:aws:iam::${WorkstationAccountId}:role/ImladrisWorkstationRole'
             Action: 'sts:AssumeRole'
       ManagedPolicyArns:
         - 'arn:aws:iam::aws:policy/ReadOnlyAccess'
@@ -46,7 +48,9 @@ Resources:
         Statement:
           - Effect: Allow
             Principal:
-              AWS: !Sub 'arn:aws:iam::${WorkstationAccountId}:role/ImladrisWorkstationRole'
+              AWS:
+                - !Sub 'arn:aws:iam::${WorkstationAccountId}:role/imladris-instance-role'
+                - !Sub 'arn:aws:iam::${WorkstationAccountId}:role/ImladrisWorkstationRole'
             Action: 'sts:AssumeRole'
       Policies:
         - PolicyName: ImladrisReadWritePolicy

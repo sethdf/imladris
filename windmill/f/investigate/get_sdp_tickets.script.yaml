@@ -1,0 +1,44 @@
+summary: ''
+description: ''
+lock: '!inline f/investigate/get_sdp_tickets.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    limit:
+      type: number
+      description: ''
+      default: 20
+    requester:
+      type: string
+      description: ''
+      default: null
+      originalType: string
+    search:
+      type: string
+      description: ''
+      default: null
+      originalType: string
+    status:
+      type: string
+      description: ''
+      default: null
+      enum:
+        - Open
+        - In Progress
+        - On Hold
+        - Resolved
+        - Closed
+      originalType: enum
+    technician:
+      type: string
+      description: ''
+      default: null
+      originalType: string
+    ticket_id:
+      type: string
+      description: ''
+      default: null
+      originalType: string
+  required: []

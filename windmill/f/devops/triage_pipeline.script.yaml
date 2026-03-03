@@ -1,7 +1,7 @@
 summary: Triage Pipeline Orchestrator
 description: >-
   Central coordinator for the triage pipeline. Classifies incoming items
-  (email, ticket, alert) via claude -p, then investigates QUEUE/NOTIFY items
+  (email, ticket, alert) via Bedrock Sonnet, then investigates QUEUE/NOTIFY items
   via Steampipe probes, and proposes fixes for human approval. AUTO items are
   cached and returned immediately. All investigation is read-only.
 lock: []

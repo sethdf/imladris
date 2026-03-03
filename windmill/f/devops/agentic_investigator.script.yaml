@@ -1,0 +1,51 @@
+summary: 'Agentic Investigator (System 2) — Bedrock Converse API tool-use loop'
+description: 'Opus investigates alerts using 16 read-only tools via multi-round Converse API loop. ISC methodology: decompose, investigate, verify, submit.'
+lock: '!inline f/devops/agentic_investigator.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    body:
+      type: string
+      description: ''
+      default: null
+      originalType: string
+    item_id:
+      type: string
+      description: ''
+      default: null
+      originalType: string
+    related_alerts:
+      type: array
+      description: ''
+      default: []
+      items:
+        type: string
+      originalType: string[]
+    sender:
+      type: string
+      description: ''
+      default: null
+      originalType: string
+    source:
+      type: string
+      description: ''
+      default: null
+      originalType: string
+    subject:
+      type: string
+      description: ''
+      default: null
+      originalType: string
+    triage_classification:
+      type: string
+      description: ''
+      default: ''
+      originalType: string
+  required:
+    - source
+    - subject
+    - body
+    - sender
+    - item_id

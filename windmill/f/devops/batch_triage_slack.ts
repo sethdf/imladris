@@ -4,8 +4,7 @@
 // Top-level messages only (v1) — thread replies are a future enhancement.
 
 import { createHash } from "crypto";
-import { execSync } from "child_process";
-import { writeFileSync, unlinkSync } from "fs";
+import { bedrockInvoke, MODELS } from "./bedrock.ts";
 
 // ── Windmill variable helper ──
 
@@ -217,7 +216,7 @@ async function formatSubject(
   return `#${channel.name}`;
 }
 
-// ── Inline classification via claude -p (Layer 2) ──
+// ── Inline classification via Bedrock (Layer 2) ──
 
 interface Classification {
   action: "NOTIFY" | "QUEUE" | "AUTO";
@@ -227,11 +226,11 @@ interface Classification {
   domain: string;
 }
 
-function classifyMessage(
+async function classifyMessage(
   subject: string,
   sender: string,
   preview: string,
-): Classification {
+): Promise<Classification> {
   const content = `Channel: ${subject}\nFrom: ${sender}\n\n${preview}`.slice(0, 2000);
   const prompt = `You are a Slack message triage system. Classify this message.
 
@@ -253,20 +252,13 @@ Rules:
 - critical/high -> NOTIFY, medium -> QUEUE or AUTO, low -> AUTO`;
 
   try {
-    const tmpFile = `/tmp/batch-classify-slack-${Date.now()}.txt`;
-    writeFileSync(tmpFile, prompt);
-    const result = execSync(
-      `cat ${tmpFile} | claude -p 2>/dev/null`,
-      { encoding: "utf-8", timeout: 60000 },
-    ).trim();
-    try { unlinkSync(tmpFile); } catch { /* best-effort */ }
+    const inner = await bedrockInvoke(prompt, {
+      model: MODELS.SONNET,
+      maxTokens: 256,
+      timeoutMs: 30000,
+      parseJson: true,
+    });
 
-    const jsonStart = result.indexOf("{");
-    const jsonEnd = result.lastIndexOf("}");
-    if (jsonStart < 0 || jsonEnd <= jsonStart) {
-      throw new Error(`No JSON object found in response: ${result.slice(0, 100)}`);
-    }
-    const inner = JSON.parse(result.slice(jsonStart, jsonEnd + 1));
     const validActions = ["NOTIFY", "QUEUE", "AUTO"];
     if (!validActions.includes(inner.action)) inner.action = "QUEUE";
     return inner as Classification;
@@ -276,7 +268,7 @@ Rules:
       action: "QUEUE",
       urgency: "medium",
       summary: `CLASSIFY ERROR: ${err.message?.slice(0, 150)}`,
-      reasoning: `claude -p error: ${err.message?.slice(0, 200)}`,
+      reasoning: `Bedrock error: ${err.message?.slice(0, 200)}`,
       domain: "work",
     };
   }
@@ -348,7 +340,7 @@ function classifyLayered(
   }
 
   // Layer 2: AI classification
-  const aiResult = classifyMessage(subject, sender, preview);
+  const aiResult = await classifyMessage(subject, sender, preview);
   return {
     ...aiResult,
     classified_by: "L2_ai",

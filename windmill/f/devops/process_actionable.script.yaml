@@ -1,9 +1,10 @@
 summary: Process Actionable Triage Items
 description: >-
-  Post-triage orchestrator: reads unprocessed QUEUE/NOTIFY items from
-  triage_results, creates SDP Tasks, optionally runs investigation pipeline,
-  attaches findings as task notes. Only work-domain items flow to SDP.
-  Deduplicates by hash — one task per unique item.
+  Investigate-first pipeline: Phase 1 runs investigations on uninvestigated +
+  retry-eligible items, Phase 2 creates SDP Tasks only for substantial findings,
+  Phase 3 escalates stale items that exhausted retries. Nothing is ever lost —
+  items either get tasks with findings or escalation tasks explaining gaps.
+  Only work-domain items flow to SDP. Deduplicates by hash.
 lock: []
 schema:
   $schema: https://json-schema.org/draft/2020-12/schema
@@ -29,6 +30,14 @@ schema:
       type: number
       default: 3000
       description: Milliseconds between processing items (rate limiting)
+    retry_interval_hours:
+      type: number
+      default: 6
+      description: Hours between retry attempts for waiting_context items
+    max_retry_attempts:
+      type: number
+      default: 5
+      description: Max investigation attempts before escalating to task
   required: []
 is_template: false
 kind: script

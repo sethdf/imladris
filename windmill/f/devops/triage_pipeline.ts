@@ -3,21 +3,22 @@
 // (email, ticket, alert) and orchestrates: classify -> investigate -> propose fix.
 //
 // Pipeline steps:
-//   1. CLASSIFY — inline AI classification via claude -p (NOTIFY/QUEUE/AUTO)
+//   1. CLASSIFY — AI classification via Bedrock Sonnet (NOTIFY/QUEUE/AUTO)
 //   2. INVESTIGATE — call f/devops/investigate via Windmill internal API (read-only)
 //   3. PROPOSE — format fixable items for human approval
 //   4. RETURN — complete pipeline result with next-step guidance
 //
 // Rules:
 //   - All investigation is READ-ONLY — no modifications
-//   - Classification uses claude CLI pipe mode, not Anthropic API
+//   - Classification uses Bedrock Sonnet via AWS CLI
 //   - AUTO items are cached and returned immediately
 //   - QUEUE/NOTIFY items get full investigation
 
 import { execSync } from "child_process";
-import { writeFileSync, unlinkSync, existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
+import { bedrockInvoke, MODELS } from "./bedrock.ts";
 
 const HOME = homedir();
 
@@ -112,14 +113,14 @@ async function runWindmillScript(path: string, args: Record<string, any>): Promi
   return resp.json();
 }
 
-// ── Step 1: Classify (inline via claude -p) ──
+// ── Step 1: Classify (via Bedrock Sonnet) ──
 
-function classify(
+async function classify(
   source: string,
   event_type: string,
   content: string,
-): TriageClassification {
-  // Load calibration data if available (same pattern as auto_triage.ts)
+): Promise<TriageClassification> {
+  // Load calibration data if available
   let calibrationContext = "";
   try {
     const calibrationPath = join(HOME, ".claude", "state", "triage-calibration.json");
@@ -175,28 +176,12 @@ Rules:
 - critical/high -> NOTIFY, medium -> QUEUE or AUTO, low -> AUTO${calibrationContext}`;
 
   try {
-    const tmpFile = `/tmp/triage-pipeline-classify-${Date.now()}.txt`;
-    writeFileSync(tmpFile, prompt);
-    const result = execSync(
-      `cat ${tmpFile} | claude -p --output-format json 2>/dev/null`,
-      { encoding: "utf-8", timeout: 30000 },
-    ).trim();
-    try { unlinkSync(tmpFile); } catch { /* cleanup best-effort */ }
-
-    // claude -p --output-format json wraps in envelope: {result: "..."}
-    const parsed = JSON.parse(result);
-    let text = typeof parsed === "string"
-      ? parsed
-      : parsed.result || parsed.content || JSON.stringify(parsed);
-    // Extract JSON object from response (handles markdown wrappers, leading text, etc.)
-    if (typeof text === "string") {
-      const jsonStart = text.indexOf("{");
-      const jsonEnd = text.lastIndexOf("}");
-      if (jsonStart >= 0 && jsonEnd > jsonStart) {
-        text = text.slice(jsonStart, jsonEnd + 1);
-      }
-    }
-    const inner = typeof text === "string" ? JSON.parse(text) : text;
+    const inner = await bedrockInvoke(prompt, {
+      model: MODELS.SONNET,
+      maxTokens: 256,
+      timeoutMs: 30000,
+      parseJson: true,
+    });
 
     // Validate the classification
     const validActions: TriageAction[] = ["NOTIFY", "QUEUE", "AUTO"];
@@ -211,7 +196,7 @@ Rules:
       action: "QUEUE" as TriageAction,
       urgency: "medium" as const,
       summary: `Classification failed for ${source}/${event_type} — queued for manual review`,
-      reasoning: `claude -p classification error: ${err.message?.slice(0, 200)}`,
+      reasoning: `Bedrock classification error: ${err.message?.slice(0, 200)}`,
       domain: "work" as const,
     };
   }
@@ -384,7 +369,7 @@ export async function main(
 
   // ── Step 1: CLASSIFY ──
   console.log(`[pipeline] Step 1: Classifying ${source}/${event_type} item...`);
-  const classification = classify(source, event_type, content);
+  const classification = await classify(source, event_type, content);
   console.log(`[pipeline] Classification: ${classification.action} (${classification.urgency}) — ${classification.summary}`);
 
   // ── SHORT-CIRCUIT: AUTO items or classify_only mode ──

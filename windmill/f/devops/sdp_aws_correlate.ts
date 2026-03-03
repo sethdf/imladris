@@ -10,6 +10,7 @@ import { execSync } from "child_process";
 import { appendFileSync, existsSync, mkdirSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
+import { extractEntities as _extractEntities, type Entity } from "./entity_extract.ts";
 
 const HOME = homedir();
 const CORRELATE_LOG = join(HOME, ".claude", "logs", "sdp-aws-correlations.jsonl");
@@ -38,21 +39,6 @@ async function getVariable(path: string): Promise<string | undefined> {
   }
 }
 
-// Entity patterns (from entity_extract.ts)
-const PATTERNS: [string, RegExp][] = [
-  ["aws_instance", /\bi-[0-9a-f]{8,17}\b/gi],
-  ["aws_account", /\b\d{12}\b/g],
-  ["aws_arn", /arn:aws[a-z-]*:[a-z0-9-]+:[a-z0-9-]*:\d{12}:[a-zA-Z0-9/._-]+/g],
-  ["aws_sg", /\bsg-[0-9a-f]{8,17}\b/gi],
-  ["aws_vpc", /\bvpc-[0-9a-f]{8,17}\b/gi],
-  ["aws_subnet", /\bsubnet-[0-9a-f]{8,17}\b/gi],
-  ["aws_eni", /\beni-[0-9a-f]{8,17}\b/gi],
-  ["aws_volume", /\bvol-[0-9a-f]{8,17}\b/gi],
-  ["ipv4", /\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b/g],
-  ["hostname", /\b[a-z][a-z0-9-]+\.(?:ec2\.internal|amazonaws\.com|compute\.internal)\b/gi],
-  ["cve", /CVE-\d{4}-\d{4,}/gi],
-];
-
 interface ExtractedEntity {
   type: string;
   value: string;
@@ -60,21 +46,7 @@ interface ExtractedEntity {
 }
 
 function extractEntities(text: string): ExtractedEntity[] {
-  const entities: ExtractedEntity[] = [];
-  const seen = new Set<string>();
-
-  for (const [type, pattern] of PATTERNS) {
-    const matches = text.matchAll(pattern);
-    for (const match of matches) {
-      const value = match[0];
-      const key = `${type}:${value}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      entities.push({ type, value });
-    }
-  }
-
-  return entities;
+  return _extractEntities(text);
 }
 
 function enrichWithSteampipe(entity: ExtractedEntity): ExtractedEntity {
@@ -87,19 +59,19 @@ function enrichWithSteampipe(entity: ExtractedEntity): ExtractedEntity {
   try {
     let query = "";
     switch (entity.type) {
-      case "aws_instance":
+      case "ec2_instance":
         query = `select instance_id, instance_type, instance_state as state, private_ip_address, tags ->> 'Name' as name from aws_ec2_instance where instance_id = '${entity.value}'`;
         break;
-      case "aws_sg":
+      case "security_group":
         query = `select group_id, group_name, vpc_id, description from aws_vpc_security_group where group_id = '${entity.value}'`;
         break;
-      case "aws_vpc":
+      case "vpc":
         query = `select vpc_id, cidr_block, state, tags ->> 'Name' as name from aws_vpc where vpc_id = '${entity.value}'`;
         break;
-      case "aws_volume":
+      case "volume":
         query = `select volume_id, volume_type, size, state, tags ->> 'Name' as name from aws_ebs_volume where volume_id = '${entity.value}'`;
         break;
-      case "aws_subnet":
+      case "subnet":
         query = `select subnet_id, vpc_id, cidr_block, availability_zone, tags ->> 'Name' as name from aws_vpc_subnet where subnet_id = '${entity.value}'`;
         break;
       default:

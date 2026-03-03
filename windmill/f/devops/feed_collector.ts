@@ -1,7 +1,7 @@
 // Windmill Script: Security Feed Collector
 // Phase 6 Gap #1: Feed collection infrastructure
 //
-// Polls RSS/CVE/NVD feeds, deduplicates, sends new items to auto_triage.
+// Polls RSS/CVE/NVD feeds, deduplicates, caches for cross-source correlation.
 // Designed to run as Windmill cron (e.g., every 6 hours).
 //
 // Requires Windmill variable:

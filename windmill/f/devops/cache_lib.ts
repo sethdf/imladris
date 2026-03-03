@@ -6,42 +6,17 @@
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, statSync, readdirSync, unlinkSync, writeFileSync, readFileSync } from "fs";
 import { join, dirname } from "path";
+import { extractEntities as _extractEntities } from "./entity_extract.ts";
 
 function getCacheDir() { return process.env.CACHE_DIR || "/local/cache/triage"; }
 function getDbPath() { return join(getCacheDir(), "index.db"); }
 function getDataDir() { return join(getCacheDir(), "data"); }
 function getMaxSizeGb() { return Number(process.env.CACHE_MAX_SIZE_GB || "100"); }
 
-// Entity extraction patterns (inline — no external dependency)
-const ENTITY_PATTERNS: Array<{ type: string; regex: RegExp }> = [
-  { type: "instance", regex: /\bi-[0-9a-f]{8,17}\b/gi },
-  { type: "sg", regex: /\bsg-[0-9a-f]{8,17}\b/gi },
-  { type: "cve", regex: /\bCVE-\d{4}-\d{4,}\b/gi },
-  { type: "ip", regex: /\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b/g },
-  { type: "ticket", regex: /\b(?:ticket|request|SR)[- #]?(\d{4,})\b/gi },
-  { type: "s3_bucket", regex: /\bs3:\/\/[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]\b/gi },
-  { type: "arn", regex: /\barn:aws:[a-z0-9-]+:[a-z0-9-]*:\d{12}:[a-zA-Z0-9/:._-]+\b/g },
-  { type: "subnet", regex: /\bsubnet-[0-9a-f]{8,17}\b/gi },
-  { type: "vpc", regex: /\bvpc-[0-9a-f]{8,17}\b/gi },
-  { type: "ami", regex: /\bami-[0-9a-f]{8,17}\b/gi },
-  { type: "vol", regex: /\bvol-[0-9a-f]{8,17}\b/gi },
-];
-
-/** Extract entities from text */
+// Entity extraction — delegates to canonical entity_extract.ts
+// Returns { entity, type } for backwards compatibility with existing callers.
 export function extractEntities(text: string): Array<{ entity: string; type: string }> {
-  const results: Array<{ entity: string; type: string }> = [];
-  const seen = new Set<string>();
-  for (const { type, regex } of ENTITY_PATTERNS) {
-    const matches = text.match(regex) || [];
-    for (const m of matches) {
-      const key = `${type}:${m.toLowerCase()}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        results.push({ entity: m, type });
-      }
-    }
-  }
-  return results;
+  return _extractEntities(text).map(e => ({ entity: e.value, type: e.type }));
 }
 
 /** Check if NVMe cache is available */
@@ -151,15 +126,46 @@ export function init(): boolean {
       CREATE INDEX IF NOT EXISTS idx_triage_results_task ON triage_results(task_id);
     `);
 
-    // Migration: add task_id column to existing triage_results tables
-    try {
-      db.exec("ALTER TABLE triage_results ADD COLUMN task_id TEXT DEFAULT NULL");
-    } catch {
-      // Column already exists — expected on subsequent runs
+    // Migrations: add columns to existing triage_results tables (idempotent via try/catch)
+    const migrations = [
+      "ALTER TABLE triage_results ADD COLUMN task_id TEXT DEFAULT NULL",
+      "ALTER TABLE triage_results ADD COLUMN investigation_status TEXT DEFAULT NULL",
+      "ALTER TABLE triage_results ADD COLUMN investigation_result TEXT DEFAULT NULL",
+      "ALTER TABLE triage_results ADD COLUMN waiting_context_reason TEXT DEFAULT NULL",
+      "ALTER TABLE triage_results ADD COLUMN investigation_attempts INTEGER NOT NULL DEFAULT 0",
+      "ALTER TABLE triage_results ADD COLUMN last_investigated_at INTEGER DEFAULT NULL",
+    ];
+    for (const migration of migrations) {
+      try { db.exec(migration); } catch { /* Column already exists — expected on subsequent runs */ }
     }
     try {
       db.exec("CREATE INDEX IF NOT EXISTS idx_triage_results_task ON triage_results(task_id)");
     } catch { /* index may already exist */ }
+    try {
+      db.exec("CREATE INDEX IF NOT EXISTS idx_triage_results_inv_status ON triage_results(investigation_status)");
+    } catch { /* index may already exist */ }
+
+    // ── Resource inventory table (auto-discovery) ──
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS resource_inventory (
+        resource_id TEXT NOT NULL,
+        resource_name TEXT NOT NULL,
+        resource_type TEXT NOT NULL,
+        cloud TEXT NOT NULL DEFAULT 'aws',
+        account_id TEXT NOT NULL DEFAULT '',
+        region TEXT NOT NULL DEFAULT '',
+        state TEXT NOT NULL DEFAULT '',
+        metadata TEXT DEFAULT '{}',
+        name_tokens TEXT DEFAULT '',
+        discovered_at INTEGER NOT NULL,
+        last_seen_at INTEGER NOT NULL,
+        is_stale INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (cloud, resource_type, resource_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_resource_inv_name ON resource_inventory(resource_name);
+      CREATE INDEX IF NOT EXISTS idx_resource_inv_type ON resource_inventory(resource_type);
+      CREATE INDEX IF NOT EXISTS idx_resource_inv_stale ON resource_inventory(is_stale);
+    `);
 
     // FTS5 — try to create, gracefully handle if unavailable
     try {
@@ -690,6 +696,142 @@ export interface ActionableItem {
   metadata: string;
 }
 
+/** Get uninvestigated actionable items (QUEUE/NOTIFY, no investigation_status, work domain) */
+export function getUninvestigatedActionable(limit: number = 20, priorityFilter?: string): ActionableItem[] {
+  const db = getDb();
+  if (!db) return [];
+  try {
+    init();
+    const urgencyOrder = "CASE urgency WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END";
+    let sql: string;
+    let params: any[];
+
+    if (priorityFilter) {
+      sql = `SELECT id, source, message_id, subject, sender, received_at, action, urgency, summary, reasoning, domain, classified_by, dedup_hash, metadata
+             FROM triage_results
+             WHERE action = ? AND task_id IS NULL AND domain = 'work' AND investigation_status IS NULL
+             ORDER BY ${urgencyOrder} ASC, classified_at DESC
+             LIMIT ?`;
+      params = [priorityFilter, limit];
+    } else {
+      sql = `SELECT id, source, message_id, subject, sender, received_at, action, urgency, summary, reasoning, domain, classified_by, dedup_hash, metadata
+             FROM triage_results
+             WHERE action IN ('QUEUE', 'NOTIFY') AND task_id IS NULL AND domain = 'work' AND investigation_status IS NULL
+             ORDER BY ${urgencyOrder} ASC, classified_at DESC
+             LIMIT ?`;
+      params = [limit];
+    }
+
+    const rows = db.prepare(sql).all(...params) as ActionableItem[];
+    db.close();
+    return rows;
+  } catch {
+    db.close();
+    return [];
+  }
+}
+
+/** Get waiting_context items eligible for retry */
+export function getWaitingContextItems(retryAfterSeconds: number = 21600, maxAttempts: number = 5, limit: number = 20): ActionableItem[] {
+  const db = getDb();
+  if (!db) return [];
+  try {
+    init();
+    const cutoff = Math.floor(Date.now() / 1000) - retryAfterSeconds;
+    const urgencyOrder = "CASE urgency WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END";
+    const sql = `SELECT id, source, message_id, subject, sender, received_at, action, urgency, summary, reasoning, domain, classified_by, dedup_hash, metadata
+                 FROM triage_results
+                 WHERE investigation_status = 'waiting_context'
+                   AND investigation_attempts < ?
+                   AND (last_investigated_at IS NULL OR last_investigated_at < ?)
+                   AND task_id IS NULL AND domain = 'work'
+                 ORDER BY ${urgencyOrder} ASC, classified_at DESC
+                 LIMIT ?`;
+    const rows = db.prepare(sql).all(maxAttempts, cutoff, limit) as ActionableItem[];
+    db.close();
+    return rows;
+  } catch {
+    db.close();
+    return [];
+  }
+}
+
+/** Get items with substantial investigation results, ready for task creation */
+export function getInvestigatedReadyForTask(limit: number = 20): ActionableItem[] {
+  const db = getDb();
+  if (!db) return [];
+  try {
+    init();
+    const urgencyOrder = "CASE urgency WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END";
+    const sql = `SELECT id, source, message_id, subject, sender, received_at, action, urgency, summary, reasoning, domain, classified_by, dedup_hash, metadata, investigation_result
+                 FROM triage_results
+                 WHERE investigation_status = 'substantial' AND task_id IS NULL AND domain = 'work'
+                 GROUP BY dedup_hash
+                 ORDER BY ${urgencyOrder} ASC, classified_at DESC
+                 LIMIT ?`;
+    const rows = db.prepare(sql).all(limit) as ActionableItem[];
+    db.close();
+    return rows;
+  } catch {
+    db.close();
+    return [];
+  }
+}
+
+/** Get stale items that exhausted retry attempts — need escalation */
+export function getStaleItems(maxAttempts: number = 5, limit: number = 20): ActionableItem[] {
+  const db = getDb();
+  if (!db) return [];
+  try {
+    init();
+    const urgencyOrder = "CASE urgency WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END";
+    const sql = `SELECT id, source, message_id, subject, sender, received_at, action, urgency, summary, reasoning, domain, classified_by, dedup_hash, metadata, investigation_status, waiting_context_reason, investigation_attempts
+                 FROM triage_results
+                 WHERE investigation_status IN ('waiting_context', 'empty', 'error')
+                   AND investigation_attempts >= ?
+                   AND task_id IS NULL AND domain = 'work'
+                 GROUP BY dedup_hash
+                 ORDER BY ${urgencyOrder} ASC, classified_at DESC
+                 LIMIT ?`;
+    const rows = db.prepare(sql).all(maxAttempts, limit) as ActionableItem[];
+    db.close();
+    return rows;
+  } catch {
+    db.close();
+    return [];
+  }
+}
+
+/** Update investigation status for all rows matching a dedup_hash */
+export function updateInvestigationStatus(
+  dedupHash: string,
+  status: string,
+  result?: string | null,
+  waitingReason?: string | null,
+): number {
+  const db = getDb();
+  if (!db) return 0;
+  try {
+    init();
+    const now = Math.floor(Date.now() / 1000);
+    const info = db.run(
+      `UPDATE triage_results
+       SET investigation_status = ?,
+           investigation_result = COALESCE(?, investigation_result),
+           waiting_context_reason = COALESCE(?, waiting_context_reason),
+           investigation_attempts = investigation_attempts + 1,
+           last_investigated_at = ?
+       WHERE dedup_hash = ?`,
+      [status, result ?? null, waitingReason ?? null, now, dedupHash],
+    );
+    db.close();
+    return (info as any).changes ?? 0;
+  } catch {
+    db.close();
+    return 0;
+  }
+}
+
 /** Get unprocessed actionable items (QUEUE/NOTIFY, no task_id, work domain only) */
 export function getUnprocessedActionable(limit: number = 20, priorityFilter?: string): ActionableItem[] {
   const db = getDb();
@@ -722,5 +864,194 @@ export function getUnprocessedActionable(limit: number = 20, priorityFilter?: st
   } catch {
     db.close();
     return [];
+  }
+}
+
+// ── Resource Inventory (auto-discovery) ──
+
+export interface ResourceRecord {
+  resource_id: string;
+  resource_name: string;
+  resource_type: string;
+  cloud?: string;
+  account_id?: string;
+  region?: string;
+  state?: string;
+  metadata?: string;
+}
+
+/** Generate searchable tokens from a resource name */
+export function generateNameTokens(name: string): string {
+  const tokens = name
+    .replace(/([a-z])([A-Z])/g, "$1 $2")  // camelCase split
+    .replace(/[-_./]/g, " ")               // delimiter split
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(t => t.length >= 2);
+  return [name.toLowerCase(), ...tokens].join(" ");
+}
+
+/** Insert or update a resource in the inventory */
+export function upsertResource(resource: ResourceRecord): boolean {
+  const db = getDb();
+  if (!db) return false;
+  try {
+    init();
+    const now = Math.floor(Date.now() / 1000);
+    const tokens = generateNameTokens(resource.resource_name);
+    db.run(
+      `INSERT OR REPLACE INTO resource_inventory
+       (resource_id, resource_name, resource_type, cloud, account_id, region, state, metadata, name_tokens, discovered_at, last_seen_at, is_stale)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT discovered_at FROM resource_inventory WHERE cloud = ? AND resource_type = ? AND resource_id = ?), ?), ?, 0)`,
+      [
+        resource.resource_id,
+        resource.resource_name,
+        resource.resource_type,
+        resource.cloud || "aws",
+        resource.account_id || "",
+        resource.region || "",
+        resource.state || "",
+        resource.metadata || "{}",
+        tokens,
+        resource.cloud || "aws",
+        resource.resource_type,
+        resource.resource_id,
+        now,
+        now,
+      ],
+    );
+    db.close();
+    return true;
+  } catch {
+    db.close();
+    return false;
+  }
+}
+
+/** Mark resources not seen for olderThanSeconds as stale */
+export function markStaleResources(olderThanSeconds: number): number {
+  const db = getDb();
+  if (!db) return 0;
+  try {
+    init();
+    const cutoff = Math.floor(Date.now() / 1000) - olderThanSeconds;
+    const info = db.run(
+      "UPDATE resource_inventory SET is_stale = 1 WHERE last_seen_at < ? AND is_stale = 0",
+      [cutoff],
+    );
+    db.close();
+    return (info as any).changes ?? 0;
+  } catch {
+    db.close();
+    return 0;
+  }
+}
+
+/** Stop words to skip during token matching */
+const RESOURCE_STOP_WORDS = new Set([
+  "the", "and", "for", "from", "with", "this", "that", "are", "was", "has",
+  "have", "been", "will", "not", "your", "our", "you", "all", "can", "may",
+  "new", "one", "two", "out", "its", "had", "but", "use", "her", "his",
+]);
+
+export interface ResourceMatch {
+  resource_id: string;
+  resource_name: string;
+  resource_type: string;
+  cloud: string;
+  account_id: string;
+  region: string;
+  state: string;
+}
+
+/** Look up resources by fuzzy name matching against text */
+export function lookupResourceByName(text: string, limit: number = 10): ResourceMatch[] {
+  const db = getDb();
+  if (!db) return [];
+  try {
+    init();
+    const results: ResourceMatch[] = [];
+    const seen = new Set<string>();
+
+    // Strategy 1: Check if any resource name appears as substring in text
+    const substringMatches = db.prepare(
+      `SELECT resource_id, resource_name, resource_type, cloud, account_id, region, state
+       FROM resource_inventory
+       WHERE is_stale = 0
+         AND LENGTH(resource_name) >= 4
+         AND INSTR(LOWER(?), LOWER(resource_name)) > 0
+       LIMIT ?`
+    ).all(text, limit) as ResourceMatch[];
+
+    for (const m of substringMatches) {
+      const key = `${m.resource_type}:${m.resource_id}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        results.push(m);
+      }
+    }
+
+    // Strategy 2: Extract tokens from text and match against name_tokens
+    const tokens = text
+      .replace(/([a-z])([A-Z])/g, "$1 $2")
+      .replace(/[-_./]/g, " ")
+      .toLowerCase()
+      .split(/\s+/)
+      .filter(t => t.length >= 3 && !RESOURCE_STOP_WORDS.has(t));
+
+    // Deduplicate tokens
+    const uniqueTokens = [...new Set(tokens)];
+
+    for (const token of uniqueTokens.slice(0, 20)) {
+      if (results.length >= limit) break;
+      const tokenMatches = db.prepare(
+        `SELECT resource_id, resource_name, resource_type, cloud, account_id, region, state
+         FROM resource_inventory
+         WHERE is_stale = 0
+           AND (resource_name = ? COLLATE NOCASE OR name_tokens LIKE '%' || ? || '%')
+         LIMIT ?`
+      ).all(token, token, limit - results.length) as ResourceMatch[];
+
+      for (const m of tokenMatches) {
+        const key = `${m.resource_type}:${m.resource_id}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          results.push(m);
+        }
+      }
+    }
+
+    db.close();
+    return results.slice(0, limit);
+  } catch {
+    db.close();
+    return [];
+  }
+}
+
+/** Get resource inventory statistics */
+export function resourceInventoryStats(): {
+  total: number;
+  by_type: Record<string, number>;
+  stale_count: number;
+} {
+  const db = getDb();
+  if (!db) return { total: 0, by_type: {}, stale_count: 0 };
+  try {
+    init();
+    const total = (db.prepare("SELECT COUNT(*) as c FROM resource_inventory").get() as any)?.c || 0;
+    const staleCount = (db.prepare("SELECT COUNT(*) as c FROM resource_inventory WHERE is_stale = 1").get() as any)?.c || 0;
+
+    const byType: Record<string, number> = {};
+    const rows = db.prepare(
+      "SELECT resource_type, COUNT(*) as c FROM resource_inventory WHERE is_stale = 0 GROUP BY resource_type"
+    ).all() as any[];
+    for (const r of rows) byType[r.resource_type] = r.c;
+
+    db.close();
+    return { total, by_type: byType, stale_count: staleCount };
+  } catch {
+    db.close();
+    return { total: 0, by_type: {}, stale_count: 0 };
   }
 }

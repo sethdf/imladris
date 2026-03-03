@@ -5,16 +5,16 @@
 // RULES:
 //   1. ALL operations are READ-ONLY — this is verification, not remediation
 //   2. Re-runs the SAME queries that investigate.ts ran originally
-//   3. Uses claude CLI for AI synthesis of before/after comparison
+//   3. Uses Bedrock Sonnet for AI synthesis of before/after comparison
 //   4. Never modifies any resource — strictly observational
 //
 // Requires:
 //   Steampipe service running on host (port 9193, postgres protocol)
 //   Windmill variables: f/devops/steampipe_password
-//   claude CLI available (native worker, not Docker)
+//   AWS Bedrock access (us-east-1) for AI synthesis
 
 import { execSync } from "child_process";
-import { writeFileSync, unlinkSync } from "fs";
+import { bedrockInvoke, MODELS } from "./bedrock.ts";
 
 // -- Windmill variable access --
 
@@ -372,24 +372,12 @@ Respond with ONLY valid JSON:
 }`;
 
   try {
-    const tmpFile = `/tmp/verify-prompt-${Date.now()}.txt`;
-    writeFileSync(tmpFile, prompt);
-    const result = execSync(
-      `cat ${tmpFile} | claude -p --output-format json 2>/dev/null`,
-      { encoding: "utf-8", timeout: 90000 },
-    ).trim();
-    try {
-      unlinkSync(tmpFile);
-    } catch {
-      /* cleanup best-effort */
-    }
-
-    const parsed = JSON.parse(result);
-    const text =
-      typeof parsed === "string"
-        ? parsed
-        : parsed.result || parsed.content || JSON.stringify(parsed);
-    const inner = typeof text === "string" ? JSON.parse(text) : text;
+    const inner = await bedrockInvoke(prompt, {
+      model: MODELS.SONNET,
+      maxTokens: 512,
+      timeoutMs: 60000,
+      parseJson: true,
+    });
 
     return {
       verified: inner.verified === true,

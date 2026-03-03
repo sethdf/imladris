@@ -57,6 +57,26 @@ async function getM365Token(
   return { token: data.access_token };
 }
 
+function stripHtml(html: string): string {
+  return html
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n\n")
+    .replace(/<\/div>/gi, "\n")
+    .replace(/<\/tr>/gi, "\n")
+    .replace(/<\/li>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 export async function main(
   user_email: string = "sfoley@buxtonco.com",
   unread_only: boolean = true,
@@ -91,7 +111,7 @@ export async function main(
   // Graph API pages at max 1000 per request. Paginate to get all unread.
   const pageSize = Math.min(limit > 0 ? limit : 1000, 1000);
   const allMessages: any[] = [];
-  let nextUrl: string | null = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(user_email)}/messages?$top=${pageSize}&$orderby=receivedDateTime desc&$select=id,subject,from,receivedDateTime,isRead,importance,hasAttachments,bodyPreview${filterStr}`;
+  let nextUrl: string | null = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(user_email)}/messages?$top=${pageSize}&$orderby=receivedDateTime desc&$select=id,subject,from,receivedDateTime,isRead,importance,hasAttachments,bodyPreview,body${filterStr}`;
 
   while (nextUrl) {
     const response = await fetch(nextUrl, {
@@ -153,6 +173,7 @@ export async function main(
     importance: m.importance,
     has_attachments: m.hasAttachments,
     preview: clean(m.bodyPreview?.slice(0, 200)),
+    body_text: m.body?.content ? stripHtml(m.body.content).slice(0, 8000) : "",
   }));
 
   // Sender breakdown for summary

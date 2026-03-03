@@ -3,8 +3,7 @@
 // Only AI classification is rate-limited; L1 results are instant.
 
 import { createHash } from "crypto";
-import { execSync } from "child_process";
-import { writeFileSync, unlinkSync } from "fs";
+import { bedrockInvoke, MODELS } from "./bedrock.ts";
 
 // ── Windmill variable helper ──
 
@@ -25,6 +24,27 @@ async function getVariable(path: string): Promise<string | undefined> {
   } catch {
     return undefined;
   }
+}
+
+// ── HTML strip helper ──
+function stripHtml(html: string): string {
+  return html
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n\n")
+    .replace(/<\/div>/gi, "\n")
+    .replace(/<\/tr>/gi, "\n")
+    .replace(/<\/li>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 // ── Graph API helpers ──
@@ -63,7 +83,7 @@ async function fetchUnreadEmails(
   since.setDate(since.getDate() - daysBack);
   const sinceStr = since.toISOString();
   const filter = `isRead eq false and receivedDateTime ge ${sinceStr}`;
-  const select = "id,subject,from,receivedDateTime,bodyPreview,importance";
+  const select = "id,subject,from,receivedDateTime,bodyPreview,body,importance";
   const pageSize = Math.min(maxResults, 200); // Graph API max per page
   let url: string | null =
     `https://graph.microsoft.com/v1.0/users/${userId}/messages` +
@@ -116,7 +136,7 @@ async function markEmailRead(
   }
 }
 
-// ── Inline classification via claude -p (Layer 2) ──
+// ── Inline classification via Bedrock (Layer 2) ──
 
 interface Classification {
   action: "NOTIFY" | "QUEUE" | "AUTO";
@@ -126,7 +146,7 @@ interface Classification {
   domain: string;
 }
 
-function classifyEmail(subject: string, from: string, preview: string): Classification {
+async function classifyEmail(subject: string, from: string, preview: string): Promise<Classification> {
   const content = `From: ${from}\nSubject: ${subject}\n\n${preview}`.slice(0, 2000);
   const prompt = `You are an email triage system. Classify this email.
 
@@ -148,22 +168,12 @@ Rules:
 - critical/high -> NOTIFY, medium -> QUEUE or AUTO, low -> AUTO`;
 
   try {
-    const tmpFile = `/tmp/batch-classify-${Date.now()}.txt`;
-    writeFileSync(tmpFile, prompt);
-    const result = execSync(
-      `cat ${tmpFile} | claude -p 2>/dev/null`,
-      { encoding: "utf-8", timeout: 60000 },
-    ).trim();
-    try { unlinkSync(tmpFile); } catch { /* best-effort */ }
-
-    // Extract JSON from raw text response (may contain markdown wrappers)
-    const jsonStart = result.indexOf("{");
-    const jsonEnd = result.lastIndexOf("}");
-    if (jsonStart < 0 || jsonEnd <= jsonStart) {
-      throw new Error(`No JSON object found in response: ${result.slice(0, 100)}`);
-    }
-    const jsonStr = result.slice(jsonStart, jsonEnd + 1);
-    const inner = JSON.parse(jsonStr);
+    const inner = await bedrockInvoke(prompt, {
+      model: MODELS.SONNET,
+      maxTokens: 256,
+      timeoutMs: 30000,
+      parseJson: true,
+    });
 
     const validActions = ["NOTIFY", "QUEUE", "AUTO"];
     if (!validActions.includes(inner.action)) inner.action = "QUEUE";
@@ -174,7 +184,7 @@ Rules:
       action: "QUEUE",
       urgency: "medium",
       summary: `CLASSIFY ERROR: ${err.message?.slice(0, 150)}`,
-      reasoning: `claude -p error: ${err.message?.slice(0, 200)}`,
+      reasoning: `Bedrock error: ${err.message?.slice(0, 200)}`,
       domain: "work",
     };
   }
@@ -246,7 +256,7 @@ function classifyLayered(
   }
 
   // Layer 2: AI classification
-  const aiResult = classifyEmail(subject, sender, preview);
+  const aiResult = await classifyEmail(subject, sender, preview);
   return {
     ...aiResult,
     classified_by: "L2_ai",
@@ -338,6 +348,8 @@ export async function main(
     const subject = email.subject || "No subject";
     const from = email.from?.emailAddress?.address || "unknown";
     const preview = email.bodyPreview || "";
+    const bodyHtml = email.body?.content || "";
+    const bodyText = bodyHtml ? stripHtml(bodyHtml) : preview;
     const receivedAt = email.receivedDateTime || "";
 
     console.log(`[batch_triage] [${i + 1}/${emails.length}] Triaging: ${subject.slice(0, 60)}...`);
@@ -348,7 +360,7 @@ export async function main(
     }
 
     try {
-      const classification = classifyLayered(email.id || "", subject, from, preview, receivedAt, cacheLib);
+      const classification = classifyLayered(email.id || "", subject, from, bodyText || preview, receivedAt, cacheLib);
       lastWasAi = classification.classified_by === "L2_ai";
 
       // Track layer breakdown
@@ -383,7 +395,7 @@ export async function main(
             rule_id: classification.rule_id,
             dedup_hash: dedupHash,
             marked_read: 0,
-            metadata: JSON.stringify({ importance: email.importance, preview: preview.slice(0, 1000) }),
+            metadata: JSON.stringify({ importance: email.importance, preview: preview.slice(0, 1000), body_text: bodyText.slice(0, 8000) }),
           });
         } catch { /* best-effort storage */ }
       }

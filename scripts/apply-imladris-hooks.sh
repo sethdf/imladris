@@ -181,7 +181,18 @@ ensureEventHook(settings.hooks.UserPromptSubmit,
 ensureEventHook(settings.hooks.SessionEnd,
   'bun run \$HOME/.claude/hooks/CrossWorkstreamLearning.hook.ts');
 
-// --- Clean stale hook references (files that don't exist) ---
+// --- Clean stale hook references (ONLY for imladris-owned hooks) ---
+// Safety: only remove entries whose command references an imladris custom hook.
+// PAI-owned hooks are NEVER touched by this cleanup, even if their path
+// doesn't resolve (e.g., \${PAI_DIR} not set during Ansible run).
+const IMLADRIS_HOOKS = new Set([
+  'McpLogger.hook.ts',
+  'McpSecurityValidator.hook.ts',
+  'PrdSync.hook.ts',
+  'StateSnapshot.hook.ts',
+  'ContextCompaction.hook.ts',
+  'CrossWorkstreamLearning.hook.ts',
+]);
 const home = process.env.HOME || '/home/' + require('os').userInfo().username;
 function cleanStale(eventArray) {
   if (eventArray === undefined || eventArray === null) return eventArray;
@@ -189,13 +200,16 @@ function cleanStale(eventArray) {
     if (entry.hooks) {
       entry.hooks = entry.hooks.filter(h => {
         if (h.command === undefined) return true;
+        const hookFile = h.command.trim().split('/').pop();
+        // Only clean stale refs for hooks that imladris owns
+        if (!hookFile || !IMLADRIS_HOOKS.has(hookFile)) return true;
         const expanded = h.command
           .replace(/\\\$HOME/g, home)
           .replace(/\\\${HOME}/g, home)
           .replace(/\\\$\\{PAI_DIR\\}/g, home + '/.claude');
         const hookPath = expanded.trim().split(' ').pop();
         if (hookPath && hookPath.endsWith('.ts') && require('fs').existsSync(hookPath) === false) {
-          console.log('  CLEAN: removed stale ref ' + hookPath.split('/').pop());
+          console.log('  CLEAN: removed stale imladris ref ' + hookPath.split('/').pop());
           return false;
         }
         return true;

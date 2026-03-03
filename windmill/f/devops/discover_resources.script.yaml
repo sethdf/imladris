@@ -1,0 +1,19 @@
+summary: Discover AWS Resources
+description: Auto-populates resource_inventory table by querying Steampipe for all named AWS resources. Enables fuzzy name matching during investigation entity extraction.
+lock: []
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    stale_after_hours:
+      type: number
+      default: 48
+      description: Mark resources not seen for this many hours as stale
+    resource_types:
+      type: string
+      default: ""
+      description: "Comma-separated filter (empty = all). Options: ec2_instance, emr_cluster, rds_instance, rds_cluster, sqs_queue, sns_topic, lambda_function, ecs_cluster, ecs_service, s3_bucket, cloudwatch_alarm, elb"
+  required: []
+is_template: false
+kind: script
+language: bun

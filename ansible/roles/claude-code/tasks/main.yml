@@ -2,7 +2,9 @@
 # =============================================================================
 # Claude Code (Bootstrap Steps 4, 5, 6, 10)
 # =============================================================================
-# Symlinks (D34), runtime dirs, settings template, CLI install, context seeding
+# Additive content (D34), runtime dirs, settings template, CLI install, context seeding
+# PAI owns: ~/.claude/skills/, ~/.claude/agents/, ~/.claude/hooks/, ~/.claude/PAI/
+# Imladris adds: custom skills/agents (rsync --ignore-existing), custom hooks (symlinks)
 
 # --- Step 10: Install Claude Code CLI (bake-safe: no repo dependency) ---
 
@@ -24,7 +26,9 @@
   when: not (ami_bake_phase | default(false))
   block:
 
-    # --- Step 4: Create Symlinks (Decision 34) ---
+    # --- Step 4: Create directories + additive content (Decision 34) ---
+    # PAI owns ~/.claude/skills/ and ~/.claude/agents/ directories.
+    # Imladris ONLY adds content additively — never replaces PAI files.
 
     - name: Create Claude directory
       ansible.builtin.file:
@@ -34,14 +38,6 @@
         group: "{{ imladris_user }}"
         mode: "0755"
 
-    - name: Check symlink sources exist
-      ansible.builtin.stat:
-        path: "{{ item.src }}"
-      loop: "{{ claude_symlinks }}"
-      register: claude_symlink_sources
-      loop_control:
-        label: "{{ item.src | basename }}"
-
     - name: Create Claude symlinks
       ansible.builtin.file:
         src: "{{ item.item.src }}"
@@ -50,10 +46,58 @@
         force: true
         owner: "{{ imladris_user }}"
         group: "{{ imladris_user }}"
-      loop: "{{ claude_symlink_sources.results }}"
-      when: item.stat.exists
-      loop_control:
-        label: "{{ item.item.dest | basename }}"
+      loop: "{{ claude_symlinks }}"
+      when: claude_symlinks | length > 0
+
+    # --- Step 4b: Additive imladris skills/agents (never overwrite PAI) ---
+    # rsync --ignore-existing copies new files without touching PAI-owned ones.
+
+    - name: Ensure skills directory exists
+      ansible.builtin.file:
+        path: "{{ claude_dir }}/skills"
+        state: directory
+        owner: "{{ imladris_user }}"
+        group: "{{ imladris_user }}"
+        mode: "0755"
+
+    - name: Check imladris custom skills exist
+      ansible.builtin.stat:
+        path: "{{ imladris_custom_skills_dir }}"
+      register: imladris_skills_stat
+
+    - name: Add imladris custom skills (additive, never overwrite PAI)
+      ansible.builtin.shell: >
+        rsync -a --ignore-existing
+        --exclude='handlers'
+        --exclude='lib'
+        --exclude='.git'
+        "{{ imladris_custom_skills_dir }}/"
+        "{{ claude_dir }}/skills/"
+      become: false
+      changed_when: false
+      when: imladris_skills_stat.stat.exists | default(false)
+
+    - name: Ensure agents directory exists
+      ansible.builtin.file:
+        path: "{{ claude_dir }}/agents"
+        state: directory
+        owner: "{{ imladris_user }}"
+        group: "{{ imladris_user }}"
+        mode: "0755"
+
+    - name: Check imladris custom agents exist
+      ansible.builtin.stat:
+        path: "{{ imladris_custom_agents_dir }}"
+      register: imladris_agents_stat
+
+    - name: Add imladris custom agents (additive, never overwrite PAI)
+      ansible.builtin.shell: >
+        rsync -a --ignore-existing
+        "{{ imladris_custom_agents_dir }}/"
+        "{{ claude_dir }}/agents/"
+      become: false
+      changed_when: false
+      when: imladris_agents_stat.stat.exists | default(false)
 
     # --- Step 5: Create Runtime Directories ---
 

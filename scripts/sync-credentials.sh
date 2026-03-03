@@ -67,11 +67,20 @@ echo "$SECRETS" | jq -c '.[]' | while read -r secret; do
 
   # Map Bitwarden key to Windmill variable path
   # Convention: Bitwarden key "sdp-base-url" → Windmill "f/devops/sdp_base_url"
+  # Keys prefixed with "investigate-" → Windmill "f/investigate/{rest}"
   # Hyphens → underscores (Windmill env vars can't have hyphens)
   # Keys prefixed with "wm_" get the prefix stripped
   CLEAN_KEY="${KEY#wm_}"
-  CLEAN_KEY="${CLEAN_KEY//-/_}"
-  WMILL_PATH="f/devops/${CLEAN_KEY}"
+
+  # Route to correct Windmill folder based on BWS key prefix
+  if [[ "$CLEAN_KEY" == investigate-* ]]; then
+    CLEAN_KEY="${CLEAN_KEY#investigate-}"
+    CLEAN_KEY="${CLEAN_KEY//-/_}"
+    WMILL_PATH="f/investigate/${CLEAN_KEY}"
+  else
+    CLEAN_KEY="${CLEAN_KEY//-/_}"
+    WMILL_PATH="f/devops/${CLEAN_KEY}"
+  fi
 
   if $DRY_RUN; then
     info "Would sync: $KEY → $WMILL_PATH"

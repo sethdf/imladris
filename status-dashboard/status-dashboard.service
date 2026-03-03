@@ -1,0 +1,14 @@
+[Unit]
+Description=Imladris Status Dashboard
+After=network.target
+
+[Service]
+Type=simple
+User=ec2-user
+WorkingDirectory=/home/ec2-user/repos/imladris/status-dashboard
+ExecStart=/home/ec2-user/.bun/bin/bun run server.ts
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

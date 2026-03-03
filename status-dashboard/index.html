@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Imladris Status</title>
+<style>
+:root{--bg:#0f1117;--surface:#1a1d27;--border:#2a2d3a;--text:#e1e4eb;--dim:#6b7280;--green:#22c55e;--red:#ef4444;--yellow:#eab308;--blue:#3b82f6;--r:8px}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);line-height:1.5}
+.dash{max-width:960px;margin:0 auto;padding:24px 16px}
+header{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:12px}
+h1{font-size:20px;font-weight:600}
+.ctrl{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.modes{display:flex;border:1px solid var(--border);border-radius:var(--r);overflow:hidden}
+.modes .btn{border-radius:0;border:none;border-right:1px solid var(--border)}
+.modes .btn:last-child{border-right:none}
+.btn{padding:6px 14px;background:var(--surface);border:1px solid var(--border);color:var(--dim);border-radius:var(--r);cursor:pointer;font-size:13px;transition:all .15s}
+.btn:hover{color:var(--text);background:var(--border)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn.on{color:var(--blue);border-color:var(--blue);background:rgba(59,130,246,.1)}
+.meta{display:flex;gap:16px;font-size:12px;color:var(--dim);padding:8px 0;border-bottom:1px solid var(--border);margin-bottom:16px}
+.err{background:rgba(239,68,68,.1);border:1px solid var(--red);color:var(--red);padding:10px 14px;border-radius:var(--r);margin-bottom:16px;font-size:13px}
+.gotchas{padding:12px 16px;border-radius:var(--r);margin-bottom:16px;font-size:14px}
+.g-ok{background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.3);color:var(--green)}
+.g-warn{background:rgba(234,179,8,.08);border:1px solid rgba(234,179,8,.3)}
+.g-title{color:var(--yellow);font-weight:600;margin-bottom:6px}
+.g-warn ul{margin-left:24px;color:var(--text)}.g-warn li{margin-bottom:2px}
+.sec{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);margin-bottom:12px;overflow:hidden}
+.sec-h{padding:10px 14px;font-size:14px;font-weight:600;cursor:pointer;user-select:none;transition:background .15s}
+.sec-h:hover{background:rgba(255,255,255,.03)}
+.sec-b{padding:12px 14px;border-top:1px solid var(--border)}
+.cg{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px}
+.card{background:var(--bg);border:1px solid var(--border);border-radius:var(--r);padding:12px;text-align:center}
+.cl{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);margin-bottom:4px}
+.cv{font-size:24px;font-weight:700}
+.cv-sm{font-size:13px;font-weight:500}
+.cs{font-size:11px;color:var(--dim);margin-top:4px}
+.badge{display:inline-block;padding:2px 10px;border-radius:12px;font-size:12px;font-weight:600}
+.b-ok{background:rgba(34,197,94,.15);color:var(--green)}
+.b-fail{background:rgba(239,68,68,.15);color:var(--red)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;padding:6px 10px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);border-bottom:1px solid var(--border)}
+td{padding:6px 10px;border-bottom:1px solid var(--border)}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:rgba(255,255,255,.02)}
+.tg{color:var(--green)}.tr{color:var(--red)}.ty{color:var(--yellow)}.td{color:var(--dim)}
+.mono{font-family:'SF Mono',Menlo,Consolas,monospace;font-size:12px}
+.empty{text-align:center;padding:60px 0;color:var(--dim);font-size:14px}
+.spin{display:inline-block;animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div class="dash" id="app"></div>
+<script>
+// Derive base from the page's own path so API calls route through our proxy
+const WM_BASE = window.location.pathname.replace(/\/+$/, '');
+const WM_PATH = '/api/w/imladris/jobs/run_wait_result/p/f/devops/status_check';
+let state = { data: null, loading: false, mode: 'quick', auto: false, error: null, collapsed: {} };
+let autoTimer = null;
+
+function h(tag, attrs, ...children) {
+  const el = document.createElement(tag);
+  if (attrs) Object.entries(attrs).forEach(([k, v]) => {
+    if (k === 'onclick') el.onclick = v;
+    else if (k === 'className') el.className = v;
+    else el.setAttribute(k, v);
+  });
+  children.flat().forEach(c => {
+    if (c == null) return;
+    el.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+  });
+  return el;
+}
+
+function badge(ok, label) {
+  return h('span', { className: `badge ${ok ? 'b-ok' : 'b-fail'}` }, `${ok ? '\u2713' : '\u2717'} ${label}`);
+}
+
+async function runCheck(m) {
+  const mode = m || state.mode;
+  state.loading = true; state.error = null; render();
+  try {
+    const resp = await fetch(WM_BASE + WM_PATH, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode }),
+    });
+    if (!resp.ok) throw new Error(`API error: ${resp.status}`);
+    state.data = await resp.json();
+  } catch (e) {
+    state.error = e.message;
+  }
+  state.loading = false; render();
+}
+
+function toggleSection(key) {
+  state.collapsed[key] = !state.collapsed[key]; render();
+}
+
+function setMode(m) {
+  state.mode = m; runCheck(m);
+}
+
+function toggleAuto() {
+  state.auto = !state.auto;
+  if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
+  if (state.auto) autoTimer = setInterval(() => runCheck(), 30000);
+  render();
+}
+
+function section(key, title, content) {
+  const col = state.collapsed[key];
+  return h('div', { className: 'sec' },
+    h('div', { className: 'sec-h', onclick: () => toggleSection(key) }, `${col ? '\u25b6' : '\u25bc'} ${title}`),
+    col ? null : h('div', { className: 'sec-b' }, content)
+  );
+}
+
+function renderGotchas(g) {
+  if (!g || g.length === 0) return h('div', { className: 'gotchas g-ok' }, '\u2713 All clear \u2014 no issues detected');
+  return h('div', { className: 'gotchas g-warn' },
+    h('div', { className: 'g-title' }, `\u26a0 ${g.length} issue${g.length > 1 ? 's' : ''} detected`),
+    h('ul', null, ...g.map(t => h('li', null, t)))
+  );
+}
+
+function renderDisk(disk) {
+  if (!Array.isArray(disk)) return h('pre', null, JSON.stringify(disk, null, 2));
+  return h('div', { className: 'cg' }, ...disk.map(d =>
+    h('div', { className: 'card' },
+      h('div', { className: 'cl' }, d.mounted),
+      h('div', { className: `cv ${d.use_pct > 80 ? 'tr' : d.use_pct > 60 ? 'ty' : 'tg'}` }, `${d.use_pct}%`),
+      h('div', { className: 'cs' }, `${Math.round(d.used_kb/1024/1024)}G / ${Math.round(d.size_kb/1024/1024)}G`)
+    )
+  ));
+}
+
+function renderCache(c) {
+  if (!c) return null;
+  if (c.error) return h('div', { className: 'tr' }, c.error);
+  if (!c.exists) return h('div', { className: 'tr' }, 'Cache not found');
+  return h('div', { className: 'cg' },
+    h('div', { className: 'card' }, h('div', { className: 'cl' }, 'Size'), h('div', { className: 'cv' }, `${c.size_mb} MB`)),
+    h('div', { className: 'card' }, h('div', { className: 'cl' }, 'Age'), h('div', { className: `cv ${c.age_hours > 24 ? 'tr' : c.age_hours > 12 ? 'ty' : 'tg'}` }, `${c.age_hours}h`)),
+    h('div', { className: 'card' }, h('div', { className: 'cl' }, 'Modified'), h('div', { className: 'cv cv-sm' }, new Date(c.last_modified).toLocaleString()))
+  );
+}
+
+function renderWindmill(w) {
+  if (!w) return null;
+  if (w.error) return h('div', { className: 'tr' }, w.error);
+  const cards = h('div', { className: 'cg' },
+    h('div', { className: 'card' }, h('div', { className: 'cl' }, 'Version'), h('div', { className: 'cv cv-sm' }, w.version)),
+    h('div', { className: 'card' }, h('div', { className: 'cl' }, 'Workers'), h('div', { className: 'cv tg' }, `${w.worker_count}`))
+  );
+  if (!w.workers?.length) return cards;
+  const tbl = h('table', null,
+    h('thead', null, h('tr', null, h('th', null, 'Worker'), h('th', null, 'Group'), h('th', null, 'Jobs'), h('th', null, 'Ping'))),
+    h('tbody', null, ...w.workers.map(wr =>
+      h('tr', null, h('td', { className: 'mono' }, wr.worker), h('td', null, wr.group), h('td', null, `${wr.jobs_executed}`), h('td', null, `${wr.last_ping}s`))
+    ))
+  );
+  return h('div', null, cards, tbl);
+}
+
+function renderSchedules(sched) {
+  if (!Array.isArray(sched)) return h('pre', null, JSON.stringify(sched, null, 2));
+  return h('table', null,
+    h('thead', null, h('tr', null, h('th', null, 'Schedule'), h('th', null, 'Cron'), h('th', null, 'Last Run'), h('th', null, 'Status'))),
+    h('tbody', null, ...sched.map(s =>
+      h('tr', null,
+        h('td', { className: 'mono' }, s.path.replace('f/devops/', '').replace('_schedule', '')),
+        h('td', { className: 'mono' }, s.schedule),
+        h('td', null, s.last_run?.started_at ? new Date(s.last_run.started_at).toLocaleString() : '\u2014'),
+        h('td', null, badge(s.last_run?.success === true, s.last_run?.success ? 'ok' : 'fail'))
+      )
+    ))
+  );
+}
+
+function renderInfra(box) {
+  return h('div', { className: 'cg' },
+    h('div', { className: 'card' },
+      h('div', { className: 'cl' }, 'Tailscale'),
+      badge(box.tailscale?.reachable, box.tailscale?.reachable ? 'reachable' : 'down'),
+      box.tailscale?.method ? h('div', { className: 'cs' }, box.tailscale.method) : null
+    ),
+    h('div', { className: 'card' },
+      h('div', { className: 'cl' }, 'Steampipe'),
+      badge(box.steampipe?.reachable, box.steampipe?.reachable ? 'reachable' : 'down'),
+      h('div', { className: 'cs' }, `${box.steampipe?.host}:${box.steampipe?.port}`)
+    ),
+    h('div', { className: 'card' },
+      h('div', { className: 'cl' }, 'Docker'),
+      box.docker?.available === false
+        ? h('div', { className: 'cs td' }, box.docker.note)
+        : badge((box.docker?.count ?? 0) >= 6, `${box.docker?.count ?? 0} containers`)
+    )
+  );
+}
+
+function renderAws(aws) {
+  if (!aws) return null;
+  if (aws.error) return h('div', { className: 'tr' }, aws.error);
+  const ca = aws.cross_accounts;
+  const cards = h('div', { className: 'cg' },
+    h('div', { className: 'card' }, h('div', { className: 'cl' }, 'Local Identity'), h('div', { className: 'cv cv-sm mono' }, aws.local?.account)),
+    h('div', { className: 'card' }, h('div', { className: 'cl' }, 'Cross-Account'), h('div', { className: `cv ${ca?.failed?.length > 0 ? 'tr' : 'tg'}` }, `${ca?.ok}/${ca?.total}`))
+  );
+  if (!ca?.failed?.length) return cards;
+  return h('div', null, cards, h('div', { className: 'cs' },
+    h('strong', null, 'Failed: '), h('ul', null, ...ca.failed.map(f => h('li', { className: 'tr' }, `${f.account}: ${f.error}`)))
+  ));
+}
+
+function dsCard(name, d) {
+  if (!d) return null;
+  const ok = d.token_ok === true || (d.configured === true && !d.error);
+  const configured = d.configured !== false;
+  return h('div', { className: 'card' },
+    h('div', { className: 'cl' }, name),
+    !configured ? badge(false, 'unconfigured') : d.error ? badge(false, 'error') : badge(ok, ok ? 'ok' : `${d.status}`),
+    d.expires_in ? h('div', { className: 'cs' }, `expires in ${Math.round(d.expires_in / 60)}m`) : null
+  );
+}
+
+function render() {
+  const app = document.getElementById('app');
+  const d = state.data;
+  const nodes = [];
+
+  // Header
+  nodes.push(h('header', null,
+    h('h1', null, 'Imladris Status'),
+    h('div', { className: 'ctrl' },
+      h('div', { className: 'modes' },
+        ...['quick', 'full', 'datasources'].map(m =>
+          h('button', { className: `btn ${state.mode === m ? 'on' : ''}`, onclick: () => setMode(m), disabled: state.loading ? 'disabled' : null }, m)
+        )
+      ),
+      h('button', { className: `btn ${state.auto ? 'on' : ''}`, onclick: toggleAuto }, state.auto ? '\u23f8 Auto' : '\u25b6 Auto'),
+      h('button', { className: 'btn', onclick: () => runCheck(), disabled: state.loading ? 'disabled' : null }, state.loading ? '\u21bb ...' : '\u21bb Refresh')
+    )
+  ));
+
+  if (state.error) nodes.push(h('div', { className: 'err' }, state.error));
+
+  if (d) {
+    nodes.push(h('div', { className: 'meta' },
+      h('span', null, `Checked: ${new Date(d.checked_at).toLocaleString()}`),
+      h('span', null, `${d.duration_ms}ms`),
+      h('span', null, `Mode: ${d.mode}`)
+    ));
+    nodes.push(renderGotchas(d.gotchas));
+
+    if (d.box) {
+      nodes.push(section('disk', 'Disk', renderDisk(d.box.disk)));
+      nodes.push(section('cache', 'Cache', renderCache(d.box.cache)));
+      nodes.push(section('windmill', 'Windmill', renderWindmill(d.box.windmill)));
+      nodes.push(section('schedules', 'Schedules', renderSchedules(d.box.schedules)));
+      nodes.push(section('infra', 'Infrastructure', renderInfra(d.box)));
+    }
+    if (d.datasources) {
+      nodes.push(section('aws', 'AWS', renderAws(d.datasources.aws)));
+      nodes.push(section('ds', 'Data Sources', h('div', { className: 'cg' },
+        dsCard('Azure AD', d.datasources.azure_ad),
+        dsCard('SDP', d.datasources.sdp),
+        dsCard('Site24x7', d.datasources.site24x7),
+        dsCard('Securonix', d.datasources.securonix),
+        dsCard('Okta', d.datasources.okta)
+      )));
+    }
+  } else if (!state.loading && !state.error) {
+    nodes.push(h('div', { className: 'empty' }, 'Loading status...'));
+  }
+
+  app.replaceChildren(...nodes.filter(Boolean));
+}
+
+render();
+runCheck();
+</script>
+</body>
+</html>

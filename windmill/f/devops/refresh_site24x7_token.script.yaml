@@ -1,0 +1,9 @@
+summary: 'Refresh Site24x7 OAuth2 access token via Zoho refresh_token grant'
+description: 'Scheduled every 45 min. Reads client_id, client_secret, refresh_token from f/devops/. Writes fresh access_token to f/investigate/site24x7_access_token.'
+lock: '!inline f/devops/refresh_site24x7_token.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties: {}
+  required: []

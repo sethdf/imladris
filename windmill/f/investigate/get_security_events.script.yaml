@@ -1,0 +1,32 @@
+summary: ''
+description: ''
+lock: '!inline f/investigate/get_security_events.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    action:
+      type: string
+      description: ''
+      default: incidents
+      enum:
+        - incidents
+        - incident
+        - violations
+        - threats
+      originalType: enum
+    days:
+      type: number
+      description: ''
+      default: 90
+    max:
+      type: number
+      description: ''
+      default: 25
+    query:
+      type: string
+      description: ''
+      default: null
+      originalType: string
+  required: []

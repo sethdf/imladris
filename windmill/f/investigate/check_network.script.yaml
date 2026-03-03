@@ -1,0 +1,27 @@
+summary: ''
+description: ''
+lock: '!inline f/investigate/check_network.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    action:
+      type: string
+      description: ''
+      default: null
+      enum:
+        - dns_lookup
+        - reverse_dns
+        - check_certificate
+        - mx_lookup
+        - txt_lookup
+      originalType: enum
+    target:
+      type: string
+      description: ''
+      default: null
+      originalType: string
+  required:
+    - action
+    - target

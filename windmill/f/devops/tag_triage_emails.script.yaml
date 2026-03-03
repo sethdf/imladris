@@ -1,0 +1,26 @@
+summary: Tag Triage Emails with Outlook Categories
+description: >-
+  Tags investigated emails with Outlook categories for easy filtering.
+  Adds "Triage: {urgency}" and "Finding: {root_cause}" categories.
+  Only modifies categories — never touches email content.
+lock: '!inline f/devops/tag_triage_emails.script.lock'
+kind: script
+language: bun
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    status_filter:
+      type: string
+      default: substantial
+      description: "Investigation status to tag: substantial, waiting_context"
+    dry_run:
+      type: boolean
+      default: true
+      description: Preview tags without applying them
+    clear_tags:
+      type: boolean
+      default: false
+      description: Remove all triage categories from matching emails
+  required: []
+tag: nativets
