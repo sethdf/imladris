@@ -1,0 +1,23 @@
+summary: Batch triage SDP requests and tasks into the investigation pipeline
+description: Polls SDP for open requests and tasks, stores them in
+  triage_results with source=sdp. SDP items are always actionable
+  (action=QUEUE). L1 dedup prevents re-ingesting unchanged items.
+lock: '!inline f/devops/batch_triage_sdp.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    dry_run:
+      type: boolean
+      description: Preview mode — show what would be ingested without storing
+      default: false
+    max_requests:
+      type: number
+      description: Maximum number of SDP requests to fetch
+      default: 100
+    max_tasks:
+      type: number
+      description: Maximum number of SDP tasks to fetch
+      default: 100
+  required: []

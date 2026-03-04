@@ -867,6 +867,93 @@ export function getUnprocessedActionable(limit: number = 20, priorityFilter?: st
   }
 }
 
+/** Get dismissed items since a given epoch timestamp */
+export function getDismissedSince(sinceEpoch: number, limit: number = 100): any[] {
+  const db = getDb();
+  if (!db) return [];
+  try {
+    init();
+    const rows = db.prepare(
+      `SELECT id, source, subject, sender, urgency, summary, investigation_result, last_investigated_at
+       FROM triage_results
+       WHERE investigation_status = 'dismissed' AND last_investigated_at >= ?
+       ORDER BY last_investigated_at DESC LIMIT ?`,
+    ).all(sinceEpoch, limit);
+    db.close();
+    return rows as any[];
+  } catch {
+    db.close();
+    return [];
+  }
+}
+
+/** Re-ingest a dismissed item by resetting it to uninvestigated state */
+export function reingestItem(id: number): number {
+  const db = getDb();
+  if (!db) return 0;
+  try {
+    init();
+    const info = db.run(
+      `UPDATE triage_results
+       SET investigation_status = NULL,
+           investigation_result = NULL,
+           waiting_context_reason = NULL,
+           investigation_attempts = 0
+       WHERE id = ? AND investigation_status = 'dismissed'`,
+      [id],
+    );
+    db.close();
+    return (info as any).changes ?? 0;
+  } catch {
+    db.close();
+    return 0;
+  }
+}
+
+/** Find cross-source matches — items with same subject already investigated from a different source */
+export function findCrossSourceMatch(
+  subject: string,
+  currentSource: string,
+): { found: boolean; match?: { id: number; source: string; investigation_status: string; investigation_result: string; task_id: string | null } } {
+  const db = getDb();
+  if (!db) return { found: false };
+  try {
+    init();
+    const row = db.prepare(
+      `SELECT id, source, investigation_status, investigation_result, task_id
+       FROM triage_results
+       WHERE subject = ? AND source != ? AND investigation_status IN ('substantial', 'dismissed', 'escalated')
+       ORDER BY classified_at DESC LIMIT 1`,
+    ).get(subject, currentSource) as any;
+    db.close();
+    if (row) {
+      return { found: true, match: row };
+    }
+    return { found: false };
+  } catch {
+    db.close();
+    return { found: false };
+  }
+}
+
+/** Get SDP ingestion cursor (last modified time per type) */
+export function getSdpCursor(sdpType: string): number {
+  const db = getDb();
+  if (!db) return 0;
+  try {
+    init();
+    const row = db.prepare(
+      `SELECT MAX(CAST(json_extract(metadata, '$.sdp_modified_epoch') AS INTEGER)) as last_epoch
+       FROM triage_results WHERE source = 'sdp' AND json_extract(metadata, '$.sdp_type') = ?`,
+    ).get(sdpType) as any;
+    db.close();
+    return row?.last_epoch || 0;
+  } catch {
+    db.close();
+    return 0;
+  }
+}
+
 // ── Resource Inventory (auto-discovery) ──
 
 export interface ResourceRecord {

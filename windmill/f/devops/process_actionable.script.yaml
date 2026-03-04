@@ -1,44 +1,49 @@
 summary: Process Actionable Triage Items
-description: >-
-  Investigate-first pipeline: Phase 1 runs investigations on uninvestigated +
-  retry-eligible items, Phase 2 creates SDP Tasks only for substantial findings,
-  Phase 3 escalates stale items that exhausted retries. Nothing is ever lost —
-  items either get tasks with findings or escalation tasks explaining gaps.
-  Only work-domain items flow to SDP. Deduplicates by hash.
-lock: []
+description: 'Investigate-first pipeline: Phase 1 runs investigations on
+  uninvestigated + retry-eligible items, Phase 2 creates SDP Tasks only for
+  substantial findings, Phase 3 escalates stale items that exhausted retries.
+  Nothing is ever lost — items either get tasks with findings or escalation
+  tasks explaining gaps. Only work-domain items flow to SDP. Deduplicates by
+  hash.'
+lock: '!inline f/devops/process_actionable.script.lock'
+is_template: false
+kind: script
+language: bun
 schema:
   $schema: https://json-schema.org/draft/2020-12/schema
   type: object
   properties:
-    max_items:
-      type: number
-      default: 20
-      description: Maximum items to process per run (investigation ~30s/item)
-    priority_filter:
-      type: string
-      default: ""
-      description: "Filter by action: NOTIFY or QUEUE (empty = both)"
-    skip_investigation:
-      type: boolean
-      default: false
-      description: Create tasks without running investigation pipeline
-    dry_run:
-      type: boolean
-      default: false
-      description: Preview which items would get tasks without creating them
     delay_ms:
       type: number
-      default: 3000
       description: Milliseconds between processing items (rate limiting)
-    retry_interval_hours:
+      default: 3000
+    dry_run:
+      type: boolean
+      description: Preview which items would get tasks without creating them
+      default: false
+    max_concurrency:
       type: number
-      default: 6
-      description: Hours between retry attempts for waiting_context items
+      description: ''
+      default: 2
+    max_items:
+      type: number
+      description: Maximum items to process per run (investigation ~30s/item)
+      default: 20
     max_retry_attempts:
       type: number
-      default: 5
       description: Max investigation attempts before escalating to task
+      default: 5
+    priority_filter:
+      type: string
+      description: 'Filter by action: NOTIFY or QUEUE (empty = both)'
+      default: ''
+      originalType: string
+    retry_interval_hours:
+      type: number
+      description: Hours between retry attempts for waiting_context items
+      default: 6
+    skip_investigation:
+      type: boolean
+      description: Create tasks without running investigation pipeline
+      default: false
   required: []
-is_template: false
-kind: script
-language: bun

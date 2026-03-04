@@ -159,6 +159,31 @@ export async function main(
     return new Date(updated) >= twentyFourHoursAgo;
   });
 
+  // Dismissed items from triage (last 24h)
+  let dismissedItems: any[] = [];
+  try {
+    const cacheLib = await import("./cache_lib.ts");
+    if (cacheLib.isAvailable()) {
+      cacheLib.init();
+      const sinceEpoch = Math.floor(twentyFourHoursAgo.getTime() / 1000);
+      dismissedItems = cacheLib.getDismissedSince(sinceEpoch);
+    }
+  } catch { /* cache unavailable */ }
+
+  const parsedDismissed = dismissedItems.map((d: any) => {
+    let diag: any = {};
+    try { diag = JSON.parse(d.investigation_result || "{}").diagnosis || {}; } catch {}
+    return {
+      id: d.id,
+      subject: d.subject,
+      sender: d.sender,
+      severity: diag.severity || "unknown",
+      confidence: diag.confidence || "unknown",
+      root_cause: (diag.root_cause || "").slice(0, 200),
+      recommended_actions: diag.recommended_actions || [],
+    };
+  });
+
   const summary = {
     generated: now.toISOString(),
     total_open: allOpen.length,
@@ -190,6 +215,10 @@ export async function main(
         status: t.status?.name,
         last_updated: t.last_updated_time?.display_value,
       })),
+    },
+    dismissed_alerts: {
+      count: parsedDismissed.length,
+      items: parsedDismissed,
     },
   };
 
@@ -237,6 +266,22 @@ export async function main(
     text += `\nUpdated in Last 24h: ${recentlyUpdated.length}\n`;
     for (const t of recentlyUpdated.slice(0, 10)) {
       text += `  #${t.id} ${t.subject} — ${t.last_updated_time?.display_value}\n`;
+    }
+
+    if (parsedDismissed.length > 0) {
+      text += `\n=== Auto-Dismissed Alerts (${parsedDismissed.length}) ===\n`;
+      text += `These were investigated and auto-dismissed (low/informational severity, high confidence).\n`;
+      text += `To re-ingest an item, run: f/devops/reingest_dismissed with item ID.\n\n`;
+      for (const d of parsedDismissed) {
+        text += `  [${d.severity}] #${d.id}: ${d.subject}\n`;
+        text += `    Root cause: ${d.root_cause}\n`;
+        if (d.recommended_actions.length > 0) {
+          text += `    Action: ${d.recommended_actions[0]}\n`;
+        }
+        text += `\n`;
+      }
+    } else {
+      text += `\nNo auto-dismissed alerts in last 24h.\n`;
     }
 
     recordRun("sdp_morning_summary");

@@ -6,12 +6,14 @@ schema:
   $schema: https://json-schema.org/draft/2020-12/schema
   type: object
   properties:
-    technician:
-      type: string
-      description: ''
-      default: ''
     format:
       type: string
       description: ''
       default: text
+      originalType: string
+    technician:
+      type: string
+      description: ''
+      default: ''
+      originalType: string
   required: []

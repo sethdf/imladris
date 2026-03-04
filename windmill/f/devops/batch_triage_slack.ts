@@ -1,7 +1,7 @@
 // Windmill Script: Batch Triage Slack Messages
 // Layered pipeline: L1a dedup → L1b rules → L2 AI → store results.
 // Mirrors batch_triage_emails.ts structure for Slack conversations.
-// Top-level messages only (v1) — thread replies are a future enhancement.
+// Thread-as-unit: threads are treated as single triage items with full reply context.
 
 import { createHash } from "crypto";
 import { bedrockInvoke, MODELS } from "./bedrock.ts";
@@ -181,6 +181,66 @@ async function fetchUnreadMessages(
     if (!cursor || !data.has_more || batch.length === 0) break;
   }
   return { messages: messages.slice(0, maxMessages), lastRead };
+}
+
+async function fetchThreadReplies(
+  token: string,
+  channelId: string,
+  threadTs: string,
+  maxReplies: number = 50,
+): Promise<SlackMessage[]> {
+  const replies: SlackMessage[] = [];
+  let cursor = "";
+  while (replies.length < maxReplies) {
+    const params: Record<string, string | number> = {
+      channel: channelId,
+      ts: threadTs,
+      limit: Math.min(100, maxReplies - replies.length),
+    };
+    if (cursor) params.cursor = cursor;
+
+    const data = await slackApi(token, "conversations.replies", params);
+    const batch = ((data.messages || []) as SlackMessage[]).filter(
+      (m) => !m.subtype || !SKIP_SUBTYPES.has(m.subtype),
+    );
+    // First message in replies is the parent — skip it (we already have it)
+    const replyOnly = batch.filter((m) => m.ts !== threadTs);
+    replies.push(...replyOnly);
+    cursor = data.response_metadata?.next_cursor || "";
+    if (!cursor || !data.has_more || batch.length === 0) break;
+  }
+  return replies.slice(0, maxReplies);
+}
+
+async function buildThreadBody(
+  token: string,
+  channelId: string,
+  parentMsg: SlackMessage,
+  maxChars: number = 4000,
+): Promise<string> {
+  const parts: string[] = [];
+  // Parent message
+  const parentUser = parentMsg.user
+    ? await resolveUserName(token, parentMsg.user)
+    : (parentMsg.bot_id ? `bot:${parentMsg.bot_id}` : "unknown");
+  parts.push(`[${parentUser}] ${parentMsg.text || ""}`);
+
+  // Fetch thread replies
+  if (parentMsg.thread_ts && parentMsg.thread_ts === parentMsg.ts) {
+    try {
+      const replies = await fetchThreadReplies(token, channelId, parentMsg.thread_ts);
+      for (const reply of replies) {
+        const replyUser = reply.user
+          ? await resolveUserName(token, reply.user)
+          : (reply.bot_id ? `bot:${reply.bot_id}` : "unknown");
+        parts.push(`[${replyUser}] ${reply.text || ""}`);
+      }
+    } catch (err: any) {
+      console.error(`[slack] Failed to fetch thread replies: ${err.message?.slice(0, 100)}`);
+    }
+  }
+
+  return parts.join("\n").slice(0, maxChars);
 }
 
 async function markChannelRead(
@@ -478,24 +538,38 @@ export async function main(
 
     let latestTs = lastRead;
 
-    for (let mi = 0; mi < messages.length; mi++) {
-      const msg = messages[mi];
-
-      // Track latest ts for conversations.mark
+    // Group messages by thread: thread_ts → parent message
+    // Standalone messages (no thread_ts or thread_ts === ts) are their own unit
+    const threadMap = new Map<string, SlackMessage>();
+    for (const msg of messages) {
       if (msg.ts > latestTs) latestTs = msg.ts;
+      const threadKey = msg.thread_ts || msg.ts;
+      // Keep the earliest (parent) message per thread
+      if (!threadMap.has(threadKey) || msg.ts < threadMap.get(threadKey)!.ts) {
+        threadMap.set(threadKey, msg);
+      }
+    }
 
-      // Resolve sender
-      const userId = msg.user || msg.bot_id || "unknown";
-      const userName = msg.user
-        ? await resolveUserName(slackToken, msg.user)
-        : (msg.bot_id ? `bot:${msg.bot_id}` : "unknown");
+    const threadUnits = Array.from(threadMap.entries());
+    console.log(`[batch_triage_slack] ${threadUnits.length} thread units (from ${messages.length} messages)`);
+
+    for (let mi = 0; mi < threadUnits.length; mi++) {
+      const [threadKey, parentMsg] = threadUnits[mi];
+
+      // Resolve sender (parent message author)
+      const userId = parentMsg.user || parentMsg.bot_id || "unknown";
+      const userName = parentMsg.user
+        ? await resolveUserName(slackToken, parentMsg.user)
+        : (parentMsg.bot_id ? `bot:${parentMsg.bot_id}` : "unknown");
       const sender = `${userName} <${userId}>`;
 
-      const preview = (msg.text || "").slice(0, 500);
-      const messageId = `${channel.id}:${msg.ts}`;
-      const receivedAt = new Date(parseFloat(msg.ts) * 1000).toISOString();
+      // Build full thread body (parent + all replies)
+      const threadBody = await buildThreadBody(slackToken, channel.id, parentMsg);
+      const preview = threadBody.slice(0, 500);
+      const messageId = `${channel.id}:${threadKey}`;
+      const receivedAt = new Date(parseFloat(parentMsg.ts) * 1000).toISOString();
 
-      console.log(`[batch_triage_slack] [${ci + 1}/${channels.length}][${mi + 1}/${messages.length}] Triaging: ${sender.slice(0, 40)} in ${channelSubject}`);
+      console.log(`[batch_triage_slack] [${ci + 1}/${channels.length}][${mi + 1}/${threadUnits.length}] Triaging thread: ${sender.slice(0, 40)} in ${channelSubject}`);
 
       // Only delay before L2 AI calls (not L1)
       if (lastWasAi && delay_ms > 0) {
@@ -522,10 +596,10 @@ export async function main(
           classified_by: classification.classified_by,
         });
 
-        // Store result in triage_results
+        // Store result in triage_results — thread_ts as dedup key
         if (cacheLib) {
           try {
-            const dedupHash = computeDedupHash(channelSubject, sender);
+            const dedupHash = computeDedupHash(`${channel.id}:${threadKey}`, sender);
             cacheLib.storeTriageResult({
               source: "slack",
               message_id: messageId,
@@ -544,9 +618,10 @@ export async function main(
               metadata: JSON.stringify({
                 channel_id: channel.id,
                 channel_type: channel.is_im ? "im" : channel.is_mpim ? "mpim" : channel.is_group ? "group" : "channel",
-                thread_ts: msg.thread_ts || null,
-                team: msg.team || null,
-                preview: msg.text?.slice(0, 1000) || "",
+                thread_ts: threadKey,
+                team: parentMsg.team || null,
+                body_text: threadBody.slice(0, 8000),
+                preview: preview,
               }),
             });
           } catch { /* best-effort storage */ }
