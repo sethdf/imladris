@@ -159,14 +159,33 @@ export async function main(
     return new Date(updated) >= twentyFourHoursAgo;
   });
 
-  // Dismissed items from triage (last 24h)
+  // Dismissed items from triage (last 24h) + AUTO sample for pulse check
   let dismissedItems: any[] = [];
+  let autoSample: any[] = [];
+  let autoTotalCount = 0;
   try {
     const cacheLib = await import("./cache_lib.ts");
     if (cacheLib.isAvailable()) {
       cacheLib.init();
       const sinceEpoch = Math.floor(twentyFourHoursAgo.getTime() / 1000);
       dismissedItems = cacheLib.getDismissedSince(sinceEpoch);
+
+      // Pulse check: random sample of AUTO-classified items (never investigated)
+      try {
+        const { Database } = await import("bun:sqlite");
+        const dbPath = (process.env.CACHE_DIR || "/local/cache/triage") + "/index.db";
+        const db = new Database(dbPath);
+        autoTotalCount = (db.prepare(
+          "SELECT COUNT(*) as c FROM triage_results WHERE action = 'AUTO' AND classified_at >= ?"
+        ).get(sinceEpoch) as any)?.c || 0;
+        autoSample = db.prepare(
+          `SELECT id, subject, sender, summary, classified_by, reasoning
+           FROM triage_results
+           WHERE action = 'AUTO' AND classified_at >= ?
+           ORDER BY RANDOM() LIMIT 5`
+        ).all(sinceEpoch) as any[];
+        db.close();
+      } catch { /* query failed — non-fatal */ }
     }
   } catch { /* cache unavailable */ }
 
@@ -219,6 +238,17 @@ export async function main(
     dismissed_alerts: {
       count: parsedDismissed.length,
       items: parsedDismissed,
+    },
+    auto_pulse_check: {
+      total_auto_24h: autoTotalCount,
+      sample_size: autoSample.length,
+      sample: autoSample.map((a: any) => ({
+        id: a.id,
+        subject: (a.subject || "").slice(0, 120),
+        sender: a.sender || "",
+        summary: (a.summary || "").slice(0, 150),
+        classified_by: a.classified_by || "L2_ai",
+      })),
     },
   };
 
@@ -282,6 +312,20 @@ export async function main(
       }
     } else {
       text += `\nNo auto-dismissed alerts in last 24h.\n`;
+    }
+
+    // Pulse check: random sample of AUTO items (the 90% you never see)
+    if (autoSample.length > 0) {
+      text += `\n=== Pulse Check: AUTO Sample (${autoSample.length} of ${autoTotalCount} in 24h) ===\n`;
+      text += `Spot-check: were these correctly auto-dismissed?\n`;
+      text += `To override, record feedback: f/devops/triage_feedback action=record\n\n`;
+      for (const a of autoSample) {
+        const by = a.classified_by === "L1_rule" ? "rule" : "AI";
+        text += `  [${by}] #${a.id}: ${(a.subject || "").slice(0, 80)}\n`;
+        text += `    From: ${a.sender || "unknown"} | ${(a.summary || "").slice(0, 100)}\n`;
+      }
+    } else if (autoTotalCount > 0) {
+      text += `\n${autoTotalCount} AUTO items in last 24h (no sample available).\n`;
     }
 
     recordRun("sdp_morning_summary");

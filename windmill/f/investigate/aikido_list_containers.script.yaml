@@ -1,0 +1,18 @@
+summary: ''
+description: ''
+lock: '!inline f/investigate/aikido_list_containers.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    limit:
+      type: number
+      description: ''
+      default: 50
+    search:
+      type: string
+      description: ''
+      default: null
+      originalType: string
+  required: []

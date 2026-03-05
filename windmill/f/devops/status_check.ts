@@ -389,8 +389,8 @@ async function checkSdp(): Promise<any> {
 
     const input = JSON.stringify({ list_info: { row_count: 1 } });
     const resp = await fetch(
-      `${baseUrl}/api/v3/requests?input_data=${encodeURIComponent(input)}`,
-      { headers: { Authorization: `Zoho-oauthtoken ${apiKey}` } },
+      `${baseUrl}/requests?input_data=${encodeURIComponent(input)}`,
+      { headers: { Authorization: `Zoho-oauthtoken ${apiKey}`, Accept: "application/vnd.manageengine.sdp.v3+json" } },
     );
 
     return { configured: true, token_ok: resp.ok, status: resp.status };
