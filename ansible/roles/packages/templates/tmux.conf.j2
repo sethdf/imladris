@@ -1,5 +1,5 @@
 # =============================================================================
-# Imladris tmux config — low-strain, long-session optimized
+# Imladris tmux — refined dark theme, Mountain time, dynamic window names
 # =============================================================================
 
 # --- True color support ---
@@ -37,40 +37,44 @@ bind l select-pane -R
 bind r source-file ~/.tmux.conf \; display "Config reloaded"
 
 # =============================================================================
-# Theme — muted blue/slate, low contrast, easy on eyes
-# Inspired by: nord/catppuccin dark palettes
+# Theme — Tokyo Night Storm
+#
+#   base:      #1a1b26  (deep navy-black)
+#   surface:   #24283b  (raised surface)
+#   overlay:   #3b4261  (borders, dividers)
+#   muted:     #565f89  (comments, inactive)
+#   text:      #c0caf5  (primary text)
+#   accent:    #7aa2f7  (blue — primary accent)
+#   purple:    #bb9af7  (secondary accent)
+#   green:     #9ece6a  (success)
+#   amber:     #e0af68  (warning)
 # =============================================================================
-
-# Colors (low-strain palette):
-#   bg:        #1e2030  (deep blue-black)
-#   fg:        #a9b1d6  (soft lavender-gray)
-#   accent:    #7aa2f7  (gentle blue)
-#   dim:       #565f89  (muted slate)
-#   active:    #394b70  (subtle highlight)
-#   warn:      #e0af68  (soft amber)
 
 # --- Status bar ---
 set -g status-position bottom
-set -g status-style "bg=#1e2030,fg=#565f89"
+set -g status-style "bg=#1a1b26,fg=#565f89"
 set -g status-interval 5
-set -g status-left-length 30
-set -g status-right-length 60
+set -g status-left-length 40
+set -g status-right-length 55
 
-set -g status-left "#[fg=#7aa2f7,bg=#1e2030,bold] #S #[fg=#565f89]│ "
-set -g status-right "#[fg=#565f89]│ #[fg=#a9b1d6]%H:%M #[fg=#565f89]│ #[fg=#a9b1d6]%b %d "
+# Left: session name in blue block
+set -g status-left "#[fg=#1a1b26,bg=#7aa2f7,bold]  #S  #[fg=#7aa2f7,bg=#1a1b26] "
+
+# Right: Mountain time + date
+set -g status-right "#[fg=#3b4261]#[fg=#c0caf5,bg=#3b4261] #(TZ=America/Denver date +'%%I:%%M %%p') #[fg=#7aa2f7,bg=#3b4261]#[fg=#1a1b26,bg=#7aa2f7,bold] %b %d "
 
 # --- Window tabs ---
-setw -g window-status-format "#[fg=#565f89] #I:#W "
-setw -g window-status-current-format "#[fg=#7aa2f7,bg=#394b70,bold] #I:#W "
+setw -g window-status-format "#[fg=#565f89,bg=#1a1b26]  #I #W  "
+setw -g window-status-current-format "#[fg=#24283b,bg=#1a1b26]#[fg=#c0caf5,bg=#24283b,bold] #I #W #[fg=#24283b,bg=#1a1b26]"
 setw -g window-status-separator ""
 
 # --- Pane borders ---
-set -g pane-border-style "fg=#394b70"
+set -g pane-border-style "fg=#3b4261"
 set -g pane-active-border-style "fg=#7aa2f7"
 
 # --- Messages ---
-set -g message-style "bg=#394b70,fg=#a9b1d6"
-set -g message-command-style "bg=#394b70,fg=#a9b1d6"
+set -g message-style "bg=#24283b,fg=#c0caf5"
+set -g message-command-style "bg=#24283b,fg=#c0caf5"
 
 # --- Clock ---
 setw -g clock-mode-colour "#7aa2f7"
