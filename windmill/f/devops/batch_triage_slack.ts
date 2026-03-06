@@ -276,7 +276,7 @@ async function formatSubject(
   return `#${channel.name}`;
 }
 
-// ── Inline classification via Bedrock (Layer 2) ──
+// ── AI classification via Bedrock (Haiku) ──
 
 interface Classification {
   action: "NOTIFY" | "QUEUE" | "AUTO";
@@ -284,16 +284,24 @@ interface Classification {
   summary: string;
   reasoning: string;
   domain: string;
+  entities: string[];
+  alert_type: string;
+  source_system: string;
+  is_resolution: boolean;
 }
 
 async function classifyMessage(
   subject: string,
   sender: string,
   preview: string,
+  recentContext: string,
 ): Promise<Classification> {
   const content = `Channel: ${subject}\nFrom: ${sender}\n\n${preview}`.slice(0, 2000);
-  const prompt = `You are a Slack message triage system. Classify this message.
-
+  const contextBlock = recentContext
+    ? `\nRecent history for this sender/channel:\n${recentContext}\n\nConsider whether this message represents an escalation, new pattern, or continuation of the above.\n`
+    : "";
+  const prompt = `You are a Slack message triage system. Classify this message and extract structured metadata.
+${contextBlock}
 ${content}
 
 Respond with ONLY valid JSON (no markdown):
@@ -302,25 +310,36 @@ Respond with ONLY valid JSON (no markdown):
   "urgency": "critical|high|medium|low",
   "summary": "one sentence summary",
   "reasoning": "why this classification",
-  "domain": "work|personal"
+  "domain": "work|personal",
+  "entities": ["lowercase server/service/system names mentioned"],
+  "alert_type": "outage|security|access|change|license|info",
+  "source_system": "name of the monitoring/alerting tool, or empty string",
+  "is_resolution": false
 }
 
 Rules:
 - NOTIFY: Security alerts, service down, P1 incidents, direct requests needing immediate attention
 - QUEUE: New tickets, feature requests, non-urgent tasks — add to workstream for later
 - AUTO: Bot notifications, resolved alerts, routine updates, general chatter — log and move on
-- critical/high -> NOTIFY, medium -> QUEUE or AUTO, low -> AUTO`;
+- critical/high -> NOTIFY, medium -> QUEUE or AUTO, low -> AUTO
+- entities: extract all server names, service names, system names as lowercase. Omit generic words.
+- alert_type: outage (down/up), security (DLP/breach/vulnerability), access (permissions/consent), change (config/deploy), license (renewal/expiry), info (newsletter/digest/report)
+- is_resolution: true ONLY if this message indicates a problem is resolved`;
 
   try {
     const inner = await bedrockInvoke(prompt, {
-      model: MODELS.SONNET,
-      maxTokens: 256,
+      model: MODELS.HAIKU,
+      maxTokens: 384,
       timeoutMs: 30000,
       parseJson: true,
     });
 
     const validActions = ["NOTIFY", "QUEUE", "AUTO"];
     if (!validActions.includes(inner.action)) inner.action = "QUEUE";
+    if (!Array.isArray(inner.entities)) inner.entities = [];
+    if (!inner.alert_type) inner.alert_type = "info";
+    if (!inner.source_system) inner.source_system = "";
+    if (typeof inner.is_resolution !== "boolean") inner.is_resolution = false;
     return inner as Classification;
   } catch (err: any) {
     console.error(`[classify] Error: ${err.message?.slice(0, 300)}`);
@@ -330,80 +349,48 @@ Rules:
       summary: `CLASSIFY ERROR: ${err.message?.slice(0, 150)}`,
       reasoning: `Bedrock error: ${err.message?.slice(0, 200)}`,
       domain: "work",
+      entities: [],
+      alert_type: "info",
+      source_system: "",
+      is_resolution: false,
     };
   }
 }
 
-// ── Layered classification cascade ──
+// ── Classification with time-series context ──
 
 function computeDedupHash(subject: string, sender: string): string {
   const normalized = `${sender.toLowerCase().trim()}|${subject.toLowerCase().trim()}`;
   return createHash("sha256").update(normalized).digest("hex");
 }
 
-interface LayeredResult extends Classification {
+interface ClassificationResult extends Classification {
   classified_by: string;
   rule_id: number | null;
 }
 
-function classifyLayered(
-  messageId: string,
+async function classifyWithContext(
   subject: string,
   sender: string,
   preview: string,
-  receivedAt: string,
   cacheLib: any | null,
-): LayeredResult {
-  const dedupHash = computeDedupHash(subject, sender);
-
-  // Layer 1a: Dedup — same sender+subject within 4h window
+): Promise<ClassificationResult> {
+  // Fetch recent history for time-series context
+  let recentContext = "";
   if (cacheLib) {
     try {
+      const dedupHash = computeDedupHash(subject, sender);
       const dedup = cacheLib.checkDedup(dedupHash);
       if (dedup.found && dedup.existing) {
-        console.log(`[L1_dedup] Hit for: ${subject.slice(0, 50)}`);
-        return {
-          action: dedup.existing.action as Classification["action"],
-          urgency: dedup.existing.urgency,
-          summary: dedup.existing.summary,
-          reasoning: `Dedup match (${dedup.existing.classified_by})`,
-          domain: dedup.existing.domain,
-          classified_by: "L1_dedup",
-          rule_id: dedup.existing.rule_id,
-        };
+        recentContext = `- Previously classified as ${dedup.existing.action} (${dedup.existing.urgency}): "${dedup.existing.summary}"`;
       }
-    } catch (e: any) {
-      console.error(`[L1_dedup] Error: ${e.message?.slice(0, 100)}`);
-    }
+    } catch { /* context is best-effort */ }
   }
 
-  // Layer 1b: Rules — glob pattern match with source="slack"
-  if (cacheLib) {
-    try {
-      const rule = cacheLib.matchRule("slack", sender, subject);
-      if (rule) {
-        console.log(`[L1_rule] Matched "${rule.name}" for: ${subject.slice(0, 50)}`);
-        cacheLib.incrementRuleHit(rule.id);
-        return {
-          action: rule.action as Classification["action"],
-          urgency: rule.urgency,
-          summary: rule.summary_template || `Rule: ${rule.name}`,
-          reasoning: `Matched rule "${rule.name}" (priority ${rule.priority})`,
-          domain: rule.domain,
-          classified_by: "L1_rule",
-          rule_id: rule.id,
-        };
-      }
-    } catch (e: any) {
-      console.error(`[L1_rule] Error: ${e.message?.slice(0, 100)}`);
-    }
-  }
-
-  // Layer 2: AI classification
-  const aiResult = await classifyMessage(subject, sender, preview);
+  const aiResult = await classifyMessage(subject, sender, preview, recentContext);
   return {
     ...aiResult,
-    classified_by: "L2_ai",
+    classified_by: "L1_ai",
     rule_id: null,
   };
 }
@@ -426,7 +413,7 @@ export async function main(
   notify_count: number;
   errors: number;
   channels_marked_read: number;
-  layer_breakdown: { l1_rule: number; l1_dedup: number; l2_ai: number };
+  layer_breakdown: { l1_ai: number };
   results: Array<{
     channel: string;
     sender: string;
@@ -466,7 +453,7 @@ export async function main(
       total_channels: 0, channels_with_unread: 0, total_messages: 0,
       triaged: 0, auto_count: 0, queue_count: 0, notify_count: 0,
       errors: 1, channels_marked_read: 0,
-      layer_breakdown: { l1_rule: 0, l1_dedup: 0, l2_ai: 0 },
+      layer_breakdown: { l1_ai: 0 },
       results: [],
     };
   }
@@ -482,7 +469,7 @@ export async function main(
       total_channels: 0, channels_with_unread: 0, total_messages: 0,
       triaged: 0, auto_count: 0, queue_count: 0, notify_count: 0,
       errors: 1, channels_marked_read: 0,
-      layer_breakdown: { l1_rule: 0, l1_dedup: 0, l2_ai: 0 },
+      layer_breakdown: { l1_ai: 0 },
       results: [],
     };
   }
@@ -502,8 +489,7 @@ export async function main(
   }> = [];
   let autoCount = 0, queueCount = 0, notifyCount = 0, errorCount = 0;
   let channelsWithUnread = 0, channelsMarkedRead = 0, totalMessages = 0;
-  const layerBreakdown = { l1_rule: 0, l1_dedup: 0, l2_ai: 0 };
-  let lastWasAi = false;
+  const layerBreakdown = { l1_ai: 0 };
 
   for (let ci = 0; ci < channels.length; ci++) {
     const channel = channels[ci];
@@ -572,20 +558,13 @@ export async function main(
       console.log(`[batch_triage_slack] [${ci + 1}/${channels.length}][${mi + 1}/${threadUnits.length}] Triaging thread: ${sender.slice(0, 40)} in ${channelSubject}`);
 
       // Only delay before L2 AI calls (not L1)
-      if (lastWasAi && delay_ms > 0) {
+      if (mi > 0 && delay_ms > 0) {
         await new Promise((r) => setTimeout(r, delay_ms));
       }
 
       try {
-        const classification = classifyLayered(
-          messageId, channelSubject, sender, preview, receivedAt, cacheLib,
-        );
-        lastWasAi = classification.classified_by === "L2_ai";
-
-        // Track layer breakdown
-        if (classification.classified_by === "L1_rule") layerBreakdown.l1_rule++;
-        else if (classification.classified_by === "L1_dedup") layerBreakdown.l1_dedup++;
-        else layerBreakdown.l2_ai++;
+        const classification = await classifyWithContext(channelSubject, sender, preview, cacheLib);
+        layerBreakdown.l1_ai++;
 
         results.push({
           channel: channelSubject,
@@ -622,7 +601,11 @@ export async function main(
                 team: parentMsg.team || null,
                 body_text: threadBody.slice(0, 8000),
                 preview: preview,
+                is_resolution: classification.is_resolution,
               }),
+              entities: JSON.stringify(classification.entities),
+              alert_type: classification.alert_type,
+              source_system: classification.source_system,
             });
           } catch { /* best-effort storage */ }
         }
@@ -636,7 +619,6 @@ export async function main(
         console.log(`[batch_triage_slack] → ${classification.action} (${classification.urgency}) [${classification.classified_by}]: ${classification.summary.slice(0, 80)}`);
       } catch (err: any) {
         errorCount++;
-        lastWasAi = false;
         console.error(`[batch_triage_slack] Error: ${err.message?.slice(0, 200)}`);
         results.push({
           channel: channelSubject,
@@ -660,7 +642,7 @@ export async function main(
   console.log(`\n[batch_triage_slack] Complete in ${(duration / 1000).toFixed(1)}s`);
   console.log(`[batch_triage_slack] Channels: ${channels.length} total, ${channelsWithUnread} with unread`);
   console.log(`[batch_triage_slack] Messages: ${totalMessages} total, ${autoCount} AUTO, ${queueCount} QUEUE, ${notifyCount} NOTIFY, ${errorCount} errors`);
-  console.log(`[batch_triage_slack] Layers: ${layerBreakdown.l1_dedup} dedup, ${layerBreakdown.l1_rule} rule, ${layerBreakdown.l2_ai} AI`);
+  console.log(`[batch_triage_slack] AI classifications: ${layerBreakdown.l1_ai}`);
   if (!dry_run) console.log(`[batch_triage_slack] Channels marked read: ${channelsMarkedRead}`);
 
   return {

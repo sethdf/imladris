@@ -1,14 +1,15 @@
 // Shared Bedrock API helper for all devops pipeline AI calls.
-// Replaces claude -p pipe mode — eliminates PAI context overhead, CLAUDECODE issues,
-// and 40s latency. Uses AWS CLI under the hood (handles IAM credential resolution).
+// Uses @aws-sdk/client-bedrock-runtime InvokeModelCommand — works in Docker workers.
 //
 // Usage:
 //   import { bedrockInvoke, MODELS } from "./bedrock.ts";
 //   const text = await bedrockInvoke("Extract entities from: ...");
 //   const json = await bedrockInvoke("Classify: ...", { model: MODELS.HAIKU, parseJson: true });
 
-import { execSync } from "child_process";
-import { writeFileSync, readFileSync, unlinkSync } from "fs";
+import {
+  BedrockRuntimeClient,
+  InvokeModelCommand,
+} from "@aws-sdk/client-bedrock-runtime";
 
 export const MODELS = {
   OPUS: "us.anthropic.claude-opus-4-6-v1",
@@ -31,6 +32,15 @@ interface BedrockResponse {
   usage: { input_tokens: number; output_tokens: number };
   model: string;
   stop_reason: string;
+}
+
+// Lazy singleton client
+let _client: BedrockRuntimeClient | null = null;
+function getClient(): BedrockRuntimeClient {
+  if (!_client) {
+    _client = new BedrockRuntimeClient({ region: "us-east-1" });
+  }
+  return _client;
 }
 
 /**
@@ -65,25 +75,23 @@ export async function bedrockInvoke(prompt: string, options: BedrockOptions = {}
     body.system = system;
   }
 
-  // Write body to temp file to handle large prompts without shell escaping issues
-  const ts = Date.now();
-  const bodyFile = `/tmp/bedrock-body-${ts}.json`;
-  const outFile = `/tmp/bedrock-out-${ts}.json`;
+  const client = getClient();
+  const command = new InvokeModelCommand({
+    modelId: model,
+    contentType: "application/json",
+    accept: "application/json",
+    body: new TextEncoder().encode(JSON.stringify(body)),
+  });
+
+  const abortController = new AbortController();
+  const timer = setTimeout(() => abortController.abort(), timeoutMs);
 
   try {
-    writeFileSync(bodyFile, JSON.stringify(body));
+    const result = await client.send(command, { abortSignal: abortController.signal });
+    clearTimeout(timer);
 
-    execSync(
-      `aws bedrock-runtime invoke-model` +
-        ` --model-id '${model}'` +
-        ` --body 'file://${bodyFile}'` +
-        ` --cli-binary-format raw-in-base64-out` +
-        ` ${outFile}`,
-      { encoding: "utf-8", timeout: timeoutMs, stdio: ["pipe", "pipe", "pipe"] },
-    );
-
-    const raw = readFileSync(outFile, "utf-8");
-    const response = JSON.parse(raw) as {
+    const responseBody = new TextDecoder().decode(result.body);
+    const response = JSON.parse(responseBody) as {
       content: Array<{ type: string; text: string }>;
       usage: { input_tokens: number; output_tokens: number };
       model: string;
@@ -100,10 +108,9 @@ export async function bedrockInvoke(prompt: string, options: BedrockOptions = {}
     }
 
     return text;
-  } finally {
-    // Cleanup temp files — best effort
-    try { unlinkSync(bodyFile); } catch {}
-    try { unlinkSync(outFile); } catch {}
+  } catch (err: any) {
+    clearTimeout(timer);
+    throw err;
   }
 }
 

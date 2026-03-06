@@ -246,7 +246,7 @@ Resources:
                 Action: sts:AssumeRole
                 Resource:
                   - 'arn:aws:iam::*:role/ImladrisReadOnly'
-                  - 'arn:aws:iam::*:role/ImladrisReadWrite'
+                  - 'arn:aws:iam::*:role/ImladrisAdmin'
                 Condition:
                   ForAnyValue:StringEquals:
                     'aws:ResourceAccount': !Ref TargetAccountIds
