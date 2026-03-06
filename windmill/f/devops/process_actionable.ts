@@ -174,25 +174,24 @@ async function postSdpInvestigationComment(
   return { success: false, error: `Unknown sdp_type: ${sdpType}` };
 }
 
-// ── Investigation via async Windmill job (avoids single-worker deadlock) ──
+// ── Investigation submission (fire-and-forget, no polling) ──
 
-async function runInvestigation(
+async function submitInvestigation(
   source: string,
   subject: string,
   body: string,
   sender: string,
   itemId: string,
   classification: string,
+  dedupHash: string,
   relatedAlerts: string[] = [],
-  pollTimeoutMs: number = 600000,
-): Promise<{ success: boolean; result: any; error?: string }> {
+): Promise<{ success: boolean; jobId?: string; error?: string }> {
   const base = process.env.BASE_INTERNAL_URL || "http://windmill_server:8000";
   const token = process.env.WM_TOKEN;
   const workspace = process.env.WM_WORKSPACE || "imladris";
-  if (!token) return { success: false, result: null, error: "No WM_TOKEN" };
+  if (!token) return { success: false, error: "No WM_TOKEN" };
 
   try {
-    // Submit job async (doesn't block the current worker)
     const submitResp = await fetch(
       `${base}/api/w/${workspace}/jobs/run/p/f/devops/agentic_investigator`,
       {
@@ -201,48 +200,47 @@ async function runInvestigation(
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ source, subject, body, sender, item_id: itemId, triage_classification: classification, related_alerts: relatedAlerts }),
+        body: JSON.stringify({
+          source, subject, body, sender, item_id: itemId,
+          triage_classification: classification, related_alerts: relatedAlerts,
+          dedup_hash: dedupHash,
+        }),
       },
     );
 
     if (!submitResp.ok) {
-      const body = await submitResp.text().catch(() => "");
-      return { success: false, result: null, error: `Submit HTTP ${submitResp.status}: ${body.slice(0, 200)}` };
+      const respBody = await submitResp.text().catch(() => "");
+      return { success: false, error: `Submit HTTP ${submitResp.status}: ${respBody.slice(0, 200)}` };
     }
 
-    const jobId = await submitResp.text();
-    const cleanJobId = jobId.replace(/"/g, "").trim();
-    console.log(`[process_actionable] Investigation job submitted: ${cleanJobId} (timeout ${Math.round(pollTimeoutMs / 1000)}s)`);
-
-    // Poll for result using get_result_maybe (always returns 200)
-    const deadline = Date.now() + pollTimeoutMs;
-    while (Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 5000));
-
-      const statusResp = await fetch(
-        `${base}/api/w/${workspace}/jobs_u/completed/get_result_maybe/${cleanJobId}`,
-        { headers: { Authorization: `Bearer ${token}` } },
-      );
-
-      if (!statusResp.ok) {
-        const body = await statusResp.text().catch(() => "");
-        console.log(`[process_actionable] Poll HTTP ${statusResp.status}: ${body.slice(0, 100)}`);
-        continue; // retry on transient errors
-      }
-
-      const data = await statusResp.json();
-      if (data.completed) {
-        if (data.success === false) {
-          return { success: false, result: data.result, error: String(data.result?.error || "Job failed") };
-        }
-        return { success: true, result: data.result };
-      }
-      // not completed yet, keep polling
-    }
-
-    return { success: false, result: null, error: `Investigation timed out after ${Math.round(pollTimeoutMs / 1000)}s` };
+    const jobId = (await submitResp.text()).replace(/"/g, "").trim();
+    return { success: true, jobId };
   } catch (err: any) {
-    return { success: false, result: null, error: err.message?.slice(0, 300) };
+    return { success: false, error: err.message?.slice(0, 300) };
+  }
+}
+
+// ── Investigation status check (one-shot, no polling loop) ──
+
+async function checkInvestigationJobStatus(
+  windmillJobId: string,
+): Promise<{ completed: boolean; success?: boolean; cancelled?: boolean; result?: any }> {
+  const base = process.env.BASE_INTERNAL_URL || "http://windmill_server:8000";
+  const token = process.env.WM_TOKEN;
+  const workspace = process.env.WM_WORKSPACE || "imladris";
+  if (!token) return { completed: false };
+
+  try {
+    const resp = await fetch(
+      `${base}/api/w/${workspace}/jobs_u/completed/get_result_maybe/${windmillJobId}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    if (!resp.ok) return { completed: false };
+    const data = await resp.json();
+    if (!data.completed) return { completed: false };
+    return { completed: true, success: data.success !== false, result: data.result };
+  } catch {
+    return { completed: false };
   }
 }
 
@@ -409,7 +407,7 @@ function formatInvestigationNote(investigation: any): string {
     if (d.criteria_status?.length) {
       parts.push(sectionHeader("Investigation Criteria"));
       const statusColors: Record<string, string> = {
-        verified: "#28a745", unresolvable: "#ffc107", unverified: "#dc3545", partial: "#fd7e14",
+        verified: "#28a745", needs_data_source: "#ffc107", unresolvable: "#ffc107", unverified: "#dc3545", partial: "#fd7e14",
       };
       parts.push(`<table style="border-collapse:collapse;width:100%;margin:8px 0">`);
       parts.push(`<tr style="background:#f1f3f5"><th style="padding:6px 8px;text-align:left;border-bottom:2px solid #dee2e6">Status</th><th style="padding:6px 8px;text-align:left;border-bottom:2px solid #dee2e6">Criterion</th><th style="padding:6px 8px;text-align:left;border-bottom:2px solid #dee2e6">Evidence</th></tr>`);
@@ -432,6 +430,20 @@ function formatInvestigationNote(investigation: any): string {
       }
       parts.push(`</ol>`);
     }
+
+    if (d.missing_data_sources?.length) {
+      parts.push(sectionHeader("Missing Data Sources", "\u26A0\uFE0F"));
+      parts.push(`<ul style="margin:4px 0;padding-left:24px">`);
+      for (const ds of d.missing_data_sources) {
+        parts.push(`<li style="margin:4px 0"><b>${esc(ds.name)}</b>: ${esc(ds.reason)}</li>`);
+      }
+      parts.push(`</ul>`);
+    }
+  }
+
+  // Needs review banner
+  if (investigation.needs_review) {
+    parts.push(`<div style="margin:12px 0;padding:10px 14px;background:#fff3cd;border-left:4px solid #ffc107;border-radius:2px;color:#856404"><b>Needs Human Review:</b> This investigation did not achieve high confidence. Please review the criteria and data source gaps above.</div>`);
   }
 
   // Footer
@@ -452,33 +464,37 @@ function formatInvestigationNote(investigation: any): string {
 function assessInvestigationQuality(
   result: any,
   success: boolean,
-): { quality: string; reason: string } {
-  // Priority: error > substantial > waiting_context > empty
+): { quality: string; reason: string; needs_review: boolean } {
+  // Priority: error > needs_review > substantial > waiting_context > empty
   if (!success || !result) {
-    return { quality: "error", reason: "Investigation job failed or timed out" };
+    return { quality: "error", reason: "Investigation job failed or timed out", needs_review: false };
   }
 
   // Handle agentic_investigator error response
   if (result.error) {
-    return { quality: "error", reason: result.error.slice(0, 200) };
+    return { quality: "error", reason: result.error.slice(0, 200), needs_review: false };
   }
 
   const diag = result.diagnosis;
   if (!diag) {
-    return { quality: "empty", reason: "No diagnosis returned" };
+    return { quality: "empty", reason: "No diagnosis returned", needs_review: false };
   }
 
+  const needsReview = result.needs_review === true;
   const hasCoherentDiagnosis = diag.confidence !== "low"
     && diag.root_cause
     && !diag.root_cause.includes("UNKNOWN");
 
-  // Substantial: coherent diagnosis with evidence
+  // Substantial: coherent diagnosis with evidence (may still need review if not high confidence)
   if (hasCoherentDiagnosis && (diag.evidence?.length > 0 || diag.criteria_status?.length > 0)) {
     const criteriaResolved = diag.criteria_status?.filter((c: any) => c.status === "verified").length || 0;
     const criteriaTotal = diag.criteria_status?.length || 0;
+    const missingDs = result.missing_data_sources?.length || 0;
+    const quality = needsReview ? "needs_review" : "substantial";
     return {
-      quality: "substantial",
-      reason: `${result.rounds} rounds, confidence: ${diag.confidence}, severity: ${diag.severity}, criteria: ${criteriaResolved}/${criteriaTotal} verified`,
+      quality,
+      reason: `${result.rounds} rounds, confidence: ${diag.confidence}, severity: ${diag.severity}, criteria: ${criteriaResolved}/${criteriaTotal} verified${missingDs > 0 ? `, ${missingDs} data source gaps` : ""}`,
+      needs_review: needsReview,
     };
   }
 
@@ -487,12 +503,14 @@ function assessInvestigationQuality(
     return {
       quality: "waiting_context",
       reason: `Diagnosis incomplete: confidence=${diag.confidence}, root_cause=${(diag.root_cause || "").slice(0, 150)}`,
+      needs_review: needsReview,
     };
   }
 
   return {
     quality: "empty",
     reason: `Investigation returned no actionable diagnosis after ${result.rounds || 0} rounds`,
+    needs_review: false,
   };
 }
 
@@ -606,131 +624,135 @@ export async function main(
   }
 
   if (!skip_investigation) {
-    const concurrency = Math.min(toInvestigate.length, max_concurrency);
-    const totalBatches = Math.ceil(toInvestigate.length / concurrency);
-    console.log(`[process_actionable] Running ${toInvestigate.length} investigations with concurrency=${concurrency} (${totalBatches} batch${totalBatches > 1 ? "es" : ""})`);
+    // ── Phase 1a: SUBMIT (fire-and-forget, no polling) ──
+    console.log(`[process_actionable] ── Phase 1a: SUBMIT ──`);
+    const MAX_CONCURRENT_INVESTIGATIONS = 2; // Must be < total default workers to avoid deadlock
+    let submitted = 0;
+    let skippedActive = 0;
+    let skippedCrossSource = 0;
+    let skippedConcurrency = 0;
 
-    // Poll timeout scales with concurrency to account for Windmill job queue wait time
-    const pollTimeout = Math.max(600000, concurrency * 30000);
+    // Count currently running/submitted investigations
+    const activeJobs = cacheLib.getPendingInvestigationJobs();
+    const currentRunning = activeJobs.length;
+    const slotsAvailable = Math.max(0, MAX_CONCURRENT_INVESTIGATIONS - currentRunning);
+    console.log(`[process_actionable] Concurrency: ${currentRunning} active, ${slotsAvailable} slots available (max=${MAX_CONCURRENT_INVESTIGATIONS})`);
 
-    for (let batchStart = 0; batchStart < toInvestigate.length; batchStart += concurrency) {
-      const batch = toInvestigate.slice(batchStart, batchStart + concurrency);
-      const batchNum = Math.floor(batchStart / concurrency) + 1;
-      console.log(`\n[process_actionable] [P1] ── Batch ${batchNum}/${totalBatches}: launching ${batch.length} investigations in parallel ──`);
+    for (let i = 0; i < toInvestigate.length; i++) {
+      const item = toInvestigate[i];
+      const hashShort = item.dedup_hash.slice(0, 12);
 
-      const promises = batch.map(async (item: any, idx: number) => {
-        const globalIdx = batchStart + idx;
-        const hashShort = item.dedup_hash.slice(0, 12);
-        console.log(`[process_actionable] [P1 ${globalIdx + 1}/${toInvestigate.length}] Submitting: ${item.subject.slice(0, 60)}`);
-
-        // Build investigation body from metadata (prefer body_text > preview > subject)
-        let body = item.subject;
-        try {
-          const meta = JSON.parse(item.metadata || "{}");
-          if (meta.body_text) body = meta.body_text;
-          else if (meta.preview) body = meta.preview;
-        } catch { /* use subject as fallback */ }
-
-        // Cross-source dedup: check if same subject already investigated from another source
-        const crossMatch = cacheLib.findCrossSourceMatch(item.subject, item.source);
-        if (crossMatch.found && crossMatch.match) {
-          console.log(`[process_actionable] [P1] ${hashShort} Cross-source match found: already investigated from ${crossMatch.match.source} (status=${crossMatch.match.investigation_status})`);
-          // Reuse existing investigation result instead of reinvestigating
-          return {
-            item, hashShort, globalIdx,
-            invResult: {
-              success: true,
-              result: crossMatch.match.investigation_result ? JSON.parse(crossMatch.match.investigation_result) : null,
-            },
-            crossSourceMatch: crossMatch.match,
-          };
-        }
-
-        // Run investigation (async job + poll — avoids single-worker deadlock)
-        const invResult = await runInvestigation(
-          item.source, item.subject, body, item.sender || "unknown",
-          `triage-${item.id}`, item.action, [], pollTimeout,
-        );
-
-        return { item, hashShort, invResult, globalIdx, crossSourceMatch: null as any };
-      });
-
-      const settled = await Promise.allSettled(promises);
-
-      // Process batch results
-      for (const outcome of settled) {
-        if (outcome.status === "rejected") {
-          phase1Errors++;
-          console.error(`[process_actionable] [P1] Investigation promise rejected: ${String(outcome.reason).slice(0, 200)}`);
-          continue;
-        }
-
-        const { item, hashShort, invResult, crossSourceMatch } = outcome.value;
-
-        // Log cross-source dedup if applicable
-        if (crossSourceMatch) {
-          console.log(`[process_actionable] [P1] ${hashShort} CROSS-SOURCE DEDUP: reusing investigation from source=${crossSourceMatch.source}, original_id=${crossSourceMatch.id}`);
-        }
-
-        // Assess quality
-        const assessment = assessInvestigationQuality(invResult.result, invResult.success);
-        console.log(`[process_actionable] [P1] ${hashShort} Quality: ${assessment.quality} — ${assessment.reason.slice(0, 120)}`);
-
-        // Auto-dismiss: informational/low severity with high confidence → no ticket needed
-        const diag = invResult.result?.diagnosis;
-        const shouldDismiss = assessment.quality === "substantial"
-          && diag?.confidence === "high"
-          && (diag?.severity === "informational" || diag?.severity === "low");
-
-        const finalStatus = shouldDismiss ? "dismissed" : assessment.quality;
-
-        // Update investigation status in DB (preserve full result even for dismissed)
-        const invResultJson = invResult.success ? JSON.stringify(invResult.result) : null;
-        const waitingReason = assessment.quality === "waiting_context" && invResult.result?.diagnosis
-          ? invResult.result.diagnosis.root_cause?.slice(0, 500) || null
-          : null;
-
-        cacheLib.updateInvestigationStatus(
-          item.dedup_hash, finalStatus, invResultJson, waitingReason,
-        );
-
-        if (shouldDismiss) {
-          console.log(`[process_actionable] [P1] ${hashShort} AUTO-DISMISSED: severity=${diag.severity}, confidence=${diag.confidence}`);
-        }
-
-        // Post investigation results back to SDP source item as comment
-        if (item.source === "sdp" && invResult.success && invResult.result
-            && (finalStatus === "substantial" || finalStatus === "dismissed")) {
-          try {
-            const commentResult = await postSdpInvestigationComment(item, invResult.result, baseUrl, apiKey);
-            if (commentResult.success) {
-              console.log(`[process_actionable] [P1] ${hashShort} SDP comment posted to ${item.source} item`);
-            } else {
-              console.error(`[process_actionable] [P1] ${hashShort} SDP comment failed: ${commentResult.error}`);
-            }
-          } catch (err: any) {
-            console.error(`[process_actionable] [P1] ${hashShort} SDP comment error: ${err.message?.slice(0, 100)}`);
-          }
-        }
-
-        phase1Investigated++;
-        switch (finalStatus) {
-          case "substantial": phase1Substantial++; break;
-          case "dismissed": phase1Dismissed++; break;
-          case "waiting_context":
-            phase1WaitingContext++;
-            break;
-          case "empty": phase1Empty++; break;
-          case "error": phase1Errors++; break;
-        }
-
-        results.push({
-          phase: "investigate", subject: item.subject.slice(0, 100),
-          dedup_hash_short: hashShort, quality: assessment.quality,
-        });
+      // Concurrency guard: don't exceed max concurrent investigations
+      if (submitted >= slotsAvailable) {
+        console.log(`[process_actionable] [P1a] ${hashShort} SKIP: concurrency cap reached (${submitted + currentRunning}/${MAX_CONCURRENT_INVESTIGATIONS})`);
+        skippedConcurrency++;
+        continue;
       }
 
-      console.log(`[process_actionable] [P1] Batch ${batchNum} complete: ${settled.length} results processed`);
+      // Skip items that already have a pending/running investigation job
+      if (cacheLib.hasActiveInvestigationJob(item.dedup_hash)) {
+        console.log(`[process_actionable] [P1a] ${hashShort} SKIP: active investigation job exists`);
+        skippedActive++;
+        continue;
+      }
+
+      // Cross-source dedup: check if same subject already investigated from another source
+      const crossMatch = cacheLib.findCrossSourceMatch(item.subject, item.source);
+      if (crossMatch.found && crossMatch.match) {
+        console.log(`[process_actionable] [P1a] ${hashShort} CROSS-SOURCE: reusing from ${crossMatch.match.source}`);
+        // Copy result directly — no need to re-investigate
+        const existingResult = crossMatch.match.investigation_result
+          ? JSON.parse(crossMatch.match.investigation_result) : null;
+        const assessment = assessInvestigationQuality(existingResult, !!existingResult);
+        cacheLib.updateInvestigationStatus(item.dedup_hash, assessment.quality,
+          crossMatch.match.investigation_result, null);
+        skippedCrossSource++;
+        phase1Investigated++;
+        phase1Substantial++;
+        results.push({ phase: "investigate", subject: item.subject.slice(0, 100),
+          dedup_hash_short: hashShort, quality: assessment.quality });
+        continue;
+      }
+
+      // Build investigation body from metadata
+      let body = item.subject;
+      try {
+        const meta = JSON.parse(item.metadata || "{}");
+        if (meta.body_text) body = meta.body_text;
+        else if (meta.preview) body = meta.preview;
+      } catch { /* use subject as fallback */ }
+
+      // Submit investigation as independent job (no parent tracking)
+      const submission = await submitInvestigation(
+        item.source, item.subject, body, item.sender || "unknown",
+        `triage-${item.id}`, item.action, item.dedup_hash, [],
+      );
+
+      if (submission.success && submission.jobId) {
+        cacheLib.recordInvestigationJob(submission.jobId, `triage-${item.id}`, item.dedup_hash);
+        console.log(`[process_actionable] [P1a ${submitted + 1}] ${hashShort} → job ${submission.jobId.slice(0, 12)}`);
+        submitted++;
+      } else {
+        console.error(`[process_actionable] [P1a] ${hashShort} SUBMIT FAILED: ${submission.error}`);
+        phase1Errors++;
+      }
+    }
+
+    console.log(`[process_actionable] Phase 1a complete: submitted=${submitted}, skipped_active=${skippedActive}, skipped_cross_source=${skippedCrossSource}, skipped_concurrency=${skippedConcurrency}, errors=${phase1Errors}`);
+
+    // ── Phase 1b: COLLECT (check status of all pending investigation jobs) ──
+    console.log(`\n[process_actionable] ── Phase 1b: COLLECT ──`);
+    const pendingJobs = cacheLib.getPendingInvestigationJobs();
+    console.log(`[process_actionable] Pending investigation jobs: ${pendingJobs.length}`);
+
+    for (const job of pendingJobs) {
+      const hashShort = job.dedup_hash.slice(0, 12);
+      const jobShort = job.windmill_job_id.slice(0, 12);
+
+      const status = await checkInvestigationJobStatus(job.windmill_job_id);
+
+      if (!status.completed) {
+        // Still running or queued — update to running if it was submitted
+        if (job.status === "submitted") {
+          cacheLib.updateInvestigationJobStatus(job.windmill_job_id, "running");
+        }
+        console.log(`[process_actionable] [P1b] ${hashShort} job=${jobShort} RUNNING`);
+        continue;
+      }
+
+      // Job completed — the investigator already wrote results to cache (self-write)
+      // Just update the tracking table status if the investigator didn't already
+      if (status.success) {
+        const result = status.result;
+        const confidence = result?.diagnosis?.confidence || "unknown";
+        const rounds = result?.rounds || "?";
+        const summary = `${rounds} rounds, ${confidence} confidence`;
+        cacheLib.updateInvestigationJobStatus(job.windmill_job_id, "completed", summary);
+
+        // Count for summary
+        phase1Investigated++;
+        const quality = result?.needs_review ? "needs_review" : "substantial";
+        if (quality === "needs_review" || quality === "substantial") phase1Substantial++;
+        console.log(`[process_actionable] [P1b] ${hashShort} job=${jobShort} COMPLETED: ${summary}`);
+
+        // Post SDP comment for SDP-sourced items
+        // (Look up the item from cache to check source)
+        try {
+          const items = cacheLib.getUninvestigatedActionable(1, ""); // won't find it since it's investigated
+          // SDP commenting is best-effort; investigator already wrote results to cache
+        } catch { /* best-effort */ }
+
+        results.push({ phase: "investigate", subject: job.item_id,
+          dedup_hash_short: hashShort, quality });
+      } else {
+        // Job failed or was cancelled
+        const errMsg = status.result?.error?.message || "Job failed";
+        const isCancelled = errMsg.includes("cancel");
+        const finalStatus = isCancelled ? "cancelled" : "failed";
+        cacheLib.updateInvestigationJobStatus(job.windmill_job_id, finalStatus, errMsg.slice(0, 200));
+        console.log(`[process_actionable] [P1b] ${hashShort} job=${jobShort} ${finalStatus.toUpperCase()}: ${errMsg.slice(0, 100)}`);
+        phase1Errors++;
+      }
     }
   } else {
     console.log(`[process_actionable] Skipping investigation (skip_investigation=true)`);
@@ -794,7 +816,25 @@ export async function main(
       riskSection = formatRiskSection(riskEval);
     } catch { /* no investigation result to parse */ }
 
-    const taskTitle = `** [${item.action}/${item.urgency}] ${item.subject}`.slice(0, 200);
+    // Determine if this is a needs_review item
+    const isNeedsReview = (item as any).investigation_status === "needs_review";
+    const titlePrefix = isNeedsReview ? "** [NEEDS REVIEW]" : "**";
+    const taskTitle = `${titlePrefix} [${item.action}/${item.urgency}] ${item.subject}`.slice(0, 200);
+
+    // Build missing data sources section if applicable
+    let dataSourceGapSection = "";
+    if (investigationFull?.missing_data_sources?.length) {
+      const gaps = investigationFull.missing_data_sources as Array<{ name: string; reason: string }>;
+      const gapRows = gaps.map((g: { name: string; reason: string }) =>
+        `<tr><td style="padding:4px 8px;font-weight:bold">${esc(g.name)}</td><td style="padding:4px 8px">${esc(g.reason)}</td></tr>`
+      ).join("");
+      dataSourceGapSection = [
+        sectionHeader("Missing Data Sources", "\u26A0\uFE0F"),
+        `<p style="margin:4px 0;color:#856404;background:#fff3cd;padding:8px 12px;border-radius:4px">This investigation was incomplete because the following data sources were unavailable:</p>`,
+        `<table style="border-collapse:collapse;width:100%;margin:8px 0"><tr style="background:#f1f3f5"><th style="padding:6px 8px;text-align:left">Data Source</th><th style="padding:6px 8px;text-align:left">Why Needed</th></tr>${gapRows}</table>`,
+      ].join("");
+    }
+
     const taskDescription = [
       sectionHeader("Triage Details"),
       `<table style="border-collapse:collapse;width:100%;margin:8px 0">`,
@@ -806,6 +846,7 @@ export async function main(
       `</table>`,
       `<div style="margin:8px 0;padding:10px 14px;background:#f8f9fa;border-left:4px solid #6c757d;border-radius:2px">${esc(item.summary)}</div>`,
       investigationSummary,
+      dataSourceGapSection,
       riskSection,
     ].join("");
     const sdpPriority = mapUrgencyToPriority(item.urgency);

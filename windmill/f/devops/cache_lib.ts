@@ -134,6 +134,10 @@ export function init(): boolean {
       "ALTER TABLE triage_results ADD COLUMN waiting_context_reason TEXT DEFAULT NULL",
       "ALTER TABLE triage_results ADD COLUMN investigation_attempts INTEGER NOT NULL DEFAULT 0",
       "ALTER TABLE triage_results ADD COLUMN last_investigated_at INTEGER DEFAULT NULL",
+      "ALTER TABLE triage_results ADD COLUMN entities TEXT DEFAULT '[]'",
+      "ALTER TABLE triage_results ADD COLUMN alert_type TEXT DEFAULT 'info'",
+      "ALTER TABLE triage_results ADD COLUMN source_system TEXT DEFAULT ''",
+      "ALTER TABLE triage_results ADD COLUMN incident_id TEXT DEFAULT NULL",
     ];
     for (const migration of migrations) {
       try { db.exec(migration); } catch { /* Column already exists — expected on subsequent runs */ }
@@ -143,6 +147,40 @@ export function init(): boolean {
     } catch { /* index may already exist */ }
     try {
       db.exec("CREATE INDEX IF NOT EXISTS idx_triage_results_inv_status ON triage_results(investigation_status)");
+    } catch { /* index may already exist */ }
+    try {
+      db.exec("CREATE INDEX IF NOT EXISTS idx_triage_results_incident ON triage_results(incident_id)");
+    } catch { /* index may already exist */ }
+    try {
+      db.exec("CREATE INDEX IF NOT EXISTS idx_triage_results_alert_type ON triage_results(alert_type)");
+    } catch { /* index may already exist */ }
+
+    // ── Capability gaps table (tracks missing data sources from investigations) ──
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS capability_gaps (
+        name TEXT PRIMARY KEY,
+        reason TEXT NOT NULL DEFAULT '',
+        first_seen INTEGER NOT NULL,
+        last_seen INTEGER NOT NULL,
+        occurrence_count INTEGER NOT NULL DEFAULT 1
+      );
+    `);
+
+    // ── Investigation jobs tracking table (decoupled orchestration) ──
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS investigation_jobs (
+        windmill_job_id TEXT PRIMARY KEY,
+        item_id TEXT NOT NULL,
+        dedup_hash TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'submitted',
+        submitted_at INTEGER NOT NULL,
+        completed_at INTEGER,
+        result_summary TEXT
+      );
+    `);
+    try {
+      db.exec("CREATE INDEX IF NOT EXISTS idx_investigation_jobs_status ON investigation_jobs(status)");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_investigation_jobs_dedup ON investigation_jobs(dedup_hash)");
     } catch { /* index may already exist */ }
 
     // ── Resource inventory table (auto-discovery) ──
@@ -582,6 +620,9 @@ export interface TriageResultInput {
   marked_read: number;
   metadata?: string;
   task_id?: string | null;
+  entities?: string;
+  alert_type?: string;
+  source_system?: string;
 }
 
 /** Insert a triage classification result */
@@ -592,8 +633,8 @@ export function storeTriageResult(result: TriageResultInput): number | null {
     init();
     const stmt = db.prepare(
       `INSERT INTO triage_results
-       (source, message_id, subject, sender, received_at, action, urgency, summary, reasoning, domain, classified_by, rule_id, dedup_hash, marked_read, metadata)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       (source, message_id, subject, sender, received_at, action, urgency, summary, reasoning, domain, classified_by, rule_id, dedup_hash, marked_read, metadata, entities, alert_type, source_system)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const info = stmt.run(
       result.source,
@@ -611,6 +652,9 @@ export function storeTriageResult(result: TriageResultInput): number | null {
       result.dedup_hash,
       result.marked_read,
       result.metadata || "{}",
+      result.entities || "[]",
+      result.alert_type || "info",
+      result.source_system || "",
     );
     db.close();
     return (info as any).lastInsertRowid ?? null;
@@ -765,7 +809,7 @@ export function getInvestigatedReadyForTask(limit: number = 20): ActionableItem[
     const urgencyOrder = "CASE urgency WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END";
     const sql = `SELECT id, source, message_id, subject, sender, received_at, action, urgency, summary, reasoning, domain, classified_by, dedup_hash, metadata, investigation_result
                  FROM triage_results
-                 WHERE investigation_status = 'substantial' AND task_id IS NULL AND domain = 'work'
+                 WHERE investigation_status IN ('substantial', 'needs_review') AND task_id IS NULL AND domain = 'work'
                  GROUP BY dedup_hash
                  ORDER BY ${urgencyOrder} ASC, classified_at DESC
                  LIMIT ?`;
@@ -1140,5 +1184,150 @@ export function resourceInventoryStats(): {
   } catch {
     db.close();
     return { total: 0, by_type: {}, stale_count: 0 };
+  }
+}
+
+/** Record a capability gap (missing data source) — upserts: increments count on repeat */
+export function recordCapabilityGap(name: string, reason: string): boolean {
+  const db = getDb();
+  if (!db) return false;
+  try {
+    init();
+    const now = Math.floor(Date.now() / 1000);
+    db.prepare(
+      `INSERT INTO capability_gaps (name, reason, first_seen, last_seen, occurrence_count)
+       VALUES (?, ?, ?, ?, 1)
+       ON CONFLICT(name) DO UPDATE SET
+         reason = excluded.reason,
+         last_seen = excluded.last_seen,
+         occurrence_count = occurrence_count + 1`
+    ).run(name, reason, now, now);
+    db.close();
+    return true;
+  } catch {
+    db.close();
+    return false;
+  }
+}
+
+/** Get all capability gaps, ordered by occurrence count descending */
+export function getCapabilityGaps(): Array<{
+  name: string;
+  reason: string;
+  first_seen: number;
+  last_seen: number;
+  occurrence_count: number;
+}> {
+  const db = getDb();
+  if (!db) return [];
+  try {
+    init();
+    const rows = db.prepare(
+      "SELECT name, reason, first_seen, last_seen, occurrence_count FROM capability_gaps ORDER BY occurrence_count DESC"
+    ).all() as any[];
+    db.close();
+    return rows;
+  } catch {
+    db.close();
+    return [];
+  }
+}
+
+// ── Investigation Jobs Tracking (decoupled orchestration) ──
+
+/** Record a new investigation job submission */
+export function recordInvestigationJob(
+  windmillJobId: string,
+  itemId: string,
+  dedupHash: string,
+): boolean {
+  const db = getDb();
+  if (!db) return false;
+  try {
+    init();
+    const now = Math.floor(Date.now() / 1000);
+    db.run(
+      `INSERT OR REPLACE INTO investigation_jobs (windmill_job_id, item_id, dedup_hash, status, submitted_at)
+       VALUES (?, ?, ?, 'submitted', ?)`,
+      [windmillJobId, itemId, dedupHash, now],
+    );
+    db.close();
+    return true;
+  } catch {
+    db.close();
+    return false;
+  }
+}
+
+/** Update investigation job status */
+export function updateInvestigationJobStatus(
+  windmillJobId: string,
+  status: string,
+  resultSummary?: string | null,
+): boolean {
+  const db = getDb();
+  if (!db) return false;
+  try {
+    init();
+    const now = Math.floor(Date.now() / 1000);
+    const isTerminal = ["completed", "failed", "cancelled"].includes(status);
+    db.run(
+      `UPDATE investigation_jobs
+       SET status = ?,
+           completed_at = CASE WHEN ? THEN ? ELSE completed_at END,
+           result_summary = COALESCE(?, result_summary)
+       WHERE windmill_job_id = ?`,
+      [status, isTerminal ? 1 : 0, isTerminal ? now : null, resultSummary ?? null, windmillJobId],
+    );
+    db.close();
+    return true;
+  } catch {
+    db.close();
+    return false;
+  }
+}
+
+/** Get investigation jobs that are not in a terminal state */
+export function getPendingInvestigationJobs(): Array<{
+  windmill_job_id: string;
+  item_id: string;
+  dedup_hash: string;
+  status: string;
+  submitted_at: number;
+}> {
+  const db = getDb();
+  if (!db) return [];
+  try {
+    init();
+    const rows = db.prepare(
+      `SELECT windmill_job_id, item_id, dedup_hash, status, submitted_at
+       FROM investigation_jobs
+       WHERE status NOT IN ('completed', 'failed', 'cancelled')
+       ORDER BY submitted_at ASC`
+    ).all() as any[];
+    db.close();
+    return rows;
+  } catch {
+    db.close();
+    return [];
+  }
+}
+
+/** Check if an item already has a pending/running investigation job */
+export function hasActiveInvestigationJob(dedupHash: string): boolean {
+  const db = getDb();
+  if (!db) return false;
+  try {
+    init();
+    const row = db.prepare(
+      `SELECT 1 FROM investigation_jobs
+       WHERE dedup_hash = ? AND status NOT IN ('completed', 'failed', 'cancelled')
+       LIMIT 1`
+    ).get(dedupHash);
+    db.close();
+    return !!row;
+  } catch {
+    db.close();
+    return false;
   }
 }

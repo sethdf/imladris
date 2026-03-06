@@ -20,13 +20,14 @@ import {
   type SystemContentBlock,
   type ToolConfiguration,
 } from "@aws-sdk/client-bedrock-runtime";
+import * as cacheLib from "./cache_lib.ts";
 
 // ── Constants ──
 
 const MODEL_ID = "us.anthropic.claude-opus-4-6-v1";
-const MAX_ROUNDS = 10;
-const NUDGE_AT = 8;
-const TOOL_TIMEOUT_MS = 120_000;
+const MAX_ROUNDS = 8;
+const NUDGE_AT = 6;
+const TOOL_TIMEOUT_MS = 60_000;
 const MAX_TOOL_RESULT_BYTES = 50_000;
 const WM_BASE = process.env.BASE_INTERNAL_URL || "http://windmill_server:8000";
 const WM_TOKEN = process.env.WM_TOKEN;
@@ -39,16 +40,31 @@ const SYSTEM_PROMPT = `You are an expert DevOps/SecOps investigator for BuxtonIT
 INVESTIGATION APPROACH:
 1. Before using any tools, identify what questions this specific alert requires you to answer (your investigation criteria). State them explicitly.
 2. Use tools to answer each question with evidence. Execute multiple tool calls in a single turn when the queries are independent.
-3. Before submitting, verify every question is answered or explicitly unresolvable.
+3. Before submitting, verify every criterion is either "verified" (with evidence) or "needs_data_source" (you identified what data you need but lack a tool for it).
 4. Include your criteria and their resolution status in the diagnosis via submit_diagnosis.
+
+CONFIDENCE RULES (CRITICAL):
+- Only "high" confidence is accepted as a complete diagnosis. If you have strong evidence supporting your conclusions, submit with high confidence.
+- "medium" confidence will be rejected in early rounds — you must investigate further. In later rounds it will be accepted but flagged for human review.
+- "low" confidence is almost never accepted. Use more tools, ask different questions, or explain what data source you need.
+
+CRITERION STATUS RULES (CRITICAL):
+- There are only two valid criterion statuses: "verified" and "needs_data_source".
+- "verified": You answered the question with specific evidence from a tool result.
+- "needs_data_source": You cannot answer because no available tool provides the required data. You MUST specify what data source/system would be needed in the evidence field.
+- There is NO "unresolvable" status. If a human could figure it out, then you need a data source — call request_data_source to flag it. If the data was never recorded (transient event, no logs), that is still "needs_data_source" with the evidence explaining why (e.g., "No logging exists for this ephemeral container — need container runtime logging").
+
+DATA SOURCE GAPS:
+- When you realize you need access to a system or data source that isn't available as a tool, call request_data_source immediately. This flags the gap so it can be addressed.
+- Continue investigating with available tools after flagging the gap — do your best with what you have.
+- Include all flagged gaps in your submit_diagnosis under missing_data_sources.
 
 RULES:
 - Every conclusion MUST cite a specific tool result. Never infer without evidence.
-- "Unknown" is always valid — never fabricate a diagnosis.
 - All tools are READ-ONLY. You cannot modify any resource.
-- If a tool returns an error about missing credentials, note it as NEEDS-CREDENTIAL and continue.
+- If a tool returns an error about missing credentials, call request_data_source with the tool name and "credentials not configured" as the reason.
 - Keep tool calls focused — use filters and limits to avoid pulling excessive data.
-- When you have enough evidence, call submit_diagnosis immediately. Do not over-investigate.
+- When you have enough evidence for a high-confidence diagnosis, call submit_diagnosis immediately.
 
 ENVIRONMENT:
 - AWS: 16 accounts in BuxtonIT org (767448074758 is imladris/local). All accessible via tools.
@@ -357,6 +373,27 @@ const TOOLS: ToolConfiguration = {
     },
     {
       toolSpec: {
+        name: "request_data_source",
+        description: "Flag a missing data source that would help resolve this investigation. Call this when you need access to a system, tool, or data that isn't available. The gap will be recorded for future tool development. Continue investigating with available tools after calling this.",
+        inputSchema: {
+          json: {
+            type: "object",
+            properties: {
+              data_source_name: { type: "string", description: "Name of the system/tool/data source needed (e.g., 'Datadog APM', 'PagerDuty incidents', 'container runtime logs')" },
+              reason: { type: "string", description: "Why this data source is needed for this investigation" },
+              criteria_blocked: {
+                type: "array",
+                items: { type: "string" },
+                description: "Which investigation criteria cannot be verified without this data source",
+              },
+            },
+            required: ["data_source_name", "reason", "criteria_blocked"],
+          },
+        },
+      },
+    },
+    {
+      toolSpec: {
         name: "submit_diagnosis",
         description: "Submit your final investigation diagnosis. Call this ONLY when all investigation criteria are resolved. This terminates the investigation.",
         inputSchema: {
@@ -381,15 +418,27 @@ const TOOLS: ToolConfiguration = {
                 items: { type: "string" },
                 description: "Specific, actionable next steps (min 1)",
               },
-              confidence: { type: "string", enum: ["high", "medium", "low"], description: "Confidence in the diagnosis" },
+              confidence: { type: "string", enum: ["high", "medium", "low"], description: "Confidence in the diagnosis. Only 'high' is accepted as complete — 'medium' and 'low' may be rejected." },
+              missing_data_sources: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    name: { type: "string", description: "Name of the missing data source" },
+                    reason: { type: "string", description: "Why it was needed" },
+                  },
+                  required: ["name", "reason"],
+                },
+                description: "Data sources that were needed but unavailable (from request_data_source calls)",
+              },
               criteria_status: {
                 type: "array",
                 items: {
                   type: "object",
                   properties: {
                     criterion: { type: "string", description: "Investigation question" },
-                    status: { type: "string", enum: ["verified", "unresolvable"], description: "Resolution status" },
-                    evidence: { type: "string", description: "Evidence or reason for unresolvable" },
+                    status: { type: "string", enum: ["verified", "needs_data_source"], description: "Resolution status — verified (with evidence) or needs_data_source (what system/data is needed)" },
+                    evidence: { type: "string", description: "Evidence supporting verification, or description of what data source is needed and why" },
                   },
                   required: ["criterion", "status", "evidence"],
                 },
@@ -460,15 +509,66 @@ export async function main(
   item_id: string,
   triage_classification: string = "",
   related_alerts: string[] = [],
+  dedup_hash: string = "",
 ): Promise<{
   diagnosis?: Record<string, unknown>;
   error?: string;
   rounds: number;
   item_id: string;
+  needs_review: boolean;
+  missing_data_sources: Array<{ name: string; reason: string }>;
   usage: { input_tokens: number; output_tokens: number };
 }> {
+  // Helper: write investigation result directly to cache (decoupled from orchestrator)
+  const writeResultToCache = (result: any, status: string) => {
+    if (!dedup_hash) return; // backward compat: skip if no dedup_hash provided
+    try {
+      // Assess quality inline (same logic as process_actionable's assessInvestigationQuality)
+      let quality = status;
+      if (status === "success") {
+        const diag = result.diagnosis;
+        if (!diag) {
+          quality = result.error ? "error" : "empty";
+        } else if (result.needs_review) {
+          quality = "needs_review";
+        } else {
+          quality = "substantial";
+        }
+        // Auto-dismiss: informational/low severity with high confidence
+        if (quality === "substantial" && diag?.confidence === "high"
+            && (diag?.severity === "informational" || diag?.severity === "low")) {
+          quality = "dismissed";
+        }
+      }
+      const resultJson = JSON.stringify(result);
+      const waitingReason = (quality === "needs_review" || quality === "waiting_context")
+        && result.diagnosis?.root_cause
+        ? result.diagnosis.root_cause.slice(0, 500)
+        : null;
+      cacheLib.updateInvestigationStatus(dedup_hash, quality, resultJson, waitingReason);
+      // Record capability gaps
+      const gaps = result.missing_data_sources as Array<{ name: string; reason: string }> | undefined;
+      if (gaps?.length) {
+        for (const gap of gaps) {
+          try { cacheLib.recordCapabilityGap(gap.name, gap.reason); } catch { /* best-effort */ }
+        }
+      }
+      // Update investigation_jobs tracking table
+      const jobId = process.env.WM_JOB_ID;
+      if (jobId) {
+        const summary = `${result.rounds || 0} rounds, ${result.diagnosis?.confidence || "unknown"} confidence, ${quality}`;
+        cacheLib.updateInvestigationJobStatus(jobId, quality === "error" ? "failed" : "completed", summary);
+      }
+      console.log(`[agentic_investigator] Results written to cache: quality=${quality}, dedup_hash=${dedup_hash.slice(0, 12)}`);
+    } catch (err: any) {
+      console.error(`[agentic_investigator] Cache write failed (non-fatal): ${err.message?.slice(0, 200)}`);
+    }
+  };
+
   if (!WM_TOKEN) {
-    return { error: "No WM_TOKEN available", rounds: 0, item_id, usage: { input_tokens: 0, output_tokens: 0 } };
+    const errResult = { error: "No WM_TOKEN available", rounds: 0, item_id, needs_review: false, missing_data_sources: [], usage: { input_tokens: 0, output_tokens: 0 } };
+    writeResultToCache(errResult, "error");
+    return errResult;
   }
 
   const client = new BedrockRuntimeClient({ region: "us-east-1" });
@@ -494,6 +594,7 @@ export async function main(
   ];
 
   let totalUsage = { input_tokens: 0, output_tokens: 0 };
+  const requestedDataSources: Array<{ name: string; reason: string }> = [];
 
   for (let round = 1; round <= MAX_ROUNDS; round++) {
     // Inject nudge at NUDGE_AT
@@ -528,7 +629,9 @@ export async function main(
 
     const assistantContent = response.output?.message?.content;
     if (!assistantContent) {
-      return { error: "No content in response", rounds: round, item_id, usage: totalUsage };
+      const noContentResult = { error: "No content in response", rounds: round, item_id, needs_review: true, missing_data_sources: requestedDataSources, usage: totalUsage };
+      writeResultToCache(noContentResult, "error");
+      return noContentResult;
     }
 
     // Add assistant message to conversation
@@ -548,62 +651,113 @@ export async function main(
         .map((block) => block.text)
         .join("\n");
 
-      return {
+      const endTurnResult = {
         diagnosis: { summary: textContent, note: "Model ended without submit_diagnosis" },
         rounds: round,
         item_id,
+        needs_review: true,
+        missing_data_sources: requestedDataSources,
         usage: totalUsage,
       };
+      writeResultToCache(endTurnResult, "success");
+      return endTurnResult;
+    }
+
+    // Handle request_data_source calls — accumulate and respond inline
+    const dataSourceBlocks = toolUseBlocks.filter((b) => b.toolUse.name === "request_data_source");
+    for (const dsBlock of dataSourceBlocks) {
+      const input = dsBlock.toolUse.input as { data_source_name: string; reason: string; criteria_blocked: string[] };
+      // Only allow after round 2 to prevent premature bail-out
+      if (round <= 2) {
+        console.log(`[agentic_investigator] Rejecting premature request_data_source at round ${round}: ${input.data_source_name}`);
+      } else {
+        console.log(`[agentic_investigator] Data source gap flagged: ${input.data_source_name} — ${input.reason}`);
+        requestedDataSources.push({ name: input.data_source_name, reason: input.reason });
+      }
     }
 
     // Check for submit_diagnosis among tool calls
     const diagnosisBlock = toolUseBlocks.find((b) => b.toolUse.name === "submit_diagnosis");
     if (diagnosisBlock) {
       const diagnosis = diagnosisBlock.toolUse.input as Record<string, unknown>;
+      const confidence = diagnosis.confidence as string;
+      const isLastRound = round >= MAX_ROUNDS;
 
-      // Validate: reject premature low-confidence diagnosis before round 4
-      if (diagnosis.confidence === "low" && round < 4) {
-        console.log(`[agentic_investigator] Rejecting premature low-confidence diagnosis at round ${round}`);
+      // ── Confidence gate ──
+      // High confidence: always accepted
+      // Medium confidence: rejected before round 8, accepted at 8+ with needs_review
+      // Low confidence: rejected at all rounds except last, accepted at last with needs_review
+      let shouldReject = false;
+      let rejectMessage = "";
+
+      if (confidence === "low" && !isLastRound) {
+        shouldReject = true;
+        rejectMessage = "Diagnosis rejected: low confidence. You have rounds remaining. Use more tools to gather evidence. If you need a data source that doesn't exist, call request_data_source to flag it. Every criterion should be 'verified' or 'needs_data_source' — there is no 'unresolvable'.";
+      } else if (confidence === "medium" && round < NUDGE_AT) {
+        shouldReject = true;
+        rejectMessage = "Diagnosis rejected: only high confidence is accepted this early. You have rounds remaining — investigate further. Check: have you used all relevant tools? Are there criteria you haven't verified? If you're blocked by a missing data source, call request_data_source.";
+      }
+
+      if (shouldReject) {
+        console.log(`[agentic_investigator] Rejecting ${confidence}-confidence diagnosis at round ${round}`);
         const rejectResults: ContentBlock[] = [
           {
             toolResult: {
               toolUseId: diagnosisBlock.toolUse.toolUseId,
-              content: [
-                {
-                  text: "Diagnosis rejected: low confidence with many rounds remaining. Please investigate further — use more tools to gather evidence, or explain why further investigation won't help.",
-                },
-              ],
+              content: [{ text: rejectMessage }],
               status: "error",
             },
           },
         ];
 
-        // Also handle any other tool calls in this round
+        // Also handle any other tool calls in this round (including data source responses)
         for (const block of toolUseBlocks) {
-          if (block.toolUse.name !== "submit_diagnosis") {
-            const toolResult = await callWindmillTool(block.toolUse.name, block.toolUse.input);
+          if (block.toolUse.name === "submit_diagnosis") continue;
+          if (block.toolUse.name === "request_data_source") {
+            const dsInput = block.toolUse.input as { data_source_name: string };
             rejectResults.push({
               toolResult: {
                 toolUseId: block.toolUse.toolUseId,
-                content: [{ text: truncateResult(toolResult.success ? toolResult.result : { error: toolResult.error }) }],
-                status: toolResult.success ? "success" : "error",
+                content: [{ text: round <= 2 ? `Gap noted but too early — investigate with available tools first before flagging gaps. Try using existing tools to answer your criteria.` : `Data source gap recorded: ${dsInput.data_source_name}. Continue investigating with available tools.` }],
+                status: "success",
               },
             });
+            continue;
           }
+          const toolResult = await callWindmillTool(block.toolUse.name, block.toolUse.input);
+          rejectResults.push({
+            toolResult: {
+              toolUseId: block.toolUse.toolUseId,
+              content: [{ text: truncateResult(toolResult.success ? toolResult.result : { error: toolResult.error }) }],
+              status: toolResult.success ? "success" : "error",
+            },
+          });
         }
 
         messages.push({ role: "user", content: rejectResults });
         continue;
       }
 
-      // Accepted diagnosis
-      console.log(`[agentic_investigator] Diagnosis submitted at round ${round} (confidence: ${diagnosis.confidence})`);
-      return { diagnosis, rounds: round, item_id, usage: totalUsage };
+      // Accepted diagnosis — determine if it needs human review
+      const needsReview = confidence !== "high" || isLastRound;
+      // Merge any accumulated data source gaps into the diagnosis
+      if (requestedDataSources.length > 0) {
+        diagnosis.missing_data_sources = requestedDataSources;
+      }
+
+      console.log(`[agentic_investigator] Diagnosis submitted at round ${round} (confidence: ${confidence}, needs_review: ${needsReview})`);
+      const diagResult = { diagnosis, rounds: round, item_id, needs_review: needsReview, missing_data_sources: requestedDataSources, usage: totalUsage };
+      writeResultToCache(diagResult, "success");
+      return diagResult;
     }
 
-    // Execute all tool calls in parallel
+    // Execute non-diagnosis, non-data-source tool calls in parallel
+    const regularToolBlocks = toolUseBlocks.filter(
+      (b) => b.toolUse.name !== "submit_diagnosis" && b.toolUse.name !== "request_data_source",
+    );
+
     const toolResults = await Promise.allSettled(
-      toolUseBlocks.map(async (block) => {
+      regularToolBlocks.map(async (block) => {
         const { toolUseId, name, input } = block.toolUse;
         console.log(`[agentic_investigator] Calling tool: ${name}`);
         const result = await callWindmillTool(name, input);
@@ -638,10 +792,24 @@ export async function main(
       }
     });
 
+    // Add data source request responses
+    for (const dsBlock of dataSourceBlocks) {
+      const dsInput = dsBlock.toolUse.input as { data_source_name: string };
+      toolResultContent.push({
+        toolResult: {
+          toolUseId: dsBlock.toolUse.toolUseId,
+          content: [{ text: round <= 2 ? `Gap noted but too early — investigate with available tools first before flagging gaps. Try using existing tools to answer your criteria.` : `Data source gap recorded: ${dsInput.data_source_name}. Continue investigating with available tools — do your best with what you have.` }],
+          status: "success" as const,
+        },
+      });
+    }
+
     messages.push({ role: "user", content: toolResultContent });
   }
 
   // Max rounds exhausted
   console.log(`[agentic_investigator] Max rounds (${MAX_ROUNDS}) reached for item ${item_id}`);
-  return { error: `Investigation exhausted ${MAX_ROUNDS} rounds without diagnosis`, rounds: MAX_ROUNDS, item_id, usage: totalUsage };
+  const exhaustedResult = { error: `Investigation exhausted ${MAX_ROUNDS} rounds without diagnosis`, rounds: MAX_ROUNDS, item_id, needs_review: true, missing_data_sources: requestedDataSources, usage: totalUsage };
+  writeResultToCache(exhaustedResult, "error");
+  return exhaustedResult;
 }
