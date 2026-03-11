@@ -138,8 +138,11 @@ def transcribe(audio_path: str) -> str | None:
 
 
 # ==========================================================================
-# Output: Clipboard + desktop notification
+# Output: Clipboard + smart tmux injection
 # ==========================================================================
+
+TERMINAL_CLASSES = {"konsole", "alacritty", "kitty", "wezterm", "foot", "ghostty", "org.gnome.terminal"}
+
 
 def copy_to_clipboard(text: str) -> None:
     """Copy text to Wayland clipboard."""
@@ -157,11 +160,73 @@ def notify(title: str, message: str) -> None:
         pass
 
 
+def is_terminal_focused() -> bool:
+    """Check if the focused desktop window is a terminal emulator via KWin DBus."""
+    try:
+        result = subprocess.run(
+            [
+                "dbus-send", "--session", "--dest=org.kde.KWin",
+                "--print-reply", "/KWin", "org.kde.KWin.queryWindowInfo",
+            ],
+            capture_output=True, text=True, timeout=3,
+        )
+        if result.returncode != 0:
+            return False
+        # Parse resourceClass from DBus output
+        lines = result.stdout.split("\n")
+        for i, line in enumerate(lines):
+            if "resourceClass" in line and i + 1 < len(lines):
+                # Next line has: variant  string "konsole"
+                class_line = lines[i + 1].strip()
+                for cls in TERMINAL_CLASSES:
+                    if cls.lower() in class_line.lower():
+                        return True
+        return False
+    except Exception:
+        return False
+
+
+def get_active_tmux_command() -> str | None:
+    """Get the command running in the active tmux pane."""
+    try:
+        result = subprocess.run(
+            ["tmux", "display-message", "-p", "#{pane_current_command}"],
+            capture_output=True, text=True, timeout=3,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except Exception:
+        pass
+    return None
+
+
+def inject_into_claude(text: str) -> bool:
+    """Inject text into active tmux pane if terminal is focused and pane runs claude."""
+    if not is_terminal_focused():
+        return False
+
+    cmd = get_active_tmux_command()
+    if not cmd or cmd.lower() not in ("claude", "claude-code"):
+        return False
+
+    try:
+        subprocess.run(["tmux", "send-keys", text], timeout=3)
+        return True
+    except Exception as e:
+        log_err(f"tmux inject failed: {e}")
+        return False
+
+
 def handle_transcription(text: str) -> None:
-    """Copy to clipboard and notify. User pastes where they want."""
+    """Inject into Claude if focused, otherwise clipboard + notify."""
     copy_to_clipboard(text)
-    log(f"Clipboard: \"{text[:60]}{'...' if len(text) > 60 else ''}\"")
-    notify("Voice Input", f"{text[:100]}")
+
+    if inject_into_claude(text):
+        log(f"Injected into Claude: \"{text[:60]}{'...' if len(text) > 60 else ''}\"")
+        notify("Voice → Claude", f"{text[:100]}")
+    else:
+        log(f"Clipboard: \"{text[:60]}{'...' if len(text) > 60 else ''}\"")
+        notify("Voice → Clipboard", f"{text[:100]}")
 
 
 # ==========================================================================
