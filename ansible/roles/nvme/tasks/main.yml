@@ -128,7 +128,27 @@
         group: "{{ imladris_user }}"
         mode: "0644"
 
-- name: Skip NVMe (no instance store detected)
-  ansible.builtin.debug:
-    msg: "No NVMe instance store detected. Skipping NVMe setup."
-  when: not (nvme_available | bool)
+# --- EBS fallback: ensure triage cache exists even without NVMe ---
+# Cross-source correlation (Phase 6) requires /local/cache/triage.
+# On NVMe instances, this is created as part of nvme_dirs on fast storage.
+# Without NVMe, create it on EBS so correlation still works (slower but functional).
+
+- name: EBS fallback for triage cache (no NVMe)
+  when: not (nvme_available | default(false) | bool)
+  block:
+    - name: "WARNING: No NVMe instance store — cache will use EBS"
+      ansible.builtin.debug:
+        msg: >-
+          No NVMe instance store detected on this instance type.
+          Creating triage cache on EBS at /local/cache/triage.
+          Cross-source correlation will work but with EBS I/O speeds.
+          For NVMe performance, use an instance type with instance store (e.g. m7gd).
+
+    - name: Create EBS fallback triage cache directory
+      ansible.builtin.file:
+        path: "{{ nvme_mount_point }}/cache/triage"
+        state: directory
+        owner: "{{ imladris_user }}"
+        group: "{{ imladris_user }}"
+        mode: "0755"
+      become: true
