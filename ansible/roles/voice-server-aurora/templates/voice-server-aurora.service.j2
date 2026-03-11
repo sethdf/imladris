@@ -1,0 +1,17 @@
+[Unit]
+Description=PAI Voice Server (ElevenLabs TTS — Aurora Desktop)
+After=network-online.target pipewire.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart={{ voice_server_aurora_bun_bin }} run {{ voice_server_aurora_scripts_dir }}/voice-server.ts
+Restart=on-failure
+RestartSec=5
+Environment=HOME={{ voice_server_aurora_home }}
+Environment=VOICE_AUDIO_DIR={{ voice_server_aurora_audio_dir }}
+Environment=VOICE_SERVER_PORT={{ voice_server_aurora_port }}
+WorkingDirectory={{ voice_server_aurora_scripts_dir }}
+
+[Install]
+WantedBy=default.target

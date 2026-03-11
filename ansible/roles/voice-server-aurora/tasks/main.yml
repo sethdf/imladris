@@ -1,0 +1,114 @@
+---
+# =============================================================================
+# Voice Server Aurora Role — Decision 43
+# =============================================================================
+# Deploys PAI voice server as a systemd user service on Aurora (local desktop).
+# ElevenLabs TTS with local PipeWire playback + HTTP audio serving.
+# Listens on 127.0.0.1:8888.
+#
+# Unlike the EC2 voice-server role, this runs as the current user without
+# become/privilege escalation, and reads API key from ~/.config/PAI/.env.
+
+- name: Ensure PAI config directory exists
+  ansible.builtin.file:
+    path: "{{ voice_server_aurora_env_dir }}"
+    state: directory
+    owner: "{{ voice_server_aurora_user }}"
+    group: "{{ voice_server_aurora_user }}"
+    mode: "0700"
+
+- name: Create voice server audio directory
+  ansible.builtin.file:
+    path: "{{ voice_server_aurora_audio_dir }}"
+    state: directory
+    owner: "{{ voice_server_aurora_user }}"
+    group: "{{ voice_server_aurora_user }}"
+    mode: "0755"
+
+- name: Sync credentials from BWS via EC2
+  ansible.builtin.command:
+    cmd: "{{ voice_server_aurora_scripts_dir }}/sync-aurora-credentials.sh"
+  environment:
+    SSH_HOST: "{{ voice_server_aurora_bws_host }}"
+    SSH_USER: "{{ voice_server_aurora_bws_user }}"
+    HOME: "{{ voice_server_aurora_home }}"
+  register: voice_server_aurora_cred_sync
+  changed_when: voice_server_aurora_cred_sync.rc == 0
+  failed_when: false
+  when: voice_server_aurora_sync_credentials | default(true)
+
+- name: Report credential sync status
+  ansible.builtin.debug:
+    msg: >-
+      Credential sync {{ 'succeeded' if voice_server_aurora_cred_sync.rc | default(1) == 0
+      else 'failed — run scripts/sync-aurora-credentials.sh manually' }}
+  when: voice_server_aurora_sync_credentials | default(true)
+
+- name: Ensure ~/.env symlink points to PAI env file
+  ansible.builtin.file:
+    src: "{{ voice_server_aurora_env_file }}"
+    dest: "{{ voice_server_aurora_home }}/.env"
+    state: link
+    force: true
+  when: voice_server_aurora_env_file is defined
+
+- name: Create systemd user directory
+  ansible.builtin.file:
+    path: "{{ voice_server_aurora_home }}/.config/systemd/user"
+    state: directory
+    owner: "{{ voice_server_aurora_user }}"
+    group: "{{ voice_server_aurora_user }}"
+    mode: "0755"
+
+- name: Deploy voice server systemd unit
+  ansible.builtin.template:
+    src: voice-server-aurora.service.j2
+    dest: "{{ voice_server_aurora_home }}/.config/systemd/user/voice-server.service"
+    owner: "{{ voice_server_aurora_user }}"
+    group: "{{ voice_server_aurora_user }}"
+    mode: "0644"
+  notify: restart voice-server-aurora
+
+- name: Install wtype for auto-paste support
+  ansible.builtin.package:
+    name: wtype
+    state: present
+  become: true
+  failed_when: false
+
+- name: Enable loginctl linger for user services at boot
+  ansible.builtin.command:
+    cmd: loginctl enable-linger {{ voice_server_aurora_user }}
+  changed_when: false
+  failed_when: false
+  when: not (molecule_test | default(false))
+
+- name: Reload systemd user daemon
+  ansible.builtin.systemd:
+    daemon_reload: true
+    scope: user
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ voice_server_aurora_uid }}"
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ voice_server_aurora_uid }}/bus"
+  failed_when: false
+  when: not (molecule_test | default(false))
+
+- name: Enable and start voice server
+  ansible.builtin.systemd:
+    name: voice-server
+    scope: user
+    enabled: true
+    state: started
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ voice_server_aurora_uid }}"
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ voice_server_aurora_uid }}/bus"
+  failed_when: false
+  register: voice_server_aurora_start_result
+  when: not (molecule_test | default(false))
+
+- name: Report voice server status
+  ansible.builtin.debug:
+    msg: >-
+      Voice server {{ 'started successfully' if voice_server_aurora_start_result.changed | default(false)
+      else 'service deployment complete (may start on first login via linger)' }}
+  when: not (molecule_test | default(false))

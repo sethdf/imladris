@@ -1,0 +1,10 @@
+---
+- name: restart voice-server-aurora
+  ansible.builtin.systemd:
+    name: voice-server
+    scope: user
+    state: restarted
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ voice_server_aurora_uid }}"
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ voice_server_aurora_uid }}/bus"
+  failed_when: false
