@@ -1,0 +1,63 @@
+---
+# =============================================================================
+# Voice Listener Role — Decision 43
+# =============================================================================
+# Deploys wake-word voice listener daemon as a systemd user service on Aurora.
+# Uses OpenWakeWord for local wake word detection, records speech, transcribes
+# via the voice server /transcribe endpoint.
+
+- name: Run voice-listener setup script (venv + deps)
+  ansible.builtin.command:
+    cmd: bash {{ voice_listener_scripts_dir }}/voice-listener/setup.sh
+  environment:
+    HOME: "{{ voice_listener_home }}"
+  register: voice_listener_setup
+  changed_when: "'Creating Python venv' in voice_listener_setup.stdout"
+  failed_when: voice_listener_setup.rc != 0
+
+- name: Create systemd user directory
+  ansible.builtin.file:
+    path: "{{ voice_listener_home }}/.config/systemd/user"
+    state: directory
+    owner: "{{ voice_listener_user }}"
+    group: "{{ voice_listener_user }}"
+    mode: "0755"
+
+- name: Deploy voice listener systemd unit
+  ansible.builtin.template:
+    src: voice-listener.service.j2
+    dest: "{{ voice_listener_home }}/.config/systemd/user/voice-listener.service"
+    owner: "{{ voice_listener_user }}"
+    group: "{{ voice_listener_user }}"
+    mode: "0644"
+  notify: restart voice-listener
+
+- name: Reload systemd user daemon
+  ansible.builtin.systemd:
+    daemon_reload: true
+    scope: user
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ voice_listener_uid }}"
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ voice_listener_uid }}/bus"
+  failed_when: false
+  when: not (molecule_test | default(false))
+
+- name: Enable and start voice listener
+  ansible.builtin.systemd:
+    name: voice-listener
+    scope: user
+    enabled: true
+    state: started
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ voice_listener_uid }}"
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ voice_listener_uid }}/bus"
+  failed_when: false
+  register: voice_listener_start_result
+  when: not (molecule_test | default(false))
+
+- name: Report voice listener status
+  ansible.builtin.debug:
+    msg: >-
+      Voice listener {{ 'started successfully' if voice_listener_start_result.changed | default(false)
+      else 'service deployment complete (may start on first login via linger)' }}
+  when: not (molecule_test | default(false))

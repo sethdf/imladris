@@ -17,6 +17,7 @@
 #   voice            — all voice components
 #   voice-server     — voice server only
 #   voice-client     — voice client only
+#   voice-listener   — wake word listener daemon
 
 - name: Configure Aurora workstation
   hosts: localhost
@@ -52,8 +53,19 @@
     voice_client_server_url: "http://localhost:8888"
     voice_client_poll_interval: "5000"
 
+    # --- Voice Listener ---
+    voice_listener_user: "{{ ansible_user_id }}"
+    voice_listener_home: "{{ ansible_env.HOME }}"
+    voice_listener_uid: "{{ ansible_user_uid }}"
+    voice_listener_scripts_dir: "{{ aurora_scripts_dir }}"
+    voice_listener_server_url: "http://localhost:8888"
+    voice_listener_wake_word: hey_jarvis
+    voice_listener_wayland_display: wayland-0
+
   roles:
     - role: voice-server-aurora
       tags: [voice, voice-server]
     - role: voice-client
       tags: [voice, voice-client]
+    - role: voice-listener
+      tags: [voice, voice-listener]

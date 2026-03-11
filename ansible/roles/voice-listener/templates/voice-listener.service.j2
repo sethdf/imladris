@@ -1,0 +1,19 @@
+[Unit]
+Description=PAI Voice Listener (Wake Word Dictation Daemon)
+After=network-online.target pipewire.service voice-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart={{ voice_listener_scripts_dir }}/voice-listener/venv/bin/python3 {{ voice_listener_scripts_dir }}/voice-listener/voice-listener.py
+Restart=on-failure
+RestartSec=5
+Environment=HOME={{ voice_listener_home }}
+Environment=VOICE_SERVER={{ voice_listener_server_url }}
+Environment=WAKE_WORD={{ voice_listener_wake_word }}
+Environment=WAYLAND_DISPLAY={{ voice_listener_wayland_display }}
+Environment=XDG_RUNTIME_DIR=/run/user/{{ voice_listener_uid }}
+WorkingDirectory={{ voice_listener_scripts_dir }}/voice-listener
+
+[Install]
+WantedBy=default.target
