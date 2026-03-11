@@ -13,6 +13,9 @@ Environment=VOICE_SERVER={{ voice_listener_server_url }}
 Environment=WAKE_WORD={{ voice_listener_wake_word }}
 Environment=WAYLAND_DISPLAY={{ voice_listener_wayland_display }}
 Environment=XDG_RUNTIME_DIR=/run/user/{{ voice_listener_uid }}
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{{ voice_listener_uid }}/bus
+Environment=TMUX_SSH_HOST={{ voice_listener_tmux_ssh_host }}
+Environment=TMUX_SESSION={{ voice_listener_tmux_session }}
 WorkingDirectory={{ voice_listener_scripts_dir }}/voice-listener
 
 [Install]

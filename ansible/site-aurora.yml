@@ -61,6 +61,8 @@
     voice_listener_server_url: "http://localhost:8888"
     voice_listener_wake_word: hey_jarvis
     voice_listener_wayland_display: wayland-0
+    voice_listener_tmux_ssh_host: ec2-user@imladris-4
+    voice_listener_tmux_session: work
 
   roles:
     - role: voice-server-aurora
