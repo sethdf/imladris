@@ -1,0 +1,18 @@
+[Unit]
+Description=PAI Voice Client (TTS Playback Daemon)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart={{ bun_bin }} run {{ voice_client_script }}
+Restart=on-failure
+RestartSec=5
+Environment=HOME={{ voice_client_home }}
+Environment=VOICE_SERVER={{ voice_client_server_url }}
+Environment=POLL_INTERVAL={{ voice_client_poll_interval }}
+Environment=VOICE_CLIENT_AUDIO_DIR={{ voice_client_audio_dir }}
+WorkingDirectory={{ voice_client_scripts_dir }}
+
+[Install]
+WantedBy=default.target

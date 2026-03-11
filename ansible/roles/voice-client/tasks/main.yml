@@ -1,0 +1,73 @@
+---
+# =============================================================================
+# Voice Client Role — Decision 43
+# =============================================================================
+# Deploys PAI voice client (TTS playback daemon) as a systemd user service.
+# Polls the voice server for new TTS audio and plays via PipeWire.
+# Runs on the LOCAL machine (Aurora), not EC2.
+
+- name: Create voice client audio directory
+  ansible.builtin.file:
+    path: "{{ voice_client_audio_dir }}"
+    state: directory
+    owner: "{{ voice_client_user }}"
+    group: "{{ voice_client_user }}"
+    mode: "0755"
+
+- name: Create systemd user directory
+  ansible.builtin.file:
+    path: "{{ voice_client_home }}/.config/systemd/user"
+    state: directory
+    owner: "{{ voice_client_user }}"
+    group: "{{ voice_client_user }}"
+    mode: "0755"
+
+- name: Deploy voice client systemd unit
+  ansible.builtin.template:
+    src: voice-client.service.j2
+    dest: "{{ voice_client_home }}/.config/systemd/user/voice-client.service"
+    owner: "{{ voice_client_user }}"
+    group: "{{ voice_client_user }}"
+    mode: "0644"
+  notify: restart voice-client
+
+- name: Enable loginctl linger for user services at boot
+  ansible.builtin.command:
+    cmd: loginctl enable-linger {{ voice_client_user }}
+  changed_when: false
+  failed_when: false
+  when: not (molecule_test | default(false))
+
+- name: Reload systemd user daemon
+  ansible.builtin.command:
+    cmd: systemctl --user daemon-reload
+  become: true
+  become_user: "{{ voice_client_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ voice_client_uid | default('1000') }}"
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ voice_client_uid | default('1000') }}/bus"
+  changed_when: false
+  failed_when: false
+  when: not (molecule_test | default(false))
+
+- name: Enable and start voice client
+  ansible.builtin.systemd:
+    name: voice-client
+    scope: user
+    enabled: true
+    state: started
+  become: true
+  become_user: "{{ voice_client_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ voice_client_uid | default('1000') }}"
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ voice_client_uid | default('1000') }}/bus"
+  failed_when: false
+  register: voice_client_start_result
+  when: not (molecule_test | default(false))
+
+- name: Report voice client status
+  ansible.builtin.debug:
+    msg: >-
+      Voice client {{ 'started successfully' if voice_client_start_result.changed | default(false)
+      else 'service deployment complete (may start on first login via linger)' }}
+  when: not (molecule_test | default(false))

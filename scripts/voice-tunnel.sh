@@ -12,16 +12,10 @@
 # ports). This SSH tunnel makes it accessible at localhost:8888 on Aurora.
 #
 # Usage:
-#   ./voice-tunnel.sh              # Start tunnel in background
-#   ./voice-tunnel.sh stop         # Stop tunnel
-#   ./voice-tunnel.sh status       # Check if tunnel is running
-#
-# Audio playback (run separately on Aurora):
-#   # One-shot: play the latest TTS audio
-#   curl -sL http://localhost:8888/audio/latest -o /tmp/voice.mp3 && pw-play /tmp/voice.mp3
-#
-#   # Continuous: poll for new audio and play automatically
-#   # (Future: voice-client daemon will handle this)
+#   ./voice-tunnel.sh              # Start tunnel + voice client daemon
+#   ./voice-tunnel.sh stop         # Stop tunnel + voice client daemon
+#   ./voice-tunnel.sh status       # Check tunnel + client status
+#   ./voice-tunnel.sh tunnel-only  # Start tunnel without client daemon
 #
 # Connection stack:
 #   Terminal:  Aurora → Mosh → tmux → Claude (text only, no audio)
@@ -38,6 +32,8 @@ REMOTE_HOST="${IMLADRIS_HOST:-ec2-user@imladris-1}"
 LOCAL_PORT="${VOICE_PORT:-8888}"
 REMOTE_PORT="${VOICE_PORT:-8888}"
 PID_FILE="/tmp/voice-tunnel.pid"
+CLIENT_PID_FILE="/tmp/voice-client.pid"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 start_tunnel() {
   if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
@@ -65,7 +61,48 @@ start_tunnel() {
   fi
 }
 
+start_client() {
+  if [ -f "$CLIENT_PID_FILE" ] && kill -0 "$(cat "$CLIENT_PID_FILE")" 2>/dev/null; then
+    echo "Voice client already running (PID $(cat "$CLIENT_PID_FILE"))"
+    return 0
+  fi
+
+  if ! command -v bun &>/dev/null; then
+    echo "WARNING: bun not found — voice client not started"
+    return 1
+  fi
+
+  local client_script="${SCRIPT_DIR}/voice-client.ts"
+  if [ ! -f "$client_script" ]; then
+    echo "WARNING: voice-client.ts not found at $client_script"
+    return 1
+  fi
+
+  echo "Starting voice client daemon..."
+  VOICE_SERVER="http://localhost:${LOCAL_PORT}" nohup bun run "$client_script" >> /tmp/voice-client.log 2>&1 &
+  local PID=$!
+  echo "$PID" > "$CLIENT_PID_FILE"
+  echo "Voice client started (PID $PID) — log: /tmp/voice-client.log"
+}
+
+stop_client() {
+  if [ -f "$CLIENT_PID_FILE" ]; then
+    local PID
+    PID=$(cat "$CLIENT_PID_FILE")
+    if kill -0 "$PID" 2>/dev/null; then
+      kill "$PID"
+      echo "Voice client stopped (PID $PID)"
+    else
+      echo "Voice client process $PID not running"
+    fi
+    rm -f "$CLIENT_PID_FILE"
+  else
+    pkill -f "bun.*voice-client" 2>/dev/null && echo "Killed orphan voice client" || echo "No voice client running"
+  fi
+}
+
 stop_tunnel() {
+  stop_client
   if [ -f "$PID_FILE" ]; then
     PID=$(cat "$PID_FILE")
     if kill -0 "$PID" 2>/dev/null; then
@@ -83,26 +120,39 @@ stop_tunnel() {
 }
 
 check_status() {
+  echo "=== Voice Tunnel ==="
   if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
-    echo "Voice tunnel: RUNNING (PID $(cat "$PID_FILE"))"
-    # Test the connection
+    echo "  Status: RUNNING (PID $(cat "$PID_FILE"))"
     if curl -sf http://localhost:${LOCAL_PORT}/health >/dev/null 2>&1; then
-      echo "Voice server: HEALTHY"
+      echo "  Server: HEALTHY"
       curl -s http://localhost:${LOCAL_PORT}/health | python3 -m json.tool 2>/dev/null || true
     else
-      echo "Voice server: NOT RESPONDING (tunnel up but server may be down)"
+      echo "  Server: NOT RESPONDING (tunnel up but server may be down)"
     fi
   else
-    echo "Voice tunnel: NOT RUNNING"
+    echo "  Status: NOT RUNNING"
+  fi
+
+  echo ""
+  echo "=== Voice Client Daemon ==="
+  if [ -f "$CLIENT_PID_FILE" ] && kill -0 "$(cat "$CLIENT_PID_FILE")" 2>/dev/null; then
+    echo "  Status: RUNNING (PID $(cat "$CLIENT_PID_FILE"))"
+    echo "  Log: /tmp/voice-client.log"
+    echo "  Last 3 lines:"
+    tail -3 /tmp/voice-client.log 2>/dev/null | sed 's/^/    /'
+  else
+    echo "  Status: NOT RUNNING"
   fi
 }
 
 case "${1:-start}" in
-  start)  start_tunnel ;;
-  stop)   stop_tunnel ;;
-  status) check_status ;;
+  start)       start_tunnel && start_client ;;
+  stop)        stop_tunnel ;;
+  status)      check_status ;;
+  tunnel-only) start_tunnel ;;
+  client-only) start_client ;;
   *)
-    echo "Usage: $0 {start|stop|status}"
+    echo "Usage: $0 {start|stop|status|tunnel-only|client-only}"
     exit 1
     ;;
 esac

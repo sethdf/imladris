@@ -170,6 +170,17 @@ voice_server_env_file: "{{ imladris_home }}/.config/voice-server.env"
 voice_server_elevenlabs_key: ""  # Set via --extra-vars or populate env file via BWS
 bun_bin: "{{ imladris_home }}/.bun/bin/bun"
 
+# --- Voice Client (Decision 43 — local Aurora machine) ---
+# These vars are used by site-aurora.yml, NOT by EC2 playbooks.
+voice_client_user: sfoley
+voice_client_home: "/home/{{ voice_client_user }}"
+voice_client_uid: "1000"
+voice_client_audio_dir: /tmp/voice-client-audio
+voice_client_server_url: "http://localhost:8888"
+voice_client_poll_interval: "5000"
+voice_client_scripts_dir: "{{ voice_client_home }}/repos/imladris/scripts"
+voice_client_script: "{{ voice_client_scripts_dir }}/voice-client.ts"
+
 # --- Settings Template ---
 settings_template_candidates:
   - "{{ imladris_repo_dir }}/settings.json.template"

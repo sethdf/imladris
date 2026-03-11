@@ -14,6 +14,7 @@
  *   POST /pai             — PAI notification shim
  *   GET  /audio/:id       — Serve generated MP3 audio
  *   GET  /audio/latest    — Redirect to most recent audio
+ *   POST /transcribe      — STT via ElevenLabs Scribe (proxy for voice-input client)
  *   GET  /health          — Server status
  *
  * Config resolution (3-tier, same as upstream):
@@ -315,7 +316,7 @@ function checkRate(ip: string): boolean {
     rateLimits.set(ip, { count: 1, resetTime: now + 60000 });
     return true;
   }
-  if (rec.count >= 30) return false;
+  if (rec.count >= 120) return false;
   rec.count++;
   return true;
 }
@@ -401,6 +402,45 @@ const server = serve({
       return new Response(file, {
         headers: { ...cors, "Content-Type": "audio/mpeg", "Cache-Control": "public, max-age=3600" },
       });
+    }
+
+    // POST /transcribe — STT via ElevenLabs Scribe v2
+    if (url.pathname === "/transcribe" && req.method === "POST") {
+      try {
+        if (!ELEVENLABS_API_KEY) {
+          return Response.json({ status: "error", message: "ElevenLabs API key not configured" }, { status: 500, headers: cors });
+        }
+
+        const formData = await req.formData();
+        const audioFile = formData.get("file");
+        if (!audioFile || !(audioFile instanceof File)) {
+          return Response.json({ status: "error", message: "No audio file provided" }, { status: 400, headers: cors });
+        }
+
+        // Forward to ElevenLabs Scribe v2
+        const sttFormData = new FormData();
+        sttFormData.append("file", audioFile);
+        sttFormData.append("model_id", "scribe_v2");
+
+        const sttResp = await fetch("https://api.elevenlabs.io/v1/speech-to-text", {
+          method: "POST",
+          headers: { "xi-api-key": ELEVENLABS_API_KEY },
+          body: sttFormData,
+        });
+
+        if (!sttResp.ok) {
+          const errText = await sttResp.text();
+          console.error(`STT error: ${sttResp.status} — ${errText}`);
+          return Response.json({ status: "error", message: `STT failed: ${sttResp.status}` }, { status: 502, headers: cors });
+        }
+
+        const sttResult = await sttResp.json() as any;
+        const text = sttResult.text || "";
+        console.log(`STT: "${text.slice(0, 80)}${text.length > 80 ? "..." : ""}"`);
+        return Response.json({ status: "success", text }, { headers: cors });
+      } catch (e: any) {
+        return Response.json({ status: "error", message: e.message }, { status: 500, headers: cors });
+      }
     }
 
     // GET /health

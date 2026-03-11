@@ -1,0 +1,34 @@
+---
+# =============================================================================
+# site-aurora.yml — Local workstation (Aurora) setup
+# =============================================================================
+# Deploys PAI voice client and STT tools on the local Linux machine.
+# NOT for EC2 — this runs on Aurora (the physical workstation).
+#
+# Usage:
+#   ansible-playbook -i "localhost," -c local ansible/site-aurora.yml
+#
+# Prerequisites:
+#   - bun installed
+#   - PipeWire running (pw-play, pw-record available)
+#   - Voice server running on localhost:8888
+
+- name: Configure Aurora workstation
+  hosts: localhost
+  connection: local
+  gather_facts: true
+
+  vars:
+    voice_client_user: "{{ ansible_user_id }}"
+    voice_client_home: "{{ ansible_env.HOME }}"
+    voice_client_uid: "{{ ansible_user_uid }}"
+    voice_client_scripts_dir: "{{ ansible_env.HOME }}/repos/imladris/scripts"
+    voice_client_script: "{{ voice_client_scripts_dir }}/voice-client.ts"
+    voice_client_audio_dir: /tmp/voice-client-audio
+    voice_client_server_url: "http://localhost:8888"
+    voice_client_poll_interval: "5000"
+    bun_bin: "{{ ansible_env.HOME }}/.bun/bin/bun"
+
+  roles:
+    - role: voice-client
+      tags: [voice, voice-client]
