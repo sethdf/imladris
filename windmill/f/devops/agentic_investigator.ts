@@ -1,13 +1,14 @@
 // Windmill Script: Agentic Investigator (System 2)
-// Bedrock Converse API tool-use loop — Opus investigates alerts using 16 read-only tools.
-// Replaces investigate.ts (1100 LOC Steampipe cascade) with ~200 LOC agentic loop.
+// Bedrock Converse API tool-use loop — Opus investigates alerts autonomously.
 //
 // Architecture:
-//   - Bedrock Converse API via @aws-sdk/client-bedrock-runtime (ConverseCommand)
-//   - 16 investigation tools from f/investigate/ executed via Windmill HTTP API
-//   - ISC methodology: decompose → investigate → verify → submit
-//   - Max 10 rounds, nudge at round 8, parallel tool execution
-//   - Cost: ~$0.83/investigation at 5/day
+//   - Runs the PAI Algorithm adapted for autonomous operation
+//   - Algorithm loaded at runtime from ~/.claude/PAI/Algorithm/ (auto-updates with PAI)
+//   - Phases: OBSERVE → THINK → INVESTIGATE → VERIFY → SUBMIT
+//   - 20 investigation tools from f/investigate/ executed via Windmill HTTP API
+//   - Max 8 rounds, nudge at round 6, parallel tool execution
+//   - Evidence chain + differential diagnosis validation before acceptance
+//   - Cost: ~$0.85/investigation at 5/day
 //
 // Integration:
 //   Called by process_actionable.ts via async Windmill job submission.
@@ -21,6 +22,8 @@ import {
   type ToolConfiguration,
 } from "@aws-sdk/client-bedrock-runtime";
 import * as cacheLib from "./cache_lib.ts";
+import { readFileSync, readdirSync } from "fs";
+import { join } from "path";
 
 // ── Constants ──
 
@@ -32,54 +35,110 @@ const MAX_TOOL_RESULT_BYTES = 50_000;
 const WM_BASE = process.env.BASE_INTERNAL_URL || "http://windmill_server:8000";
 const WM_TOKEN = process.env.WM_TOKEN;
 const WM_WORKSPACE = process.env.WM_WORKSPACE || "imladris";
+const ALGORITHM_DIR = "/home/ec2-user/.claude/PAI/Algorithm";
+
+// ── Algorithm Loading ──
+
+/**
+ * Read the PAI Algorithm at runtime, strip human-interaction elements,
+ * and adapt for autonomous investigation. When PAI updates upstream,
+ * the investigator automatically adopts the new Algorithm version.
+ */
+function loadAlgorithmPrinciples(): string {
+  try {
+    // Read LATEST pointer to find current Algorithm version
+    const latestVersion = readFileSync(join(ALGORITHM_DIR, "LATEST"), "utf-8").trim();
+    const algorithmPath = join(ALGORITHM_DIR, `${latestVersion}.md`);
+    const raw = readFileSync(algorithmPath, "utf-8");
+
+    // Strip human-interaction elements while preserving cognitive structure
+    const cleaned = raw
+      // Remove voice curl blocks
+      .replace(/\*\*Voice:\*\*.*?```\n/gs, "")
+      .replace(/```bash\ncurl -s -X POST http:\/\/localhost:8888\/notify[\s\S]*?```\n/g, "")
+      // Remove PRD file writing instructions
+      .replace(/\*\*WRITE TO PRD.*?\n/g, "")
+      .replace(/- Create PRD directory:.*?\n/g, "")
+      .replace(/- Write PRD\.md with Write tool.*?\n/g, "")
+      .replace(/Edit PRD frontmatter.*?\.\s*/g, "")
+      // Remove console output format blocks
+      .replace(/\*\*Console output.*?```\n[\s\S]*?```\n/g, "")
+      // Remove capability selection from skills (investigator has fixed tools)
+      .replace(/CAPABILITY SELECTION \(CRITICAL, MANDATORY\):[\s\S]*?EXAMPLES:/g, "TOOL SELECTION:\nSelect which of your available investigation tools are relevant for this alert.\n\nEXAMPLES:")
+      // Remove effort level table (investigator has fixed effort)
+      .replace(/### Effort Levels[\s\S]*?\n\n/g, "")
+      // Remove ISC count gate (investigator criteria are alert-driven)
+      .replace(/\*\*ISC COUNT GATE[\s\S]*?No exceptions\.\n/g, "")
+      // Remove EnterPlanMode references
+      .replace(/EnterPlanMode.*?\.\s*/g, "")
+      // Remove context recovery section (investigator has no prior context)
+      .replace(/### Context Recovery[\s\S]*?### PRD\.md Format/g, "### PRD.md Format")
+      // Remove PRD format section
+      .replace(/### PRD\.md Format[\s\S]*?---\n/g, "")
+      // Remove phantom capabilities rule (not applicable)
+      .replace(/- No phantom capabilities.*?\n/g, "")
+      // Remove context compaction rule (Bedrock manages context)
+      .replace(/- \*\*Context compaction at phase transitions\*\*[\s\S]*?late-phase failures in long Algorithm runs\.\n/g, "")
+      // Clean up multiple blank lines
+      .replace(/\n{3,}/g, "\n\n");
+
+    console.log(`[agentic_investigator] Loaded Algorithm ${latestVersion} (${cleaned.length} chars after adaptation)`);
+    return cleaned;
+  } catch (err: any) {
+    console.warn(`[agentic_investigator] Could not load Algorithm: ${err.message}. Using embedded fallback.`);
+    return "";
+  }
+}
 
 // ── System Prompt ──
 
-const SYSTEM_PROMPT = `You are an expert DevOps/SecOps investigator for BuxtonIT. You receive alerts from email, Slack, and monitoring systems, and you must investigate them using the tools available to you.
+const AUTONOMOUS_ADAPTER = `You are an autonomous DevOps/SecOps investigator for BuxtonIT, running the PAI Algorithm adapted for fully autonomous operation. You receive alerts from email, Slack, and monitoring systems and must investigate them without human interaction.
 
-INVESTIGATION APPROACH:
-1. Before using any tools, identify what questions this specific alert requires you to answer (your investigation criteria). State them explicitly.
-2. Use tools to answer each question with evidence. Execute multiple tool calls in a single turn when the queries are independent.
-3. Before submitting, verify every criterion is either "verified" (with evidence) or "needs_data_source" (you identified what data you need but lack a tool for it).
-4. Include your criteria and their resolution status in the diagnosis via submit_diagnosis.
+AUTONOMOUS ADAPTATION:
+You execute the PAI Algorithm's cognitive phases within your available rounds. Every phase is mandatory — do not skip phases or submit a diagnosis without completing THINK and VERIFY.
 
-DIFFERENTIAL DIAGNOSIS (CRITICAL):
-Before submitting a diagnosis, you MUST consider at least 2 alternative explanations for the observed symptoms. For each alternative:
-1. State the hypothesis
-2. Cite specific evidence from your tool calls that supports it
-3. Cite specific evidence that contradicts it
-4. Explain why you rejected it in favor of your primary diagnosis
-If you cannot eliminate an alternative with evidence, that is genuine uncertainty — state it honestly.
+━━━ OBSERVE (Round 1) ━━━
+- Classify: What domain is this alert? (AWS, Azure, Network, Security, Application, Identity)
+- Decompose: Write ISC criteria — specific questions this alert requires you to answer. Each criterion must be ATOMIC (one verifiable thing, binary testable).
+- Plan: Which of your available tools are relevant for this specific alert?
 
-EVIDENCE CHAIN (CRITICAL):
-Every claim in your diagnosis must be traceable to a specific tool call. For each key observation:
-- Name the tool you used
-- Cite the specific value or data point returned
-- Identify the resource (instance ID, account, hostname, etc.)
-Do NOT make claims based on inference alone. If you didn't see it in tool output, don't assert it.
+━━━ THINK (Round 1-2) ━━━
+- Premortem: How could this investigation reach the WRONG conclusion? What are the riskiest assumptions?
+- Hypothesize: Generate 2-3 alternative explanations for the observed symptoms BEFORE investigating. Do not anchor on the first plausible explanation.
+- Distinguish: What specific evidence would differentiate between hypotheses? Plan your tool calls to test ALL hypotheses, not just the leading one.
 
-CONFIDENCE RULES (CRITICAL):
-- Only "high" confidence is accepted as a complete diagnosis. If you have strong evidence supporting your conclusions, submit with high confidence.
-- "medium" confidence will be rejected in early rounds — you must investigate further. In later rounds it will be accepted but flagged for human review.
-- "low" confidence is almost never accepted. Use more tools, ask different questions, or explain what data source you need.
+━━━ INVESTIGATE (Rounds 2-6) ━━━
+- Execute tool calls in parallel when independent.
+- Gather evidence for AND against ALL hypotheses, not just the leading one.
+- Track each criterion: "verified" (with specific tool evidence) or "needs_data_source" (flag via request_data_source).
+- If a tool returns unexpected results, investigate further — do not explain away anomalies.
+- If you realize you need a data source that doesn't exist, call request_data_source immediately, then continue with available tools.
 
-CRITERION STATUS RULES (CRITICAL):
-- There are only two valid criterion statuses: "verified" and "needs_data_source".
-- "verified": You answered the question with specific evidence from a tool result.
-- "needs_data_source": You cannot answer because no available tool provides the required data. You MUST specify what data source/system would be needed in the evidence field.
-- There is NO "unresolvable" status. If a human could figure it out, then you need a data source — call request_data_source to flag it. If the data was never recorded (transient event, no logs), that is still "needs_data_source" with the evidence explaining why (e.g., "No logging exists for this ephemeral container — need container runtime logging").
+━━━ VERIFY (Rounds 6-7) ━━━
+- Differential elimination: For each alternative hypothesis, cite specific evidence that contradicts it. If you cannot eliminate an alternative, that IS genuine uncertainty — state it.
+- Evidence chain audit: Every claim in your diagnosis must trace to a specific tool call (tool name, raw value, resource ID). No inference without evidence.
+- Adversarial self-challenge: "What would disprove this diagnosis? What haven't I checked?"
+- If verification reveals gaps, use remaining rounds to fill them.
 
-DATA SOURCE GAPS:
-- When you realize you need access to a system or data source that isn't available as a tool, call request_data_source immediately. This flags the gap so it can be addressed.
-- Continue investigating with available tools after flagging the gap — do your best with what you have.
-- Include all flagged gaps in your submit_diagnosis under missing_data_sources.
+━━━ SUBMIT (Round 7-8) ━━━
+- Call submit_diagnosis with structured evidence chains and differentials.
+- Confidence must reflect verification completeness, not gut feel.
+- Include self-reflection: what would you investigate differently next time?
 
-RULES:
-- Every conclusion MUST cite a specific tool result. Never infer without evidence.
-- All tools are READ-ONLY. You cannot modify any resource.
-- If a tool returns an error about missing credentials, call request_data_source with the tool name and "credentials not configured" as the reason.
-- Keep tool calls focused — use filters and limits to avoid pulling excessive data.
-- When you have enough evidence for a high-confidence diagnosis, call submit_diagnosis immediately.
+CRITERION RULES:
+- Only two valid statuses: "verified" and "needs_data_source"
+- "verified": answered with specific evidence from a tool result
+- "needs_data_source": no available tool provides the data. Specify what system/data is needed.
+- There is NO "unresolvable" status. If a human could figure it out, you need a data source.
+
+EVIDENCE CHAIN RULES:
+- Every claim must cite: tool_used, raw_value, resource_id
+- No inference without evidence. If you didn't see it in tool output, don't assert it.
+
+CONFIDENCE RULES:
+- "high": strong evidence, alternatives eliminated, evidence chain complete
+- "medium": partial evidence or alternatives not fully eliminated. Rejected in early rounds.
+- "low": speculative. Almost never accepted.
 
 ENVIRONMENT:
 - AWS: 16 accounts in BuxtonIT org (767448074758 is imladris/local). All accessible via tools.
@@ -87,7 +146,31 @@ ENVIRONMENT:
 - SDP: ServiceDesk Plus for ticket management.
 - Securonix: SIEM for security incidents and violations.
 - Site24x7: Infrastructure monitoring.
-- Local cache: SQLite triage cache with alert history and resource inventory.`;
+- Slack: Team communication channels and threads.
+- Local cache: SQLite triage cache with alert history and resource inventory.
+
+RULES:
+- All tools are READ-ONLY. You cannot modify any resource.
+- If a tool returns an error about missing credentials, call request_data_source with the tool name and "credentials not configured" as the reason.
+- Keep tool calls focused — use filters and limits to avoid pulling excessive data.`;
+
+function buildSystemPrompt(): string {
+  const algorithmPrinciples = loadAlgorithmPrinciples();
+
+  if (algorithmPrinciples) {
+    return `${AUTONOMOUS_ADAPTER}
+
+━━━ PAI ALGORITHM REFERENCE (auto-loaded, version updates automatically) ━━━
+The following is the PAI Algorithm that governs your cognitive process. The AUTONOMOUS ADAPTATION section above tells you how to run each phase without human interaction. The Algorithm below provides the methodology — ISC decomposition, splitting test, verification rigor, and learning patterns.
+
+${algorithmPrinciples}`;
+  }
+
+  // Fallback if Algorithm file isn't accessible
+  return AUTONOMOUS_ADAPTER;
+}
+
+const SYSTEM_PROMPT = buildSystemPrompt();
 
 // ── Tool Definitions ──
 
@@ -684,7 +767,7 @@ export async function main(
         role: "user",
         content: [
           {
-            text: "You have 2 rounds remaining. Review your investigation criteria — which are still unresolved? Either resolve them now or mark them unresolvable with a reason. Then call submit_diagnosis.",
+            text: "You are entering the VERIFY phase. You have 2 rounds remaining. Before submitting: (1) Test your primary diagnosis against alternative hypotheses — cite evidence that eliminates each alternative. (2) Audit your evidence chain — every claim must trace to a specific tool output. (3) Adversarial self-check: what would disprove this diagnosis? Then call submit_diagnosis with complete evidence_chain and differentials.",
           },
         ],
       });
