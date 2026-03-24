@@ -318,8 +318,7 @@ export async function main(
           summary: `SDP ${sdpType}: ${subject.slice(0, 200)}`,
           reasoning: `SDP ${sdpType} #${sdpId} — always actionable, priority=${priority}`,
           domain: "work",
-          classified_by: "L1_rule",
-          rule_id: null,
+          classified_by: "deterministic",
           dedup_hash: dedupHash,
           marked_read: 0,
           metadata: JSON.stringify({

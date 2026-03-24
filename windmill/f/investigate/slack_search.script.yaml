@@ -1,0 +1,29 @@
+summary: ''
+description: ''
+lock: '!inline f/investigate/slack_search.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    count:
+      type: number
+      description: ''
+      default: 20
+    query:
+      type: string
+      description: ''
+      default: null
+      originalType: string
+    sort:
+      type: string
+      description: ''
+      default: timestamp
+      originalType: string
+    sort_dir:
+      type: string
+      description: ''
+      default: desc
+      originalType: string
+  required:
+    - query

@@ -74,27 +74,6 @@ export function init(): boolean {
 
     // ── Triage pipeline tables ──
     db.exec(`
-      CREATE TABLE IF NOT EXISTS triage_rules (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL UNIQUE,
-        source_pattern TEXT DEFAULT '',
-        sender_pattern TEXT DEFAULT '',
-        subject_pattern TEXT DEFAULT '',
-        action TEXT NOT NULL DEFAULT 'AUTO',
-        urgency TEXT NOT NULL DEFAULT 'low',
-        domain TEXT NOT NULL DEFAULT 'work',
-        summary_template TEXT DEFAULT '',
-        enabled INTEGER NOT NULL DEFAULT 1,
-        priority INTEGER NOT NULL DEFAULT 100,
-        hit_count INTEGER NOT NULL DEFAULT 0,
-        override_count INTEGER NOT NULL DEFAULT 0,
-        source TEXT DEFAULT 'seed',
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-      );
-      CREATE INDEX IF NOT EXISTS idx_triage_rules_priority ON triage_rules(priority);
-      CREATE INDEX IF NOT EXISTS idx_triage_rules_enabled ON triage_rules(enabled);
-
       CREATE TABLE IF NOT EXISTS triage_results (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         source TEXT NOT NULL DEFAULT 'm365',
@@ -493,72 +472,6 @@ export function getRaw(itemId: string): unknown | null {
 
 // ── Triage pipeline helpers ──
 
-/** Glob-to-regex matcher: * matches any chars, case-insensitive */
-export function globMatch(pattern: string, text: string): boolean {
-  if (!pattern) return false;
-  // Escape regex special chars except *, then convert * to .*
-  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
-  return new RegExp(`^${escaped}$`, "i").test(text);
-}
-
-export interface TriageRule {
-  id: number;
-  name: string;
-  source_pattern: string;
-  sender_pattern: string;
-  subject_pattern: string;
-  action: string;
-  urgency: string;
-  domain: string;
-  summary_template: string;
-  enabled: number;
-  priority: number;
-  hit_count: number;
-  override_count: number;
-  source: string;
-  created_at: number;
-  updated_at: number;
-}
-
-/** Find the first matching enabled rule, ordered by priority (lower = higher priority) */
-export function matchRule(source: string, sender: string, subject: string): TriageRule | null {
-  const db = getDb();
-  if (!db) return null;
-  try {
-    init();
-    const rules = db.prepare(
-      "SELECT * FROM triage_rules WHERE enabled = 1 ORDER BY priority ASC, id ASC"
-    ).all() as TriageRule[];
-    db.close();
-
-    for (const rule of rules) {
-      const sourceMatch = !rule.source_pattern || globMatch(rule.source_pattern, source);
-      const senderMatch = !rule.sender_pattern || globMatch(rule.sender_pattern, sender);
-      const subjectMatch = !rule.subject_pattern || globMatch(rule.subject_pattern, subject);
-      if (sourceMatch && senderMatch && subjectMatch) {
-        return rule;
-      }
-    }
-    return null;
-  } catch {
-    db.close();
-    return null;
-  }
-}
-
-/** Increment hit_count for a rule */
-export function incrementRuleHit(ruleId: number): void {
-  const db = getDb();
-  if (!db) return;
-  try {
-    init();
-    db.run("UPDATE triage_rules SET hit_count = hit_count + 1, updated_at = unixepoch() WHERE id = ?", [ruleId]);
-    db.close();
-  } catch {
-    db.close();
-  }
-}
-
 export interface DedupResult {
   found: boolean;
   existing?: {
@@ -567,7 +480,6 @@ export interface DedupResult {
     summary: string;
     reasoning: string;
     domain: string;
-    rule_id: number | null;
     classified_by: string;
     id: number;
   };
@@ -581,7 +493,7 @@ export function checkDedup(hash: string, windowSeconds: number = 14400): DedupRe
     init();
     const cutoff = Math.floor(Date.now() / 1000) - windowSeconds;
     const row = db.prepare(
-      `SELECT id, action, urgency, summary, reasoning, domain, rule_id, classified_by
+      `SELECT id, action, urgency, summary, reasoning, domain, classified_by
        FROM triage_results
        WHERE dedup_hash = ? AND classified_at >= ?
        ORDER BY classified_at DESC LIMIT 1`
@@ -670,11 +582,9 @@ export function triageStats(): {
   by_layer: Record<string, number>;
   by_action: Record<string, number>;
   by_source: Record<string, number>;
-  rules_total: number;
-  rules_enabled: number;
 } {
   const db = getDb();
-  if (!db) return { total: 0, by_layer: {}, by_action: {}, by_source: {}, rules_total: 0, rules_enabled: 0 };
+  if (!db) return { total: 0, by_layer: {}, by_action: {}, by_source: {} };
   try {
     init();
     const total = (db.prepare("SELECT COUNT(*) as c FROM triage_results").get() as any)?.c || 0;
@@ -694,14 +604,11 @@ export function triageStats(): {
       bySource[r.source] = r.c;
     }
 
-    const rulesTotal = (db.prepare("SELECT COUNT(*) as c FROM triage_rules").get() as any)?.c || 0;
-    const rulesEnabled = (db.prepare("SELECT COUNT(*) as c FROM triage_rules WHERE enabled = 1").get() as any)?.c || 0;
-
     db.close();
-    return { total, by_layer: byLayer, by_action: byAction, by_source: bySource, rules_total: rulesTotal, rules_enabled: rulesEnabled };
+    return { total, by_layer: byLayer, by_action: byAction, by_source: bySource };
   } catch {
     db.close();
-    return { total: 0, by_layer: {}, by_action: {}, by_source: {}, rules_total: 0, rules_enabled: 0 };
+    return { total: 0, by_layer: {}, by_action: {}, by_source: {} };
   }
 }
 

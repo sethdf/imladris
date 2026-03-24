@@ -1,9 +1,8 @@
 summary: Batch Triage Slack Messages
 description: >-
-  Layered Slack message triage: L1a dedup, L1b rules, L2 AI classification.
-  Pulls unread messages from all conversations (channels, DMs, group DMs),
-  classifies via cascade, marks channels as read via conversations.mark,
-  stores results in SQLite, returns layer breakdown. Top-level messages only.
+  AI-driven Slack message triage via Haiku classification. Pulls unread
+  messages from all conversations (channels, DMs, group DMs), classifies
+  using Bedrock Haiku, marks channels as read, stores results in SQLite.
 lock: []
 schema:
   $schema: https://json-schema.org/draft/2020-12/schema

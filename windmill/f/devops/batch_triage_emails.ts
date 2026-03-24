@@ -1,5 +1,5 @@
 // Windmill Script: Batch Triage Emails
-// Layered pipeline: L1a dedup → L1b rules → L2 AI → store results.
+// Pipeline: dedup → AI classification (Haiku) → store results.
 // Only AI classification is rate-limited; L1 results are instant.
 
 import { createHash } from "crypto";
@@ -219,14 +219,22 @@ Rules:
 
 // ── Classification with time-series context ──
 
+/** Strip monitoring-specific variable parts so repeated alerts collapse to one hash */
+function normalizeSubject(subject: string): string {
+  let s = subject;
+  // Strip "for X Mins Y Secs" / "for X Hours Y Mins" duration suffixes (Site24x7 Persistent Alerts)
+  s = s.replace(/\s+for\s+\d+\s*(?:Min|Sec|Hour|Day)s?(?:\s+\d+\s*(?:Min|Sec|Hour|Day)s?)*/gi, "");
+  // Strip trailing whitespace left over
+  return s.trim();
+}
+
 function computeDedupHash(subject: string, sender: string): string {
-  const normalized = `${sender.toLowerCase().trim()}|${subject.toLowerCase().trim()}`;
+  const normalized = `${sender.toLowerCase().trim()}|${normalizeSubject(subject).toLowerCase()}`;
   return createHash("sha256").update(normalized).digest("hex");
 }
 
 interface ClassificationResult extends Classification {
   classified_by: string;
-  rule_id: number | null;
 }
 
 async function classifyWithContext(
@@ -234,24 +242,35 @@ async function classifyWithContext(
   sender: string,
   preview: string,
   cacheLib: any | null,
-): Promise<ClassificationResult> {
-  // Fetch recent history for time-series context
-  let recentContext = "";
+): Promise<ClassificationResult & { dedup_skipped?: boolean }> {
   if (cacheLib) {
     try {
       const dedupHash = computeDedupHash(subject, sender);
       const dedup = cacheLib.checkDedup(dedupHash);
       if (dedup.found && dedup.existing) {
-        recentContext = `- Previously classified as ${dedup.existing.action} (${dedup.existing.urgency}): "${dedup.existing.summary}"`;
+        // Skip re-classification — reuse existing result, occurrence_count already incremented by checkDedup
+        console.log(`[dedup] Skipping duplicate: "${subject.slice(0, 60)}..." (prev: ${dedup.existing.action})`);
+        return {
+          action: dedup.existing.action as "NOTIFY" | "QUEUE" | "AUTO",
+          urgency: dedup.existing.urgency,
+          summary: dedup.existing.summary,
+          reasoning: dedup.existing.reasoning || "duplicate of previous classification",
+          domain: dedup.existing.domain,
+          entities: [],
+          alert_type: "info",
+          source_system: "",
+          is_resolution: false,
+          classified_by: "dedup",
+          dedup_skipped: true,
+        };
       }
     } catch { /* context is best-effort */ }
   }
 
-  const aiResult = await classifyEmail(subject, sender, preview, recentContext);
+  const aiResult = await classifyEmail(subject, sender, preview, "");
   return {
     ...aiResult,
-    classified_by: "L1_ai",
-    rule_id: null,
+    classified_by: "ai",
   };
 }
 
@@ -270,7 +289,8 @@ export async function main(
   notify_count: number;
   errors: number;
   marked_read: number;
-  layer_breakdown: { l1_ai: number };
+  dedup_skipped: number;
+  layer_breakdown: { ai: number; dedup: number };
   results: Array<{
     subject: string;
     action: string;
@@ -309,7 +329,7 @@ export async function main(
     return {
       total_fetched: 0, triaged: 0, auto_count: 0, queue_count: 0,
       notify_count: 0, errors: 1, marked_read: 0,
-      layer_breakdown: { l1_ai: 0 },
+      dedup_skipped: 0, layer_breakdown: { ai: 0, dedup: 0 },
       results: [],
     };
   }
@@ -324,14 +344,15 @@ export async function main(
     return {
       total_fetched: 0, triaged: 0, auto_count: 0, queue_count: 0,
       notify_count: 0, errors: 1, marked_read: 0,
-      layer_breakdown: { l1_ai: 0 },
+      dedup_skipped: 0, layer_breakdown: { ai: 0, dedup: 0 },
       results: [],
     };
   }
 
   const results: Array<{ subject: string; action: string; urgency: string; summary: string; classified_by: string }> = [];
   let autoCount = 0, queueCount = 0, notifyCount = 0, errorCount = 0, markedRead = 0;
-  const layerBreakdown = { l1_ai: 0 };
+  let dedupSkipCount = 0;
+  const layerBreakdown = { ai: 0, dedup: 0 };
   for (let i = 0; i < emails.length; i++) {
     const email = emails[i];
     const subject = email.subject || "No subject";
@@ -343,14 +364,37 @@ export async function main(
 
     console.log(`[batch_triage] [${i + 1}/${emails.length}] Triaging: ${subject.slice(0, 60)}...`);
 
-    // Delay between AI calls to avoid throttling
-    if (i > 0 && delay_ms > 0) {
-      await new Promise((resolve) => setTimeout(resolve, delay_ms));
-    }
-
     try {
       const classification = await classifyWithContext(subject, from, bodyText || preview, cacheLib);
-      layerBreakdown.l1_ai++;
+
+      if (classification.dedup_skipped) {
+        // Duplicate — don't store a new row, don't delay, just count and mark read if AUTO
+        dedupSkipCount++;
+        layerBreakdown.dedup++;
+        results.push({
+          subject: subject.slice(0, 100),
+          action: classification.action,
+          urgency: classification.urgency,
+          summary: `[dedup] ${classification.summary}`,
+          classified_by: "dedup",
+        });
+        if (classification.action === "AUTO") {
+          autoCount++;
+          if (!dry_run && email.id) {
+            const marked = await markEmailRead(email.id, userId, graphToken);
+            if (marked) markedRead++;
+          }
+        } else if (classification.action === "QUEUE") { queueCount++; }
+        else if (classification.action === "NOTIFY") { notifyCount++; }
+        console.log(`[batch_triage] [${i + 1}/${emails.length}] → ${classification.action} [dedup skip]`);
+        continue;
+      }
+
+      // AI classified — delay before next AI call
+      if (i > 0 && delay_ms > 0) {
+        await new Promise((resolve) => setTimeout(resolve, delay_ms));
+      }
+      layerBreakdown.ai++;
 
       results.push({
         subject: subject.slice(0, 100),
@@ -360,7 +404,7 @@ export async function main(
         classified_by: classification.classified_by,
       });
 
-      // Store result in triage_results
+      // Store result in triage_results (only for new classifications)
       if (cacheLib) {
         try {
           const dedupHash = computeDedupHash(subject, from);
@@ -376,7 +420,6 @@ export async function main(
             reasoning: classification.reasoning,
             domain: classification.domain,
             classified_by: classification.classified_by,
-            rule_id: classification.rule_id,
             dedup_hash: dedupHash,
             marked_read: 0,
             metadata: JSON.stringify({ importance: email.importance, preview: preview.slice(0, 1000), body_text: bodyText.slice(0, 8000), is_resolution: classification.is_resolution }),
@@ -410,7 +453,7 @@ export async function main(
   const duration = Date.now() - startTime;
   console.log(`\n[batch_triage] Complete in ${(duration / 1000).toFixed(1)}s`);
   console.log(`[batch_triage] Results: ${autoCount} AUTO, ${queueCount} QUEUE, ${notifyCount} NOTIFY, ${errorCount} errors`);
-  console.log(`[batch_triage] AI classifications: ${layerBreakdown.l1_ai}`);
+  console.log(`[batch_triage] AI: ${layerBreakdown.ai}, Dedup skipped: ${layerBreakdown.dedup}`);
   if (!dry_run) console.log(`[batch_triage] Marked read: ${markedRead}`);
 
   return {
@@ -421,6 +464,7 @@ export async function main(
     notify_count: notifyCount,
     errors: errorCount,
     marked_read: markedRead,
+    dedup_skipped: dedupSkipCount,
     layer_breakdown: layerBreakdown,
     results,
   };

@@ -1,5 +1,5 @@
 // Windmill Script: Batch Triage Slack Messages
-// Layered pipeline: L1a dedup → L1b rules → L2 AI → store results.
+// Pipeline: dedup → AI classification (Haiku) → store results.
 // Mirrors batch_triage_emails.ts structure for Slack conversations.
 // Thread-as-unit: threads are treated as single triage items with full reply context.
 
@@ -359,14 +359,20 @@ Rules:
 
 // ── Classification with time-series context ──
 
+/** Strip monitoring-specific variable parts so repeated alerts collapse to one hash */
+function normalizeSubject(subject: string): string {
+  let s = subject;
+  s = s.replace(/\s+for\s+\d+\s*(?:Min|Sec|Hour|Day)s?(?:\s+\d+\s*(?:Min|Sec|Hour|Day)s?)*/gi, "");
+  return s.trim();
+}
+
 function computeDedupHash(subject: string, sender: string): string {
-  const normalized = `${sender.toLowerCase().trim()}|${subject.toLowerCase().trim()}`;
+  const normalized = `${sender.toLowerCase().trim()}|${normalizeSubject(subject).toLowerCase()}`;
   return createHash("sha256").update(normalized).digest("hex");
 }
 
 interface ClassificationResult extends Classification {
   classified_by: string;
-  rule_id: number | null;
 }
 
 async function classifyWithContext(
@@ -374,24 +380,34 @@ async function classifyWithContext(
   sender: string,
   preview: string,
   cacheLib: any | null,
-): Promise<ClassificationResult> {
-  // Fetch recent history for time-series context
-  let recentContext = "";
+): Promise<ClassificationResult & { dedup_skipped?: boolean }> {
   if (cacheLib) {
     try {
       const dedupHash = computeDedupHash(subject, sender);
       const dedup = cacheLib.checkDedup(dedupHash);
       if (dedup.found && dedup.existing) {
-        recentContext = `- Previously classified as ${dedup.existing.action} (${dedup.existing.urgency}): "${dedup.existing.summary}"`;
+        console.log(`[dedup] Skipping duplicate: "${subject.slice(0, 60)}..." (prev: ${dedup.existing.action})`);
+        return {
+          action: dedup.existing.action as "NOTIFY" | "QUEUE" | "AUTO",
+          urgency: dedup.existing.urgency,
+          summary: dedup.existing.summary,
+          reasoning: dedup.existing.reasoning || "duplicate of previous classification",
+          domain: dedup.existing.domain,
+          entities: [],
+          alert_type: "info",
+          source_system: "",
+          is_resolution: false,
+          classified_by: "dedup",
+          dedup_skipped: true,
+        };
       }
     } catch { /* context is best-effort */ }
   }
 
-  const aiResult = await classifyMessage(subject, sender, preview, recentContext);
+  const aiResult = await classifyMessage(subject, sender, preview, "");
   return {
     ...aiResult,
-    classified_by: "L1_ai",
-    rule_id: null,
+    classified_by: "ai",
   };
 }
 
@@ -413,7 +429,8 @@ export async function main(
   notify_count: number;
   errors: number;
   channels_marked_read: number;
-  layer_breakdown: { l1_ai: number };
+  dedup_skipped: number;
+  layer_breakdown: { ai: number; dedup: number };
   results: Array<{
     channel: string;
     sender: string;
@@ -432,13 +449,13 @@ export async function main(
     cacheLib = await import("./cache_lib.ts");
     if (cacheLib.isAvailable()) {
       cacheLib.init();
-      console.log("[batch_triage_slack] Cache lib loaded — L1 layers active");
+      console.log("[batch_triage_slack] Cache lib loaded — dedup active");
     } else {
-      console.log("[batch_triage_slack] Cache not available — L1 layers disabled, L2 only");
+      console.log("[batch_triage_slack] Cache not available — dedup disabled, AI only");
       cacheLib = null;
     }
   } catch (e: any) {
-    console.log(`[batch_triage_slack] Cache lib not loaded: ${e.message?.slice(0, 100)} — L2 only`);
+    console.log(`[batch_triage_slack] Cache lib not loaded: ${e.message?.slice(0, 100)} — AI only`);
     cacheLib = null;
   }
 
@@ -453,7 +470,7 @@ export async function main(
       total_channels: 0, channels_with_unread: 0, total_messages: 0,
       triaged: 0, auto_count: 0, queue_count: 0, notify_count: 0,
       errors: 1, channels_marked_read: 0,
-      layer_breakdown: { l1_ai: 0 },
+      dedup_skipped: 0, layer_breakdown: { ai: 0, dedup: 0 },
       results: [],
     };
   }
@@ -469,7 +486,7 @@ export async function main(
       total_channels: 0, channels_with_unread: 0, total_messages: 0,
       triaged: 0, auto_count: 0, queue_count: 0, notify_count: 0,
       errors: 1, channels_marked_read: 0,
-      layer_breakdown: { l1_ai: 0 },
+      dedup_skipped: 0, layer_breakdown: { ai: 0, dedup: 0 },
       results: [],
     };
   }
@@ -489,7 +506,8 @@ export async function main(
   }> = [];
   let autoCount = 0, queueCount = 0, notifyCount = 0, errorCount = 0;
   let channelsWithUnread = 0, channelsMarkedRead = 0, totalMessages = 0;
-  const layerBreakdown = { l1_ai: 0 };
+  let dedupSkipCount = 0;
+  const layerBreakdown = { ai: 0, dedup: 0 };
 
   for (let ci = 0; ci < channels.length; ci++) {
     const channel = channels[ci];
@@ -557,14 +575,29 @@ export async function main(
 
       console.log(`[batch_triage_slack] [${ci + 1}/${channels.length}][${mi + 1}/${threadUnits.length}] Triaging thread: ${sender.slice(0, 40)} in ${channelSubject}`);
 
-      // Only delay before L2 AI calls (not L1)
-      if (mi > 0 && delay_ms > 0) {
-        await new Promise((r) => setTimeout(r, delay_ms));
-      }
-
       try {
         const classification = await classifyWithContext(channelSubject, sender, preview, cacheLib);
-        layerBreakdown.l1_ai++;
+
+        if (classification.dedup_skipped) {
+          dedupSkipCount++;
+          layerBreakdown.dedup++;
+          results.push({
+            channel: channelSubject, sender: sender.slice(0, 100),
+            action: classification.action, urgency: classification.urgency,
+            summary: `[dedup] ${classification.summary}`, classified_by: "dedup",
+          });
+          if (classification.action === "AUTO") autoCount++;
+          else if (classification.action === "QUEUE") queueCount++;
+          else if (classification.action === "NOTIFY") notifyCount++;
+          console.log(`[batch_triage_slack] → ${classification.action} [dedup skip]`);
+          continue;
+        }
+
+        // Delay before AI calls
+        if (mi > 0 && delay_ms > 0) {
+          await new Promise((r) => setTimeout(r, delay_ms));
+        }
+        layerBreakdown.ai++;
 
         results.push({
           channel: channelSubject,
@@ -575,7 +608,7 @@ export async function main(
           classified_by: classification.classified_by,
         });
 
-        // Store result in triage_results — thread_ts as dedup key
+        // Store result in triage_results (only for new classifications)
         if (cacheLib) {
           try {
             const dedupHash = computeDedupHash(`${channel.id}:${threadKey}`, sender);
@@ -591,7 +624,6 @@ export async function main(
               reasoning: classification.reasoning,
               domain: classification.domain,
               classified_by: classification.classified_by,
-              rule_id: classification.rule_id,
               dedup_hash: dedupHash,
               marked_read: 0,
               metadata: JSON.stringify({
@@ -642,7 +674,7 @@ export async function main(
   console.log(`\n[batch_triage_slack] Complete in ${(duration / 1000).toFixed(1)}s`);
   console.log(`[batch_triage_slack] Channels: ${channels.length} total, ${channelsWithUnread} with unread`);
   console.log(`[batch_triage_slack] Messages: ${totalMessages} total, ${autoCount} AUTO, ${queueCount} QUEUE, ${notifyCount} NOTIFY, ${errorCount} errors`);
-  console.log(`[batch_triage_slack] AI classifications: ${layerBreakdown.l1_ai}`);
+  console.log(`[batch_triage_slack] AI: ${layerBreakdown.ai}, Dedup skipped: ${layerBreakdown.dedup}`);
   if (!dry_run) console.log(`[batch_triage_slack] Channels marked read: ${channelsMarkedRead}`);
 
   return {
@@ -655,6 +687,7 @@ export async function main(
     notify_count: notifyCount,
     errors: errorCount,
     channels_marked_read: channelsMarkedRead,
+    dedup_skipped: dedupSkipCount,
     layer_breakdown: layerBreakdown,
     results,
   };

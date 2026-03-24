@@ -1,0 +1,24 @@
+summary: ''
+description: ''
+lock: '!inline f/investigate/telegram_read_messages.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    chat:
+      type: string
+      description: ''
+      default: null
+      originalType: string
+    limit:
+      type: number
+      description: ''
+      default: 20
+    search:
+      type: string
+      description: ''
+      default: ''
+      originalType: string
+  required:
+    - chat

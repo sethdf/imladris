@@ -42,6 +42,8 @@ export async function main(
             account: acct,
             instance_id: i.InstanceId,
             state: i.State?.Name,
+            state_reason: i.StateReason?.Message || undefined,
+            state_transition_reason: i.StateTransitionReason || undefined,
             type: i.InstanceType,
             name: i.Tags?.find(t => t.Key === "Name")?.Value || "",
             private_ip: i.PrivateIpAddress,

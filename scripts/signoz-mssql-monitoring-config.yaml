@@ -1,0 +1,81 @@
+# OTel Collector config for MSSQL on EC2 monitoring
+# Deploy on the SQL Server host or a nearby collector instance
+# Requires: SQL Server login with VIEW SERVER STATE permission
+#
+# Key MSSQL instances on EC2 (prod account 945243322929):
+#   QAT:  buxqat01-sql  (i4i.4xlarge, 10.10.0.146)
+#   Prod: buxprod01-sql (i4i.8xlarge, 10.10.1.48)
+#   DM:   dmdb01-sql, dmdb04-sql, dmdb05-sql, dmdb07-sql, dmdb09-sql
+#   Dev:  neodevdb01-sql, neostagedb01-sql
+#   Other: transitiondb01-sql, vendordata-sql, bda01-sql
+#
+# Deployment: Install otelcol-contrib binary on the target host
+#   or run remotely with network access to port 1433
+
+receivers:
+  sqlserver:
+    # Connect to QAT SQL Server (start here for POC)
+    server: 10.10.0.146
+    port: 1433
+    username: "${MSSQL_USERNAME}"
+    password: "${MSSQL_PASSWORD}"
+    collection_interval: 30s
+
+    # Optional: top query collection for slow query tracking
+    # top_query_collection:
+    #   enabled: true
+    #   lookback_time: 60s
+    #   max_query_sample_count: 1000
+    #   top_query_count: 250
+
+    # Optional: query sample collection (captures currently executing queries as logs)
+    # query_sample_collection:
+    #   enabled: true
+
+    # Metrics collected automatically:
+    #   - sqlserver.batch.request.rate
+    #   - sqlserver.batch.sql_compilation.rate
+    #   - sqlserver.batch.sql_recompilation.rate
+    #   - sqlserver.page.buffer_cache.hit_ratio
+    #   - sqlserver.user.connection.count
+    #   - sqlserver.lock.wait.rate
+    #   - sqlserver.lock.wait_time.avg
+    #   - sqlserver.processes.blocked
+    #   - sqlserver.page.life_expectancy
+    #   - sqlserver.page.split.rate
+    #   - sqlserver.page.operation.rate (read/write)
+    #   - sqlserver.transaction.rate
+    #   - sqlserver.transaction.log.growth.count
+    #   - sqlserver.transaction.log.shrink.count
+    #   - sqlserver.transaction.log.usage
+    #   - sqlserver.database.io.read_latency
+    #   - sqlserver.database.io.write_latency
+
+processors:
+  batch:
+    send_batch_size: 100
+    timeout: 10s
+  resource:
+    attributes:
+      - key: signoz.collector.type
+        value: mssql-monitor
+        action: upsert
+      - key: db.system
+        value: mssql
+        action: upsert
+      - key: host.name
+        value: buxqat01-sql
+        action: upsert
+
+exporters:
+  otlp:
+    endpoint: ingest.us.signoz.cloud:443
+    headers:
+      signoz-ingestion-key: "${SIGNOZ_INGESTION_KEY}"
+
+service:
+  pipelines:
+    metrics:
+      receivers: [sqlserver]
+      processors: [resource, batch]
+      exporters: [otlp]

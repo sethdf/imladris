@@ -1,0 +1,160 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  SigNoz POC - OTel Collector for URL monitoring (httpcheck).
+  Deploys to quality cluster in prod account.
+  AWS infrastructure metrics handled separately via SigNoz One-Click Integration.
+
+Parameters:
+  ClusterName:
+    Type: String
+    Default: quality
+    Description: ECS cluster to deploy the collector to
+
+  SigNozIngestionKey:
+    Type: String
+    NoEcho: true
+    Description: SigNoz Cloud ingestion key
+
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Private subnets for Fargate task
+    Default: subnet-550f2422,subnet-b6dcab9d,subnet-9b9cdec2,subnet-d3b0a8e9
+
+  SecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: Security group for Fargate task
+    Default: sg-0e2da776f2d0c86a6
+
+Resources:
+  # IAM Role for OTel Collector task
+  OTelCollectorTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: signoz-otel-collector-task-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+
+  # Execution role for pulling images and writing logs
+  OTelCollectorExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: signoz-otel-collector-execution-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  # CloudWatch Log Group
+  OTelCollectorLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/signoz-otel-collector
+      RetentionInDays: 14
+
+  # Task Definition - OTel Collector (httpcheck URL monitoring only)
+  OTelCollectorTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: signoz-otel-collector
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: '256'
+      Memory: '512'
+      TaskRoleArn: !GetAtt OTelCollectorTaskRole.Arn
+      ExecutionRoleArn: !GetAtt OTelCollectorExecutionRole.Arn
+      ContainerDefinitions:
+        - Name: otel-collector
+          Image: otel/opentelemetry-collector-contrib:0.120.0
+          Essential: true
+          Command:
+            - --config=env:OTEL_CONFIG
+          Environment:
+            - Name: OTEL_CONFIG
+              Value: !Sub |
+                receivers:
+                  httpcheck:
+                    targets:
+                      - endpoint: https://platform.buxtonco.com
+                        method: GET
+                      - endpoint: https://www.buxtonco.com
+                        method: GET
+                      - endpoint: https://www.audiense.com
+                        method: GET
+                      - endpoint: https://www.getelevar.com
+                        method: GET
+                      - endpoint: https://app.getelevar.com
+                        method: GET
+                      - endpoint: https://mft.buxtonco.com
+                        method: GET
+                      - endpoint: https://id.buxtonco.com
+                        method: GET
+                      - endpoint: https://cdn01.buxtonco.com
+                        method: GET
+                    collection_interval: 60s
+                processors:
+                  batch:
+                    send_batch_size: 1000
+                    timeout: 10s
+                  resource/urlmon:
+                    attributes:
+                      - key: signoz.collector.type
+                        value: url-monitor
+                        action: upsert
+                exporters:
+                  otlp:
+                    endpoint: ingest.us.signoz.cloud:443
+                    headers:
+                      signoz-ingestion-key: ${SigNozIngestionKey}
+                service:
+                  telemetry:
+                    logs:
+                      level: info
+                  pipelines:
+                    metrics/urlmon:
+                      receivers: [httpcheck]
+                      processors: [resource/urlmon, batch]
+                      exporters: [otlp]
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref OTelCollectorLogGroup
+              awslogs-region: !Ref 'AWS::Region'
+              awslogs-stream-prefix: otel-collector
+
+  # ECS Service
+  OTelCollectorService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: signoz-otel-collector
+      Cluster: !Ref ClusterName
+      TaskDefinition: !Ref OTelCollectorTaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets: !Ref SubnetIds
+          SecurityGroups:
+            - !Ref SecurityGroupId
+          AssignPublicIp: DISABLED
+
+Outputs:
+  TaskDefinitionArn:
+    Description: ARN of the OTel Collector task definition
+    Value: !Ref OTelCollectorTaskDefinition
+  ServiceName:
+    Description: Name of the OTel Collector ECS service
+    Value: !GetAtt OTelCollectorService.Name
+  TaskRoleArn:
+    Description: ARN of the OTel Collector task role
+    Value: !GetAtt OTelCollectorTaskRole.Arn

@@ -320,8 +320,7 @@ export async function main(
       text += `Spot-check: were these correctly auto-dismissed?\n`;
       text += `To override, record feedback: f/devops/triage_feedback action=record\n\n`;
       for (const a of autoSample) {
-        const by = a.classified_by === "L1_rule" ? "rule" : "AI";
-        text += `  [${by}] #${a.id}: ${(a.subject || "").slice(0, 80)}\n`;
+        text += `  [AI] #${a.id}: ${(a.subject || "").slice(0, 80)}\n`;
         text += `    From: ${a.sender || "unknown"} | ${(a.summary || "").slice(0, 100)}\n`;
       }
     } else if (autoTotalCount > 0) {

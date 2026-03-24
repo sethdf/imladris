@@ -1,0 +1,25 @@
+summary: ''
+description: ''
+lock: '!inline f/investigate/slack_read_thread.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    channel:
+      type: string
+      description: ''
+      default: null
+      originalType: string
+    limit:
+      type: number
+      description: ''
+      default: 100
+    thread_ts:
+      type: string
+      description: ''
+      default: null
+      originalType: string
+  required:
+    - channel
+    - thread_ts

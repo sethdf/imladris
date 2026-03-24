@@ -50,8 +50,13 @@ export async function main(
   }
 
   // Search with filters
+  // SDP v3 API search_criteria uses { field, condition, value, logical_operator }
+  // logical_operator goes BETWEEN criteria (on the second criterion to join with the first)
   const criteria: any[] = [];
-  if (search) criteria.push({ field: "subject", condition: "contains", value: search });
+  if (search) {
+    criteria.push({ field: "subject", condition: "contains", value: search });
+    criteria.push({ field: "description", condition: "contains", value: search, logical_operator: "or" });
+  }
   if (status) criteria.push({ field: "status.name", condition: "is", value: status });
   if (requester) criteria.push({ field: "requester.name", condition: "contains", value: requester });
   if (technician) criteria.push({ field: "technician.name", condition: "is", value: technician });

@@ -379,84 +379,57 @@ function formatInvestigationNote(investigation: any): string {
   if (!investigation) return "<p>Investigation returned no results.</p>";
 
   const parts: string[] = [];
-  parts.push(sectionHeader("Investigation Report", "\uD83D\uDCCB"));
 
   if (investigation.diagnosis) {
     const d = investigation.diagnosis;
 
-    // Key metrics row
-    parts.push(`<table style="border-collapse:collapse;margin:8px 0;width:100%">`);
-    parts.push(`<tr><td style="padding:6px 12px;font-weight:bold;width:120px">Severity</td><td style="padding:6px 12px">${severityBadge(d.severity || "unknown")}</td></tr>`);
-    parts.push(`<tr><td style="padding:6px 12px;font-weight:bold">Confidence</td><td style="padding:6px 12px">${confidenceBadge(d.confidence || "unknown")}</td></tr>`);
-    parts.push(`<tr><td style="padding:6px 12px;font-weight:bold;vertical-align:top">Root Cause</td><td style="padding:6px 12px">${esc(d.root_cause || "UNKNOWN")}</td></tr>`);
-    parts.push(`</table>`);
+    const sev = (d.severity || "unknown").toLowerCase();
+    const rootCause = esc(d.root_cause || "Unknown");
+    parts.push(`<p>Looked into this. ${sev !== "unknown" ? `Severity: ${sev}. ` : ""}Root cause: ${rootCause}</p>`);
 
     if (d.summary) {
-      parts.push(`<div style="margin:12px 0;padding:10px 14px;background:#f8f9fa;border-left:4px solid #6c757d;border-radius:2px">${esc(d.summary)}</div>`);
+      parts.push(`<p>${esc(d.summary)}</p>`);
     }
 
     if (d.evidence?.length) {
-      parts.push(sectionHeader("Evidence"));
-      parts.push(`<ul style="margin:4px 0;padding-left:24px">`);
+      parts.push(`<p><b>What I found:</b></p><ul>`);
       for (const e of d.evidence) {
-        parts.push(`<li style="margin:4px 0">${esc(String(e))}</li>`);
+        parts.push(`<li>${esc(String(e))}</li>`);
       }
       parts.push(`</ul>`);
     }
 
-    if (d.criteria_status?.length) {
-      parts.push(sectionHeader("Investigation Criteria"));
-      const statusColors: Record<string, string> = {
-        verified: "#28a745", needs_data_source: "#ffc107", unresolvable: "#ffc107", unverified: "#dc3545", partial: "#fd7e14",
-      };
-      parts.push(`<table style="border-collapse:collapse;width:100%;margin:8px 0">`);
-      parts.push(`<tr style="background:#f1f3f5"><th style="padding:6px 8px;text-align:left;border-bottom:2px solid #dee2e6">Status</th><th style="padding:6px 8px;text-align:left;border-bottom:2px solid #dee2e6">Criterion</th><th style="padding:6px 8px;text-align:left;border-bottom:2px solid #dee2e6">Evidence</th></tr>`);
-      for (const c of d.criteria_status) {
-        const statusColor = statusColors[(c.status || "").toLowerCase()] || "#6c757d";
-        parts.push(`<tr><td style="padding:4px 8px;border-bottom:1px solid #eee"><span style="color:${statusColor};font-weight:bold">${esc(c.status)}</span></td><td style="padding:4px 8px;border-bottom:1px solid #eee">${esc(c.criterion)}</td><td style="padding:4px 8px;border-bottom:1px solid #eee;font-size:12px;color:#666">${esc((c.evidence || "N/A").slice(0, 200))}</td></tr>`);
-      }
-      parts.push(`</table>`);
-    }
-
     if (d.affected_systems?.length) {
-      parts.push(`<p style="margin:8px 0"><b>Affected Systems:</b> ${d.affected_systems.map((s: string) => `<span style="display:inline-block;padding:2px 8px;margin:2px;background:#e9ecef;border-radius:3px;font-size:12px">${esc(s)}</span>`).join(" ")}</p>`);
+      parts.push(`<p><b>Affected systems:</b> ${esc(d.affected_systems.join(", "))}</p>`);
     }
 
     if (d.recommended_actions?.length) {
-      parts.push(sectionHeader("Recommended Actions", "\u2705"));
-      parts.push(`<ol style="margin:4px 0;padding-left:24px">`);
+      parts.push(`<p><b>Next steps:</b></p><ol>`);
       for (const action of d.recommended_actions) {
-        parts.push(`<li style="margin:4px 0">${esc(String(action))}</li>`);
+        parts.push(`<li>${esc(String(action))}</li>`);
       }
       parts.push(`</ol>`);
     }
 
     if (d.missing_data_sources?.length) {
-      parts.push(sectionHeader("Missing Data Sources", "\u26A0\uFE0F"));
-      parts.push(`<ul style="margin:4px 0;padding-left:24px">`);
+      parts.push(`<p><b>Couldn't check:</b></p><ul>`);
       for (const ds of d.missing_data_sources) {
-        parts.push(`<li style="margin:4px 0"><b>${esc(ds.name)}</b>: ${esc(ds.reason)}</li>`);
+        parts.push(`<li><b>${esc(ds.name)}</b>: ${esc(ds.reason)}</li>`);
       }
       parts.push(`</ul>`);
     }
+
+    const conf = (d.confidence || "").toLowerCase();
+    if (conf && conf !== "high") {
+      parts.push(`<p>Note: confidence is ${conf} — may need further review.</p>`);
+    }
   }
 
-  // Needs review banner
   if (investigation.needs_review) {
-    parts.push(`<div style="margin:12px 0;padding:10px 14px;background:#fff3cd;border-left:4px solid #ffc107;border-radius:2px;color:#856404"><b>Needs Human Review:</b> This investigation did not achieve high confidence. Please review the criteria and data source gaps above.</div>`);
+    parts.push(`<p>Flagged for review — investigation didn't reach high confidence. Check the gaps above.</p>`);
   }
 
-  // Footer
-  parts.push(`<hr style="margin:16px 0;border:none;border-top:1px solid #dee2e6">`);
-  parts.push(`<p style="margin:4px 0;color:#999;font-size:11px">`);
-  parts.push(`Rounds: ${investigation.rounds || 0}`);
-  if (investigation.usage) {
-    parts.push(` | Tokens: ${investigation.usage.input_tokens || 0} in / ${investigation.usage.output_tokens || 0} out`);
-  }
-  parts.push(` | Generated: ${new Date().toISOString().slice(0, 16).replace("T", " ")} UTC`);
-  parts.push(`</p>`);
-
-  return parts.join("");
+  return parts.join("\n");
 }
 
 // ── Quality Gate — classify investigation output ──

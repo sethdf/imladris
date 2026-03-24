@@ -1,0 +1,32 @@
+summary: ''
+description: ''
+lock: '!inline f/investigate/get_cloudwatch_metrics.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    account:
+      type: string
+      description: ''
+      default: prod
+      originalType: string
+    hours_back:
+      type: number
+      description: ''
+      default: 24
+    instance_id:
+      type: string
+      description: ''
+      default: ''
+      originalType: string
+    metrics:
+      type: string
+      description: ''
+      default: CPUUtilization,StatusCheckFailed
+      originalType: string
+    period_minutes:
+      type: number
+      description: ''
+      default: 5
+  required: []

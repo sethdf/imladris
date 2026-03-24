@@ -43,6 +43,21 @@ INVESTIGATION APPROACH:
 3. Before submitting, verify every criterion is either "verified" (with evidence) or "needs_data_source" (you identified what data you need but lack a tool for it).
 4. Include your criteria and their resolution status in the diagnosis via submit_diagnosis.
 
+DIFFERENTIAL DIAGNOSIS (CRITICAL):
+Before submitting a diagnosis, you MUST consider at least 2 alternative explanations for the observed symptoms. For each alternative:
+1. State the hypothesis
+2. Cite specific evidence from your tool calls that supports it
+3. Cite specific evidence that contradicts it
+4. Explain why you rejected it in favor of your primary diagnosis
+If you cannot eliminate an alternative with evidence, that is genuine uncertainty — state it honestly.
+
+EVIDENCE CHAIN (CRITICAL):
+Every claim in your diagnosis must be traceable to a specific tool call. For each key observation:
+- Name the tool you used
+- Cite the specific value or data point returned
+- Identify the resource (instance ID, account, hostname, etc.)
+Do NOT make claims based on inference alone. If you didn't see it in tool output, don't assert it.
+
 CONFIDENCE RULES (CRITICAL):
 - Only "high" confidence is accepted as a complete diagnosis. If you have strong evidence supporting your conclusions, submit with high confidence.
 - "medium" confidence will be rejected in early rounds — you must investigate further. In later rounds it will be accepted but flagged for human review.
@@ -373,6 +388,44 @@ const TOOLS: ToolConfiguration = {
     },
     {
       toolSpec: {
+        name: "get_cloudtrail_events",
+        description: "Query CloudTrail for EC2 lifecycle events (stop, start, terminate, reboot). Shows WHO performed the action, WHEN, and state transitions. Essential for determining if downtime was user-initiated vs crash.",
+        inputSchema: {
+          json: {
+            type: "object",
+            properties: {
+              resource_id: { type: "string", description: "AWS resource ID (e.g., i-0abc123)" },
+              account: { type: "string", description: "Account name or 'all' (default: all)" },
+              event_names: { type: "string", description: "Comma-separated event names (default: StopInstances,StartInstances,TerminateInstances,RebootInstances)" },
+              hours_back: { type: "number", description: "Hours to look back (default: 168, max ~2160 for 90-day CloudTrail limit)" },
+              limit: { type: "number", description: "Max events (default: 50)" },
+            },
+            required: ["resource_id"],
+          },
+        },
+      },
+    },
+    {
+      toolSpec: {
+        name: "get_cloudwatch_metrics",
+        description: "Query CloudWatch for EC2 instance metrics (CPU, status checks, network, disk). Returns time-series data with min/max/avg summary.",
+        inputSchema: {
+          json: {
+            type: "object",
+            properties: {
+              instance_id: { type: "string", description: "EC2 instance ID (e.g., i-0abc123)" },
+              account: { type: "string", description: "Account name (default: prod)" },
+              metrics: { type: "string", description: "Comma-separated metric names (default: CPUUtilization,StatusCheckFailed)" },
+              hours_back: { type: "number", description: "Hours to look back (default: 24)" },
+              period_minutes: { type: "number", description: "Aggregation period in minutes (default: 5)" },
+            },
+            required: ["instance_id"],
+          },
+        },
+      },
+    },
+    {
+      toolSpec: {
         name: "request_data_source",
         description: "Flag a missing data source that would help resolve this investigation. Call this when you need access to a system, tool, or data that isn't available. The gap will be recorded for future tool development. Continue investigating with available tools after calling this.",
         inputSchema: {
@@ -407,6 +460,34 @@ const TOOLS: ToolConfiguration = {
                 type: "array",
                 items: { type: "string" },
                 description: "Specific evidence items supporting the diagnosis (min 2)",
+              },
+              evidence_chain: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    claim: { type: "string", description: "What you observed or concluded" },
+                    tool_used: { type: "string", description: "Which tool provided this evidence" },
+                    raw_value: { type: "string", description: "The specific value or data returned by the tool" },
+                    resource_id: { type: "string", description: "The resource identifier (instance ID, hostname, account, etc.)" },
+                  },
+                  required: ["claim", "tool_used", "raw_value", "resource_id"],
+                },
+                description: "Structured evidence chain — each claim linked to specific tool output (min 1)",
+              },
+              differentials: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    hypothesis: { type: "string", description: "Alternative explanation for the observed symptoms" },
+                    evidence_for: { type: "array", items: { type: "string" }, description: "Evidence supporting this alternative" },
+                    evidence_against: { type: "array", items: { type: "string" }, description: "Evidence contradicting this alternative" },
+                    why_rejected: { type: "string", description: "Why primary diagnosis is preferred over this alternative" },
+                  },
+                  required: ["hypothesis", "evidence_against", "why_rejected"],
+                },
+                description: "Alternative hypotheses that were considered and eliminated (min 2)",
               },
               affected_systems: {
                 type: "array",
@@ -445,7 +526,7 @@ const TOOLS: ToolConfiguration = {
                 description: "Status of each investigation criterion you identified",
               },
             },
-            required: ["severity", "summary", "root_cause", "evidence", "affected_systems", "recommended_actions", "confidence", "criteria_status"],
+            required: ["severity", "summary", "root_cause", "evidence", "evidence_chain", "differentials", "affected_systems", "recommended_actions", "confidence", "criteria_status"],
           },
         },
       },
@@ -682,6 +763,59 @@ export async function main(
       const diagnosis = diagnosisBlock.toolUse.input as Record<string, unknown>;
       const confidence = diagnosis.confidence as string;
       const isLastRound = round >= MAX_ROUNDS;
+
+      // ── Evidence chain & differential validation ──
+      const evidenceChain = diagnosis.evidence_chain as Array<Record<string, unknown>> | undefined;
+      const differentials = diagnosis.differentials as Array<Record<string, unknown>> | undefined;
+
+      if (!evidenceChain || evidenceChain.length < 1) {
+        console.log(`[agentic_investigator] Rejecting diagnosis: missing evidence_chain at round ${round}`);
+        const structureRejectResults: ContentBlock[] = [
+          {
+            toolResult: {
+              toolUseId: diagnosisBlock.toolUse.toolUseId,
+              content: [{ text: "Diagnosis rejected: evidence_chain is required. Every key claim must cite a specific tool, the raw value returned, and the resource ID. Resubmit with at least 1 evidence_chain entry." }],
+              status: "error",
+            },
+          },
+        ];
+        // Handle other tool calls in this round
+        for (const block of toolUseBlocks) {
+          if (block.toolUse.name === "submit_diagnosis") continue;
+          if (block.toolUse.name === "request_data_source") {
+            structureRejectResults.push({ toolResult: { toolUseId: block.toolUse.toolUseId, content: [{ text: "Noted." }], status: "success" } });
+            continue;
+          }
+          const toolResult = await callWindmillTool(block.toolUse.name, block.toolUse.input);
+          structureRejectResults.push({ toolResult: { toolUseId: block.toolUse.toolUseId, content: [{ text: truncateResult(toolResult.success ? toolResult.result : { error: toolResult.error }) }], status: toolResult.success ? "success" : "error" } });
+        }
+        messages.push({ role: "user", content: structureRejectResults });
+        continue;
+      }
+
+      if (!differentials || differentials.length < 2) {
+        console.log(`[agentic_investigator] Rejecting diagnosis: insufficient differentials (${differentials?.length || 0}) at round ${round}`);
+        const diffRejectResults: ContentBlock[] = [
+          {
+            toolResult: {
+              toolUseId: diagnosisBlock.toolUse.toolUseId,
+              content: [{ text: "Diagnosis rejected: you must consider at least 2 alternative hypotheses before submitting. For each alternative, explain what evidence supports it, what contradicts it, and why you rejected it. This prevents tunnel vision." }],
+              status: "error",
+            },
+          },
+        ];
+        for (const block of toolUseBlocks) {
+          if (block.toolUse.name === "submit_diagnosis") continue;
+          if (block.toolUse.name === "request_data_source") {
+            diffRejectResults.push({ toolResult: { toolUseId: block.toolUse.toolUseId, content: [{ text: "Noted." }], status: "success" } });
+            continue;
+          }
+          const toolResult = await callWindmillTool(block.toolUse.name, block.toolUse.input);
+          diffRejectResults.push({ toolResult: { toolUseId: block.toolUse.toolUseId, content: [{ text: truncateResult(toolResult.success ? toolResult.result : { error: toolResult.error }) }], status: toolResult.success ? "success" : "error" } });
+        }
+        messages.push({ role: "user", content: diffRejectResults });
+        continue;
+      }
 
       // ── Confidence gate ──
       // High confidence: always accepted

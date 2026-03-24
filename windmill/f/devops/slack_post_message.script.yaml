@@ -1,0 +1,30 @@
+summary: ''
+description: ''
+lock: '!inline f/devops/slack_post_message.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    channel:
+      type: string
+      description: ''
+      default: null
+      originalType: string
+    text:
+      type: string
+      description: ''
+      default: null
+      originalType: string
+    thread_ts:
+      type: string
+      description: ''
+      default: ''
+      originalType: string
+    unfurl_links:
+      type: boolean
+      description: ''
+      default: false
+  required:
+    - channel
+    - text

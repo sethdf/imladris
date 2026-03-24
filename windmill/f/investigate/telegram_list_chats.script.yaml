@@ -1,0 +1,13 @@
+summary: ''
+description: ''
+lock: '!inline f/investigate/telegram_list_chats.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    limit:
+      type: number
+      description: ''
+      default: 50
+  required: []

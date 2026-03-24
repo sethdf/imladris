@@ -1,10 +1,8 @@
 summary: Batch Triage Emails
 description: >-
-  Layered email triage: L1a dedup, L1b rules, L2 AI classification.
-  L1 layers are instant (glob pattern match + dedup hash); only L2 AI calls
-  are rate-limited. Paginates through ALL unread M365 emails via Graph API
-  @odata.nextLink, classifies via cascade, marks AUTO emails as read, stores
-  results in SQLite, returns layer breakdown.
+  AI-driven email triage via Haiku classification. Paginates through ALL
+  unread M365 emails via Graph API @odata.nextLink, classifies each email
+  using Bedrock Haiku, marks AUTO emails as read, stores results in SQLite.
 lock: []
 schema:
   $schema: https://json-schema.org/draft/2020-12/schema

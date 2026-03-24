@@ -333,8 +333,7 @@ server.tool(
           const byStatus = db.query(
             "SELECT COALESCE(investigation_status, 'not_started') as status, COUNT(*) as c FROM triage_results WHERE action IN ('QUEUE','NOTIFY') GROUP BY investigation_status"
           ).all();
-          const rulesEnabled = (db.query("SELECT COUNT(*) as c FROM triage_rules WHERE enabled = 1").get() as any)?.c || 0;
-          result = { action: "stats", total, by_action: byAction, by_layer: byLayer, investigation_status: byStatus, rules_enabled: rulesEnabled };
+          result = { action: "stats", total, by_action: byAction, by_layer: byLayer, investigation_status: byStatus };
           break;
         }
         case "actionable": {

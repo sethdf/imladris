@@ -24,6 +24,15 @@ schema:
       description: ''
       default: null
       originalType: string
+    monitor_type:
+      type: string
+      description: ''
+      default: SERVER
+      enum:
+        - SERVER
+        - URL
+        - ALL
+      originalType: enum
     status_filter:
       type: string
       description: ''

@@ -1,0 +1,95 @@
+# OTel Collector config for RDS monitoring via CloudWatch
+# Add to the standalone signoz-otel-collector or deploy separately
+# Requires IAM permissions: cloudwatch:GetMetricData, cloudwatch:ListMetrics
+#
+# RDS instances in prod account (945243322929):
+#   - adeptia-mysql03 (MySQL, db.m5.large)
+#   - alert-prod-instance-1 (Aurora PostgreSQL Serverless)
+#   - clouddp01-instance-1 (Aurora PostgreSQL Serverless)
+#   - database-1-instance-1 (Aurora MySQL, db.t3.medium, STOPPED)
+
+receivers:
+  awscloudwatch:
+    region: us-east-1
+    poll_interval: 60s
+    metrics:
+      named:
+        # RDS instance metrics
+        - namespace: AWS/RDS
+          period: 5m
+          statistics: [Average, Maximum]
+          dimensions:
+            - name: DBInstanceIdentifier
+              value: adeptia-mysql03
+          metrics:
+            - name: CPUUtilization
+            - name: DatabaseConnections
+            - name: FreeableMemory
+            - name: FreeStorageSpace
+            - name: ReadIOPS
+            - name: WriteIOPS
+            - name: ReadLatency
+            - name: WriteLatency
+            - name: ReadThroughput
+            - name: WriteThroughput
+            - name: DiskQueueDepth
+            - name: SwapUsage
+            - name: NetworkReceiveThroughput
+            - name: NetworkTransmitThroughput
+
+        - namespace: AWS/RDS
+          period: 5m
+          statistics: [Average, Maximum]
+          dimensions:
+            - name: DBInstanceIdentifier
+              value: alert-prod-instance-1
+          metrics:
+            - name: CPUUtilization
+            - name: DatabaseConnections
+            - name: FreeableMemory
+            - name: ServerlessDatabaseCapacity
+            - name: ACUUtilization
+            - name: ReadLatency
+            - name: WriteLatency
+            - name: NetworkReceiveThroughput
+            - name: NetworkTransmitThroughput
+
+        - namespace: AWS/RDS
+          period: 5m
+          statistics: [Average, Maximum]
+          dimensions:
+            - name: DBInstanceIdentifier
+              value: clouddp01-instance-1
+          metrics:
+            - name: CPUUtilization
+            - name: DatabaseConnections
+            - name: FreeableMemory
+            - name: ServerlessDatabaseCapacity
+            - name: ACUUtilization
+            - name: ReadLatency
+            - name: WriteLatency
+            - name: NetworkReceiveThroughput
+            - name: NetworkTransmitThroughput
+
+processors:
+  batch:
+    send_batch_size: 100
+    timeout: 10s
+  resource:
+    attributes:
+      - key: signoz.collector.type
+        value: rds-monitor
+        action: upsert
+
+exporters:
+  otlp:
+    endpoint: ingest.us.signoz.cloud:443
+    headers:
+      signoz-ingestion-key: "${SIGNOZ_INGESTION_KEY}"
+
+service:
+  pipelines:
+    metrics:
+      receivers: [awscloudwatch]
+      processors: [resource, batch]
+      exporters: [otlp]
