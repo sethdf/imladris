@@ -20,6 +20,8 @@ interface PlaybookResult {
   success: boolean;
   output: string;
   error?: string;
+  pre_state?: string;
+  rollback_instructions?: string;
 }
 
 function ensureDirs(): void {
@@ -99,6 +101,8 @@ function isolateInstance(resource: string, dryRun: boolean, _params: Record<stri
     approval_id: "",
     success: modifyResult.success,
     output,
+    pre_state: JSON.stringify({ original_security_groups: currentSgs, vpc_id: vpcId }),
+    rollback_instructions: `aws ec2 modify-instance-attribute --instance-id ${resource} --groups ${currentSgs.join(" ")}`,
     ...(modifyResult.error ? { error: modifyResult.error } : {}),
   };
 }
@@ -117,6 +121,8 @@ function revokeSgRule(resource: string, dryRun: boolean, params: Record<string, 
     approval_id: "",
     success: result.success,
     output: result.output || `Revoked ${protocol}/${port} from ${cidr} on ${resource}`,
+    pre_state: JSON.stringify({ protocol, port, cidr }),
+    rollback_instructions: `aws ec2 authorize-security-group-ingress --group-id ${resource} --protocol ${protocol} --port ${port} --cidr ${cidr}`,
     ...(result.error ? { error: result.error } : {}),
   };
 }
@@ -131,6 +137,9 @@ function snapshotVolume(resource: string, dryRun: boolean, _params: Record<strin
     approval_id: "",
     success: result.success,
     output: result.output || `Snapshot created for ${resource}`,
+    rollback_instructions: result.success && !dryRun
+      ? `aws ec2 delete-snapshot --snapshot-id ${result.output}  # Additive action — delete snapshot if unneeded`
+      : "No rollback needed — snapshot is additive",
     ...(result.error ? { error: result.error } : {}),
   };
 }
@@ -150,6 +159,8 @@ function disableAccessKey(resource: string, dryRun: boolean, params: Record<stri
     approval_id: "",
     success: result.success,
     output: result.output || `Disabled access key ${resource} for user ${username}`,
+    pre_state: JSON.stringify({ username, key_id: resource, previous_status: "Active" }),
+    rollback_instructions: `aws iam update-access-key --access-key-id ${resource} --status Active --user-name ${username}`,
     ...(result.error ? { error: result.error } : {}),
   };
 }

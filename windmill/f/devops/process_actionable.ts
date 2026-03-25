@@ -970,12 +970,197 @@ export async function main(
 
   console.log(`[process_actionable] Phase 3 complete: escalated=${phase3Escalated}`);
 
+  // ════════════════════════════════════════════════════
+  // PHASE 4: REMEDIATION PROPOSALS (send Slack approvals)
+  // ════════════════════════════════════════════════════
+  console.log(`\n[process_actionable] ═══ PHASE 4: REMEDIATION PROPOSALS ═══`);
+  let phase4Proposals = 0;
+
+  // Check all recently completed investigations for remediation proposals
+  // that don't already have a pending remediation
+  try {
+    const remediable = cacheLib.getRemediableItems(20);
+    console.log(`[process_actionable] Items with remediation proposals: ${remediable.length}`);
+
+    if (remediable.length > 0) {
+
+      for (const item of remediable) {
+        try {
+          const invResult = JSON.parse(item.investigation_result);
+          const proposal = invResult?.diagnosis?.remediation_proposal;
+          if (!proposal?.playbook || !proposal?.target_resource) continue;
+
+          // Build SDP link
+          let sdpLink = "";
+          if (item.task_id && item.task_id !== "sdp-native") {
+            const sdpBase = baseUrl.replace("/api/v3", "").replace(/\/+$/, "");
+            sdpLink = `${sdpBase}/ui/tasks/${item.task_id}/details`;
+          } else if (item.source === "sdp") {
+            try {
+              const meta = JSON.parse(item.metadata || "{}");
+              if (meta.sdp_id && meta.sdp_type) {
+                const sdpBase = baseUrl.replace("/api/v3", "").replace(/\/+$/, "");
+                sdpLink = `${sdpBase}/ui/${meta.sdp_type}s/${meta.sdp_id}/details`;
+              }
+            } catch { /* no metadata */ }
+          }
+
+          // Create pending remediation
+          const remId = cacheLib.createPendingRemediation({
+            dedup_hash: item.dedup_hash,
+            task_id: item.task_id || null,
+            sdp_link: sdpLink,
+            playbook: proposal.playbook,
+            target_resource: proposal.target_resource,
+            playbook_params: proposal.playbook_params || {},
+            blast_radius: proposal.blast_radius,
+            rollback_plan: proposal.rollback_plan,
+            remediation_confidence: proposal.remediation_confidence || "medium",
+            why_this_playbook: proposal.why_this_playbook || "",
+            diagnosis_summary: invResult.diagnosis?.summary || item.subject,
+            severity: invResult.diagnosis?.severity || item.urgency,
+          });
+
+          if (!remId) {
+            console.error(`[process_actionable] [P4] Failed to create pending remediation for ${item.dedup_hash.slice(0, 12)}`);
+            continue;
+          }
+
+          // Send Slack approval message (Block Kit — distinct from regular messages)
+          const slackToken = await getVariable("f/devops/slack_user_token");
+          const slackChannel = await getVariable("f/devops/slack_approval_channel");
+          const approvalChannel = slackChannel || "general"; // fallback
+
+          if (slackToken) {
+            const severity = (invResult.diagnosis?.severity || "unknown").toUpperCase();
+            const confidenceEmoji = proposal.remediation_confidence === "high" ? ":large_green_circle:" :
+                                    proposal.remediation_confidence === "medium" ? ":large_yellow_circle:" : ":red_circle:";
+
+            const blocks: any[] = [
+              {
+                type: "header",
+                text: { type: "plain_text", text: `:rotating_light: Remediation Approval Required` },
+              },
+              { type: "divider" },
+              {
+                type: "section",
+                text: {
+                  type: "mrkdwn",
+                  text: [
+                    `*Severity:* ${severity} | *Confidence:* ${confidenceEmoji} ${proposal.remediation_confidence}`,
+                    `*Diagnosis:* ${(invResult.diagnosis?.summary || item.subject).slice(0, 200)}`,
+                  ].join("\n"),
+                },
+              },
+              {
+                type: "section",
+                fields: [
+                  { type: "mrkdwn", text: `*Playbook:*\n\`${proposal.playbook}\`` },
+                  { type: "mrkdwn", text: `*Target:*\n\`${proposal.target_resource}\`` },
+                ],
+              },
+              {
+                type: "section",
+                text: {
+                  type: "mrkdwn",
+                  text: `*Blast Radius:*\n${proposal.blast_radius}`,
+                },
+              },
+              {
+                type: "section",
+                text: {
+                  type: "mrkdwn",
+                  text: `*Rollback Plan:*\n${proposal.rollback_plan}`,
+                },
+              },
+              {
+                type: "section",
+                text: {
+                  type: "mrkdwn",
+                  text: `*Why This Playbook:*\n${proposal.why_this_playbook || "See investigation details"}`,
+                },
+              },
+              { type: "divider" },
+              {
+                type: "section",
+                text: {
+                  type: "mrkdwn",
+                  text: [
+                    `*Remediation ID:* \`${remId}\``,
+                    sdpLink ? `*SDP Task:* <${sdpLink}|View in SDP>` : "",
+                    `\nTo approve: run \`approve_remediation\` with \`remediation_id: ${remId}\``,
+                    `To reject: run \`approve_remediation\` with \`remediation_id: ${remId}, action: reject\``,
+                  ].filter(Boolean).join("\n"),
+                },
+              },
+              {
+                type: "context",
+                elements: [
+                  { type: "mrkdwn", text: `:lock: This is an automated remediation proposal. *No action will be taken without your approval.*` },
+                ],
+              },
+            ];
+
+            const fallbackText = `[REMEDIATION APPROVAL] ${severity} — ${proposal.playbook} on ${proposal.target_resource} — ID: ${remId}`;
+
+            try {
+              const resp = await fetch("https://slack.com/api/chat.postMessage", {
+                method: "POST",
+                headers: {
+                  Authorization: `Bearer ${slackToken}`,
+                  "Content-Type": "application/json; charset=utf-8",
+                },
+                body: JSON.stringify({ channel: approvalChannel, text: fallbackText, blocks }),
+              });
+              const data = await resp.json();
+              if (data.ok) {
+                cacheLib.updateRemediationStatus(remId, "pending", {
+                  slack_ts: data.ts, slack_channel: data.channel,
+                });
+                console.log(`[process_actionable] [P4] Slack approval sent: ${remId} → ${approvalChannel}`);
+              } else {
+                console.error(`[process_actionable] [P4] Slack error: ${data.error}`);
+              }
+            } catch (err: any) {
+              console.error(`[process_actionable] [P4] Slack send failed: ${err.message?.slice(0, 200)}`);
+            }
+          }
+
+          // Voice notification
+          try {
+            await fetch("http://localhost:8888/notify", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                message: `Remediation approval required. ${proposal.playbook} on ${proposal.target_resource}. Check Slack.`,
+              }),
+            });
+          } catch { /* non-fatal */ }
+
+          phase4Proposals++;
+          results.push({
+            phase: "remediation_proposal", subject: item.subject.slice(0, 100),
+            dedup_hash_short: item.dedup_hash.slice(0, 12), task_id: remId,
+          });
+        } catch (err: any) {
+          console.error(`[process_actionable] [P4] Error processing remediation for ${item.dedup_hash.slice(0, 12)}: ${err.message?.slice(0, 200)}`);
+          errorCount++;
+        }
+      }
+    }
+  } catch (err: any) {
+    console.error(`[process_actionable] [P4] Phase 4 error: ${err.message?.slice(0, 200)}`);
+  }
+
+  console.log(`[process_actionable] Phase 4 complete: proposals=${phase4Proposals}`);
+
   // ═══ SUMMARY ═══
   const duration = Date.now() - startTime;
   console.log(`\n[process_actionable] Complete in ${(duration / 1000).toFixed(1)}s`);
   console.log(`[process_actionable] P1: investigated=${phase1Investigated} (substantial=${phase1Substantial}, dismissed=${phase1Dismissed}, waiting=${phase1WaitingContext}, empty=${phase1Empty}, errors=${phase1Errors})`);
   console.log(`[process_actionable] P2: tasks=${phase2TasksCreated}, notes=${phase2NotesAdded}`);
   console.log(`[process_actionable] P3: escalated=${phase3Escalated}`);
+  console.log(`[process_actionable] P4: remediation_proposals=${phase4Proposals}`);
 
   return {
     phase1_investigated: phase1Investigated,
@@ -988,6 +1173,7 @@ export async function main(
     phase2_tasks_created: phase2TasksCreated,
     phase2_notes_added: phase2NotesAdded,
     phase3_escalated: phase3Escalated,
+    phase4_remediation_proposals: phase4Proposals,
     errors: errorCount,
     duration_s: Math.round(duration / 1000),
     results,

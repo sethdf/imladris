@@ -121,8 +121,23 @@ You execute the PAI Algorithm's cognitive phases within your available rounds. E
 - Adversarial self-challenge: "What would disprove this diagnosis? What haven't I checked?"
 - If verification reveals gaps, use remaining rounds to fill them.
 
+━━━ REMEDIATION PROPOSAL (Round 7) ━━━
+- Before submitting, assess whether automated remediation is appropriate.
+- Available playbooks (the ONLY actions the system can take):
+  * isolate_instance: Replace an EC2 instance's security groups with a quarantine SG (SSM-only). Use for: compromised instances, unauthorized access. Params: none (auto-detects VPC). Rollback: re-apply original SGs.
+  * revoke_sg_rule: Remove a specific ingress rule from a security group. Use for: overly permissive rules (0.0.0.0/0 on SSH, etc.). Params: {protocol, port, cidr}. Rollback: re-add the rule.
+  * snapshot_volume: Create an EBS snapshot before any destructive action. Use for: pre-remediation backup. Params: none. Rollback: restore from snapshot.
+  * disable_access_key: Deactivate a compromised IAM access key. Use for: leaked or unauthorized keys. Params: {username}. Rollback: re-enable the key.
+- If a playbook matches, include remediation_proposal in submit_diagnosis with:
+  * The exact resource ID to act on (from your investigation evidence)
+  * Blast radius: what services, users, or systems depend on this resource?
+  * Rollback plan: exact steps to reverse the action
+  * Remediation confidence: how sure are you this fixes the root cause?
+- If NO playbook applies, omit remediation_proposal entirely. The recommended_actions field covers manual steps.
+- NEVER propose remediation for informational/low-severity findings.
+
 ━━━ SUBMIT (Round 7-8) ━━━
-- Call submit_diagnosis with structured evidence chains and differentials.
+- Call submit_diagnosis with structured evidence chains, differentials, and remediation_proposal (if applicable).
 - Confidence must reflect verification completeness, not gut feel.
 - Include self-reflection: what would you investigate differently next time?
 
@@ -624,6 +639,20 @@ const TOOLS: ToolConfiguration = {
                   required: ["criterion", "status", "evidence"],
                 },
                 description: "Status of each investigation criterion you identified",
+              },
+              remediation_proposal: {
+                type: "object",
+                description: "Optional: structured remediation proposal if an available playbook matches. Omit if no playbook applies or issue is informational.",
+                properties: {
+                  playbook: { type: "string", enum: ["isolate_instance", "revoke_sg_rule", "snapshot_volume", "disable_access_key"], description: "Which playbook to execute" },
+                  target_resource: { type: "string", description: "The specific resource ID to act on (instance ID, SG ID, volume ID, access key ID)" },
+                  playbook_params: { type: "object", description: "Additional params for the playbook (e.g., {port, protocol, cidr} for revoke_sg_rule, {username} for disable_access_key)" },
+                  blast_radius: { type: "string", description: "What else could be affected by this action — be specific about dependent services, users, or systems" },
+                  rollback_plan: { type: "string", description: "Exact steps to reverse this action if it causes problems. Must be specific and actionable." },
+                  remediation_confidence: { type: "string", enum: ["high", "medium", "low"], description: "How confident that this playbook will fix the diagnosed issue" },
+                  why_this_playbook: { type: "string", description: "Evidence-based reasoning for choosing this specific playbook over alternatives" },
+                },
+                required: ["playbook", "target_resource", "blast_radius", "rollback_plan", "remediation_confidence", "why_this_playbook"],
               },
             },
             required: ["severity", "summary", "root_cause", "evidence", "evidence_chain", "differentials", "affected_systems", "recommended_actions", "confidence", "criteria_status"],

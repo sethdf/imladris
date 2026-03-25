@@ -180,6 +180,35 @@ export function init(): boolean {
       CREATE INDEX IF NOT EXISTS idx_feedback_rated ON investigation_feedback(rated_at);
     `);
 
+    // ── Pending remediations table (approval workflow) ──
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS pending_remediations (
+        id TEXT PRIMARY KEY,
+        dedup_hash TEXT NOT NULL,
+        task_id TEXT DEFAULT NULL,
+        sdp_link TEXT DEFAULT NULL,
+        playbook TEXT NOT NULL,
+        target_resource TEXT NOT NULL,
+        playbook_params TEXT DEFAULT '{}',
+        blast_radius TEXT NOT NULL,
+        rollback_plan TEXT NOT NULL,
+        remediation_confidence TEXT NOT NULL,
+        why_this_playbook TEXT DEFAULT '',
+        diagnosis_summary TEXT DEFAULT '',
+        severity TEXT DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'pending',
+        slack_ts TEXT DEFAULT NULL,
+        slack_channel TEXT DEFAULT NULL,
+        pre_state TEXT DEFAULT NULL,
+        execution_result TEXT DEFAULT NULL,
+        verification_result TEXT DEFAULT NULL,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        resolved_at INTEGER DEFAULT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_remediation_status ON pending_remediations(status);
+      CREATE INDEX IF NOT EXISTS idx_remediation_dedup ON pending_remediations(dedup_hash);
+    `);
+
     // ── Resource inventory table (auto-discovery) ──
     db.exec(`
       CREATE TABLE IF NOT EXISTS resource_inventory (
@@ -1361,4 +1390,123 @@ export function getFeedbackStats(daysBack: number = 30): {
     db.close();
     return { total_ratings: 0, average_rating: 0, by_domain: {}, by_misdiagnosis_type: {}, worst_alert_types: [], recent_low_ratings: [] };
   }
+}
+
+// ── Pending Remediations ──
+
+export interface RemediationInput {
+  dedup_hash: string;
+  task_id?: string;
+  sdp_link?: string;
+  playbook: string;
+  target_resource: string;
+  playbook_params?: Record<string, string>;
+  blast_radius: string;
+  rollback_plan: string;
+  remediation_confidence: string;
+  why_this_playbook?: string;
+  diagnosis_summary?: string;
+  severity?: string;
+}
+
+export function createPendingRemediation(input: RemediationInput): string | null {
+  const db = getDb();
+  if (!db) return null;
+  try {
+    init();
+    const id = `rem-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    db.prepare(`
+      INSERT INTO pending_remediations (id, dedup_hash, task_id, sdp_link, playbook, target_resource, playbook_params, blast_radius, rollback_plan, remediation_confidence, why_this_playbook, diagnosis_summary, severity, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+    `).run(
+      id, input.dedup_hash, input.task_id || null, input.sdp_link || null,
+      input.playbook, input.target_resource,
+      JSON.stringify(input.playbook_params || {}),
+      input.blast_radius, input.rollback_plan, input.remediation_confidence,
+      input.why_this_playbook || "", input.diagnosis_summary || "",
+      input.severity || "",
+    );
+    db.close();
+    return id;
+  } catch { db.close(); return null; }
+}
+
+export function getPendingRemediation(id: string): any {
+  const db = getDb();
+  if (!db) return null;
+  try {
+    init();
+    const row = db.prepare("SELECT * FROM pending_remediations WHERE id = ?").get(id);
+    db.close();
+    return row;
+  } catch { db.close(); return null; }
+}
+
+export function getPendingRemediations(): any[] {
+  const db = getDb();
+  if (!db) return [];
+  try {
+    init();
+    const rows = db.prepare("SELECT * FROM pending_remediations WHERE status = 'pending' ORDER BY created_at DESC").all() as any[];
+    db.close();
+    return rows;
+  } catch { db.close(); return []; }
+}
+
+export function updateRemediationStatus(
+  id: string,
+  status: string,
+  extraFields?: { slack_ts?: string; slack_channel?: string; pre_state?: string; execution_result?: string; verification_result?: string },
+): boolean {
+  const db = getDb();
+  if (!db) return false;
+  try {
+    init();
+    const sets = ["status = ?"];
+    const params: any[] = [status];
+    if (status === "approved" || status === "executed" || status === "verified" || status === "failed" || status === "rejected") {
+      sets.push("resolved_at = unixepoch()");
+    }
+    if (extraFields?.slack_ts) { sets.push("slack_ts = ?"); params.push(extraFields.slack_ts); }
+    if (extraFields?.slack_channel) { sets.push("slack_channel = ?"); params.push(extraFields.slack_channel); }
+    if (extraFields?.pre_state) { sets.push("pre_state = ?"); params.push(extraFields.pre_state); }
+    if (extraFields?.execution_result) { sets.push("execution_result = ?"); params.push(extraFields.execution_result); }
+    if (extraFields?.verification_result) { sets.push("verification_result = ?"); params.push(extraFields.verification_result); }
+    params.push(id);
+    db.prepare(`UPDATE pending_remediations SET ${sets.join(", ")} WHERE id = ?`).run(...params);
+    db.close();
+    return true;
+  } catch { db.close(); return false; }
+}
+
+export function getRemediationsForDedup(dedupHash: string): any[] {
+  const db = getDb();
+  if (!db) return [];
+  try {
+    init();
+    const rows = db.prepare("SELECT * FROM pending_remediations WHERE dedup_hash = ? ORDER BY created_at DESC").all(dedupHash) as any[];
+    db.close();
+    return rows;
+  } catch { db.close(); return []; }
+}
+
+/** Get triage items with remediation proposals not yet in pending_remediations */
+export function getRemediableItems(limit: number = 20): any[] {
+  const db = getDb();
+  if (!db) return [];
+  try {
+    init();
+    const rows = db.prepare(`
+      SELECT tr.dedup_hash, tr.subject, tr.task_id, tr.source, tr.investigation_result, tr.urgency, tr.metadata
+      FROM triage_results tr
+      WHERE tr.investigation_result IS NOT NULL
+        AND tr.investigation_result LIKE '%remediation_proposal%'
+        AND tr.investigation_result LIKE '%playbook%'
+        AND tr.dedup_hash NOT IN (SELECT dedup_hash FROM pending_remediations)
+      ORDER BY tr.created_at DESC
+      LIMIT ?
+    `).all(limit) as any[];
+    db.close();
+    return rows;
+  } catch { db.close(); return []; }
 }
