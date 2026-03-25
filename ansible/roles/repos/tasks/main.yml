@@ -37,6 +37,13 @@
 # IMLADRIS_WORKTREE_DIR is used by Code Factory (D36) and custom scripts.
 # Claude Code's built-in --worktree uses its own paths internally.
 
+- name: PAI upstream sync cron (auto-update Algorithm for investigator)
+  ansible.builtin.cron:
+    name: "PAI upstream sync"
+    minute: "*/30"
+    job: "cd {{ repos_dir }}/PAI && git pull --ff-only >> {{ claude_dir }}/logs/pai-sync.log 2>&1"
+    user: "{{ imladris_user }}"
+
 - name: Add IMLADRIS_WORKTREE_DIR to bashrc for NVMe worktrees
   ansible.builtin.blockinfile:
     path: "{{ imladris_home }}/.bashrc"

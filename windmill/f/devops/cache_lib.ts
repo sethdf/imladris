@@ -162,6 +162,24 @@ export function init(): boolean {
       db.exec("CREATE INDEX IF NOT EXISTS idx_investigation_jobs_dedup ON investigation_jobs(dedup_hash)");
     } catch { /* index may already exist */ }
 
+    // ── Investigation feedback table (Phase 3: accuracy steering) ──
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS investigation_feedback (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        dedup_hash TEXT NOT NULL,
+        investigation_id TEXT DEFAULT NULL,
+        rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+        misdiagnosis_type TEXT DEFAULT NULL,
+        alert_domain TEXT DEFAULT '',
+        alert_type TEXT DEFAULT '',
+        notes TEXT DEFAULT '',
+        rated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+      CREATE INDEX IF NOT EXISTS idx_feedback_dedup ON investigation_feedback(dedup_hash);
+      CREATE INDEX IF NOT EXISTS idx_feedback_domain ON investigation_feedback(alert_domain);
+      CREATE INDEX IF NOT EXISTS idx_feedback_rated ON investigation_feedback(rated_at);
+    `);
+
     // ── Resource inventory table (auto-discovery) ──
     db.exec(`
       CREATE TABLE IF NOT EXISTS resource_inventory (
@@ -1236,5 +1254,111 @@ export function hasActiveInvestigationJob(dedupHash: string): boolean {
   } catch {
     db.close();
     return false;
+  }
+}
+
+// ── Investigation Feedback (Phase 3: Accuracy Steering) ──
+
+export interface FeedbackInput {
+  dedup_hash: string;
+  investigation_id?: string;
+  rating: number; // 1-5
+  misdiagnosis_type?: string; // "wrong_root_cause", "missed_scope", "false_positive", "incomplete_actions", "correct"
+  alert_domain?: string;
+  alert_type?: string;
+  notes?: string;
+}
+
+/** Store a feedback rating for an investigation */
+export function storeFeedback(input: FeedbackInput): number | null {
+  const db = getDb();
+  if (!db) return null;
+  try {
+    init();
+    const stmt = db.prepare(
+      `INSERT INTO investigation_feedback
+       (dedup_hash, investigation_id, rating, misdiagnosis_type, alert_domain, alert_type, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    );
+    const info = stmt.run(
+      input.dedup_hash,
+      input.investigation_id ?? null,
+      input.rating,
+      input.misdiagnosis_type ?? null,
+      input.alert_domain ?? "",
+      input.alert_type ?? "",
+      input.notes ?? "",
+    );
+    db.close();
+    return (info as any).lastInsertRowid ?? null;
+  } catch {
+    db.close();
+    return null;
+  }
+}
+
+/** Get feedback statistics — accuracy by domain, worst performers, overall */
+export function getFeedbackStats(daysBack: number = 30): {
+  total_ratings: number;
+  average_rating: number;
+  by_domain: Record<string, { count: number; avg_rating: number; misdiagnosis_types: Record<string, number> }>;
+  by_misdiagnosis_type: Record<string, number>;
+  worst_alert_types: Array<{ alert_type: string; avg_rating: number; count: number }>;
+  recent_low_ratings: Array<{ dedup_hash: string; rating: number; misdiagnosis_type: string; alert_domain: string; notes: string; rated_at: number }>;
+} {
+  const db = getDb();
+  if (!db) return { total_ratings: 0, average_rating: 0, by_domain: {}, by_misdiagnosis_type: {}, worst_alert_types: [], recent_low_ratings: [] };
+  try {
+    init();
+    const cutoff = Math.floor(Date.now() / 1000) - (daysBack * 86400);
+
+    // Overall stats
+    const overall = db.prepare(
+      "SELECT COUNT(*) as count, AVG(rating) as avg FROM investigation_feedback WHERE rated_at >= ?"
+    ).get(cutoff) as any;
+
+    // By domain
+    const byDomain: Record<string, { count: number; avg_rating: number; misdiagnosis_types: Record<string, number> }> = {};
+    const domainRows = db.prepare(
+      "SELECT alert_domain, COUNT(*) as count, AVG(rating) as avg FROM investigation_feedback WHERE rated_at >= ? AND alert_domain != '' GROUP BY alert_domain"
+    ).all(cutoff) as any[];
+    for (const r of domainRows) {
+      const misTypes: Record<string, number> = {};
+      const mtRows = db.prepare(
+        "SELECT misdiagnosis_type, COUNT(*) as c FROM investigation_feedback WHERE alert_domain = ? AND misdiagnosis_type IS NOT NULL AND rated_at >= ? GROUP BY misdiagnosis_type"
+      ).all(r.alert_domain, cutoff) as any[];
+      for (const mt of mtRows) misTypes[mt.misdiagnosis_type] = mt.c;
+      byDomain[r.alert_domain] = { count: r.count, avg_rating: Math.round(r.avg * 100) / 100, misdiagnosis_types: misTypes };
+    }
+
+    // By misdiagnosis type
+    const byMisType: Record<string, number> = {};
+    const misTypeRows = db.prepare(
+      "SELECT misdiagnosis_type, COUNT(*) as c FROM investigation_feedback WHERE misdiagnosis_type IS NOT NULL AND rated_at >= ? GROUP BY misdiagnosis_type"
+    ).all(cutoff) as any[];
+    for (const r of misTypeRows) byMisType[r.misdiagnosis_type] = r.c;
+
+    // Worst alert types
+    const worstTypes = db.prepare(
+      "SELECT alert_type, AVG(rating) as avg_rating, COUNT(*) as count FROM investigation_feedback WHERE alert_type != '' AND rated_at >= ? GROUP BY alert_type HAVING count >= 2 ORDER BY avg_rating ASC LIMIT 10"
+    ).all(cutoff) as any[];
+
+    // Recent low ratings (for manual review)
+    const lowRatings = db.prepare(
+      "SELECT dedup_hash, rating, misdiagnosis_type, alert_domain, notes, rated_at FROM investigation_feedback WHERE rating <= 2 AND rated_at >= ? ORDER BY rated_at DESC LIMIT 20"
+    ).all(cutoff) as any[];
+
+    db.close();
+    return {
+      total_ratings: overall?.count || 0,
+      average_rating: Math.round((overall?.avg || 0) * 100) / 100,
+      by_domain: byDomain,
+      by_misdiagnosis_type: byMisType,
+      worst_alert_types: worstTypes,
+      recent_low_ratings: lowRatings,
+    };
+  } catch {
+    db.close();
+    return { total_ratings: 0, average_rating: 0, by_domain: {}, by_misdiagnosis_type: {}, worst_alert_types: [], recent_low_ratings: [] };
   }
 }

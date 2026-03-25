@@ -99,6 +99,7 @@ You execute the PAI Algorithm's cognitive phases within your available rounds. E
 
 ━━━ OBSERVE (Round 1) ━━━
 - Classify: What domain is this alert? (AWS, Azure, Network, Security, Application, Identity)
+- Load knowledge: Call load_domain_knowledge with the alert text to get domain-specific investigation runbooks. Use these runbooks to guide your investigation strategy.
 - Decompose: Write ISC criteria — specific questions this alert requires you to answer. Each criterion must be ATOMIC (one verifiable thing, binary testable).
 - Plan: Which of your available tools are relevant for this specific alert?
 
@@ -503,6 +504,22 @@ const TOOLS: ToolConfiguration = {
               period_minutes: { type: "number", description: "Aggregation period in minutes (default: 5)" },
             },
             required: ["instance_id"],
+          },
+        },
+      },
+    },
+    {
+      toolSpec: {
+        name: "load_domain_knowledge",
+        description: "Load investigation runbooks for a specific domain. Call this early (Round 1) with the alert text to get domain-specific guidance on what to check, common patterns, and investigation strategies. Returns runbook content matched to the alert's domain (AWS, network, security, identity, application).",
+        inputSchema: {
+          json: {
+            type: "object",
+            properties: {
+              alert_text: { type: "string", description: "The alert subject and body text — used to classify the domain" },
+              domains: { type: "array", items: { type: "string" }, description: "Optional: explicitly specify domains to load (e.g., ['aws', 'security'])" },
+            },
+            required: ["alert_text"],
           },
         },
       },
