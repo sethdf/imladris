@@ -150,6 +150,9 @@ windmill_schedules:
   - path: f/devops/investigation_accuracy_digest_schedule
     schedule: "0 0 8 * * 1"
     script_path: f/devops/investigation_accuracy_digest
+  - path: f/devops/batch_triage_telegram_schedule
+    schedule: "0 */30 * * * *"
+    script_path: f/devops/batch_triage_telegram
 
 # --- Steampipe ---
 steampipe_install_url: "https://steampipe.io/install/steampipe.sh"
