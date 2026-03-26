@@ -1,14 +1,15 @@
 // Windmill Script: Approve and Execute Remediation
 // Seth runs this to approve a pending remediation. Pipeline:
 //   1. Validate remediation exists and is pending
-//   2. Capture pre-state (rollback snapshot)
-//   3. Execute playbook via response_playbook
-//   4. Verify via verify_remediation (before/after probes)
-//   5. Update SDP task with results
-//   6. Post Slack confirmation
+//   2. For automated: validate commands (aws/az only), execute, verify
+//   3. For manual: acknowledge (no execution)
+//   4. Record outcome for feedback loop
+//   5. Post Slack confirmation
 //
 // CRITICAL: This is the ONLY path to execute write actions.
-// Every execution records pre-state for rollback.
+// Safety boundary: only aws/az CLI commands allowed for automated execution.
+
+import { execSync } from "child_process";
 
 // ── Windmill helpers ──
 
@@ -69,16 +70,37 @@ async function postSlack(channel: string, text: string, blocks?: any[]): Promise
   } catch { return { ok: false }; }
 }
 
+// ── Safety: only aws/az CLI commands allowed ──
+
+const ALLOWED_PREFIXES = ["aws ", "az "];
+
+function isCommandSafe(cmd: string): boolean {
+  const trimmed = cmd.trim();
+  return ALLOWED_PREFIXES.some(prefix => trimmed.startsWith(prefix));
+}
+
+function executeCommand(cmd: string): { success: boolean; output: string; error?: string } {
+  try {
+    const output = execSync(cmd, { encoding: "utf-8", timeout: 60000 }).trim();
+    return { success: true, output };
+  } catch (e: unknown) {
+    const err = e as Error & { stderr?: string };
+    return { success: false, output: "", error: err.stderr || err.message || String(e) };
+  }
+}
+
 // ── Main ──
 
 export async function main(
   remediation_id: string,
   action: string = "approve",
+  rating: number = 0,
+  rating_notes: string = "",
 ): Promise<{
   success: boolean;
   remediation_id: string;
   action: string;
-  playbook_result?: any;
+  execution_results?: any[];
   verification_result?: any;
   rollback_info?: string;
   error?: string;
@@ -96,6 +118,15 @@ export async function main(
     return { success: false, remediation_id, action, error: `Cache unavailable: ${err.message}` };
   }
 
+  // Handle rating action (post-execution feedback)
+  if (action === "rate") {
+    if (rating < 1 || rating > 5) {
+      return { success: false, remediation_id, action, error: "Rating must be 1-5" };
+    }
+    const rated = cacheLib.rateRemediation(remediation_id, rating, rating_notes);
+    return { success: rated, remediation_id, action: "rated", error: rated ? undefined : "Failed to record rating" };
+  }
+
   // Get the pending remediation
   const rem = cacheLib.getPendingRemediation(remediation_id);
   if (!rem) {
@@ -105,18 +136,29 @@ export async function main(
     return { success: false, remediation_id, action, error: `Remediation is ${rem.status}, not pending` };
   }
 
+  const remDescription = rem.description || rem.playbook || "unknown action";
+  const actionType = rem.action_type || "automated";
+
   // Handle rejection
   if (action === "reject") {
     cacheLib.updateRemediationStatus(remediation_id, "rejected");
     console.log(`[approve_remediation] Rejected: ${remediation_id}`);
 
-    // Notify Slack
+    // Record outcome (rejected = not executed)
+    cacheLib.recordRemediationOutcome({
+      remediation_id, dedup_hash: rem.dedup_hash,
+      action_type: actionType, description: remDescription,
+      target_resource: rem.target_resource, commands_executed: [],
+      execution_success: false, execution_output: "Rejected by operator",
+      alert_domain: "", alert_type: "",
+    });
+
     if (rem.slack_channel) {
       await postSlack(rem.slack_channel,
         `Remediation ${remediation_id} REJECTED. No action taken.`,
         [{
           type: "section",
-          text: { type: "mrkdwn", text: `*Remediation Rejected*\n\`${rem.playbook}\` on \`${rem.target_resource}\` — no action taken.` },
+          text: { type: "mrkdwn", text: `*Remediation Rejected*\n${remDescription} on \`${rem.target_resource}\` — no action taken.` },
         }],
       );
     }
@@ -125,54 +167,144 @@ export async function main(
   }
 
   // ── APPROVE + EXECUTE ──
-  console.log(`[approve_remediation] Approving: ${remediation_id} — ${rem.playbook} on ${rem.target_resource}`);
+  console.log(`[approve_remediation] Approving: ${remediation_id} — ${remDescription} on ${rem.target_resource}`);
   cacheLib.updateRemediationStatus(remediation_id, "approved");
 
-  // Step 1: Execute playbook
-  console.log(`[approve_remediation] Executing playbook: ${rem.playbook}`);
-  const playbookResult = await runWindmillScript("f/devops/response_playbook", {
-    playbook: rem.playbook,
-    resource: rem.target_resource,
-    approval_id: remediation_id,
-    dry_run: false,
-    params: rem.playbook_params || "{}",
-  });
-
-  if (!playbookResult.success || !playbookResult.result?.success) {
-    const errMsg = playbookResult.error || playbookResult.result?.error || "Playbook execution failed";
-    cacheLib.updateRemediationStatus(remediation_id, "failed", {
-      execution_result: JSON.stringify(playbookResult.result || { error: errMsg }),
+  // ── Handle MANUAL action type ──
+  if (actionType === "manual") {
+    console.log(`[approve_remediation] Manual remediation acknowledged: ${remediation_id}`);
+    cacheLib.updateRemediationStatus(remediation_id, "executed", {
+      execution_result: JSON.stringify({ type: "manual", acknowledged: true }),
     });
 
-    // Notify failure
+    cacheLib.recordRemediationOutcome({
+      remediation_id, dedup_hash: rem.dedup_hash,
+      action_type: "manual", description: remDescription,
+      target_resource: rem.target_resource, commands_executed: [],
+      execution_success: true, execution_output: "Manual remediation acknowledged",
+      alert_domain: "", alert_type: "",
+    });
+
     if (rem.slack_channel) {
       await postSlack(rem.slack_channel,
-        `Remediation ${remediation_id} FAILED: ${errMsg}`,
+        `Manual remediation ${remediation_id} acknowledged.`,
         [{
           type: "section",
-          text: { type: "mrkdwn", text: `*Remediation Failed*\n\`${rem.playbook}\` on \`${rem.target_resource}\`\n\nError: ${errMsg}\n\n*Rollback plan:* ${rem.rollback_plan}` },
+          text: { type: "mrkdwn", text: `*Manual Remediation Acknowledged*\n${remDescription}\n\nTarget: \`${rem.target_resource}\`\nAction items have been noted. Follow up as needed.` },
+        }],
+      );
+    }
+
+    return { success: true, remediation_id, action: "acknowledged", rollback_info: rem.rollback_plan };
+  }
+
+  // ── Handle AUTOMATED action type ──
+  let commands: string[] = [];
+  try {
+    commands = JSON.parse(rem.commands || "[]");
+  } catch {
+    commands = [];
+  }
+
+  let rollbackCommands: string[] = [];
+  try {
+    rollbackCommands = JSON.parse(rem.rollback_commands || "[]");
+  } catch {
+    rollbackCommands = [];
+  }
+
+  if (commands.length === 0) {
+    const errMsg = "No commands to execute";
+    cacheLib.updateRemediationStatus(remediation_id, "failed", {
+      execution_result: JSON.stringify({ error: errMsg }),
+    });
+    return { success: false, remediation_id, action: "executed", error: errMsg };
+  }
+
+  // Safety check: validate all commands before executing any
+  const unsafeCommands = commands.filter(cmd => !isCommandSafe(cmd));
+  if (unsafeCommands.length > 0) {
+    const errMsg = `Safety boundary: only aws/az CLI commands allowed. Rejected: ${unsafeCommands.join("; ")}`;
+    cacheLib.updateRemediationStatus(remediation_id, "failed", {
+      execution_result: JSON.stringify({ error: errMsg, rejected_commands: unsafeCommands }),
+    });
+
+    cacheLib.recordRemediationOutcome({
+      remediation_id, dedup_hash: rem.dedup_hash,
+      action_type: "automated", description: remDescription,
+      target_resource: rem.target_resource, commands_executed: [],
+      execution_success: false, execution_output: errMsg,
+      alert_domain: "", alert_type: "",
+    });
+
+    return { success: false, remediation_id, action: "executed", error: errMsg };
+  }
+
+  // Execute commands sequentially
+  console.log(`[approve_remediation] Executing ${commands.length} commands`);
+  const executionResults: Array<{ command: string; success: boolean; output: string; error?: string }> = [];
+  let allSucceeded = true;
+
+  for (const cmd of commands) {
+    console.log(`[approve_remediation] Running: ${cmd}`);
+    const result = executeCommand(cmd);
+    executionResults.push({ command: cmd, ...result });
+    if (!result.success) {
+      allSucceeded = false;
+      console.error(`[approve_remediation] Command failed: ${result.error}`);
+      break; // Stop on first failure
+    }
+  }
+
+  const executionOutput = executionResults.map(r =>
+    r.success ? `OK: ${r.command} → ${r.output.slice(0, 200)}` : `FAIL: ${r.command} → ${r.error?.slice(0, 200)}`
+  ).join("\n");
+
+  if (!allSucceeded) {
+    cacheLib.updateRemediationStatus(remediation_id, "failed", {
+      execution_result: JSON.stringify(executionResults),
+    });
+
+    cacheLib.recordRemediationOutcome({
+      remediation_id, dedup_hash: rem.dedup_hash,
+      action_type: "automated", description: remDescription,
+      target_resource: rem.target_resource,
+      commands_executed: executionResults.filter(r => r.success).map(r => r.command),
+      execution_success: false, execution_output: executionOutput,
+      alert_domain: "", alert_type: "",
+    });
+
+    const rollbackInfo = rollbackCommands.length > 0
+      ? `Rollback commands:\n${rollbackCommands.join("\n")}`
+      : rem.rollback_plan;
+
+    if (rem.slack_channel) {
+      await postSlack(rem.slack_channel,
+        `Remediation ${remediation_id} FAILED`,
+        [{
+          type: "section",
+          text: { type: "mrkdwn", text: `*Remediation Failed*\n${remDescription} on \`${rem.target_resource}\`\n\n${executionOutput}\n\n*Rollback:* ${rollbackInfo}` },
         }],
       );
     }
 
     return {
       success: false, remediation_id, action: "executed",
-      playbook_result: playbookResult.result,
-      rollback_info: rem.rollback_plan,
-      error: errMsg,
+      execution_results: executionResults,
+      rollback_info: rollbackInfo,
+      error: executionResults.find(r => !r.success)?.error || "Command failed",
     };
   }
 
-  console.log(`[approve_remediation] Playbook succeeded. Running verification...`);
+  // All commands succeeded
+  console.log(`[approve_remediation] All commands succeeded. Running verification...`);
   cacheLib.updateRemediationStatus(remediation_id, "executed", {
-    execution_result: JSON.stringify(playbookResult.result),
-    pre_state: playbookResult.result?.pre_state || null,
+    execution_result: JSON.stringify(executionResults),
   });
 
-  // Step 2: Verify (best-effort — don't fail the whole thing if verification can't run)
+  // Verify (best-effort)
   let verificationResult: any = null;
   try {
-    // Build minimal investigation structure for verify_remediation
     const verifyResp = await runWindmillScript("f/devops/verify_remediation", {
       item_id: rem.dedup_hash,
       original_investigation: JSON.stringify({
@@ -180,7 +312,7 @@ export async function main(
         evidence: [],
         diagnosis: { summary: rem.diagnosis_summary, severity: rem.severity },
       }),
-      playbook_result: JSON.stringify(playbookResult.result),
+      playbook_result: JSON.stringify({ success: true, output: executionOutput }),
       approval_id: remediation_id,
     });
 
@@ -194,10 +326,26 @@ export async function main(
     console.warn(`[approve_remediation] Verification failed (non-fatal): ${err.message}`);
   }
 
-  // Step 3: Post Slack confirmation
+  // Record outcome
+  cacheLib.recordRemediationOutcome({
+    remediation_id, dedup_hash: rem.dedup_hash,
+    action_type: "automated", description: remDescription,
+    target_resource: rem.target_resource,
+    commands_executed: commands,
+    execution_success: true, execution_output: executionOutput,
+    verified: verificationResult?.verified,
+    verification_summary: verificationResult?.summary || "",
+    alert_domain: "", alert_type: "",
+  });
+
+  // Post Slack confirmation
   const verified = verificationResult?.verified;
   const verifyEmoji = verified === true ? "white_check_mark" : verified === false ? "warning" : "question";
   const statusText = verified === true ? "Verified" : verified === false ? "Needs Review" : "Verification Skipped";
+
+  const rollbackInfo = rollbackCommands.length > 0
+    ? `Rollback commands:\n${rollbackCommands.map(c => `\`${c}\``).join("\n")}`
+    : rem.rollback_plan;
 
   if (rem.slack_channel) {
     const blocks: any[] = [
@@ -210,11 +358,13 @@ export async function main(
         text: {
           type: "mrkdwn",
           text: [
-            `*Playbook:* \`${rem.playbook}\` on \`${rem.target_resource}\``,
-            `*Result:* ${playbookResult.result?.output || "Executed successfully"}`,
+            `*Action:* ${remDescription}`,
+            `*Target:* \`${rem.target_resource}\``,
+            `*Commands:* ${commands.length} executed successfully`,
             verified !== undefined ? `*Verification:* :${verifyEmoji}: ${verificationResult?.summary || statusText}` : "",
-            `*Rollback:* ${rem.rollback_plan}`,
+            `*Rollback:* ${rollbackInfo}`,
             rem.sdp_link ? `*SDP:* <${rem.sdp_link}|View Task>` : "",
+            `\nTo rate this remediation: run \`approve_remediation\` with \`remediation_id: ${remediation_id}, action: rate, rating: 1-5\``,
           ].filter(Boolean).join("\n"),
         },
       },
@@ -227,9 +377,9 @@ export async function main(
     success: true,
     remediation_id,
     action: "executed",
-    playbook_result: playbookResult.result,
+    execution_results: executionResults,
     verification_result: verificationResult,
-    rollback_info: rem.rollback_plan,
+    rollback_info: rollbackInfo,
   };
 }
 

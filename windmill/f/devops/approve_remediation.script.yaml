@@ -1,5 +1,6 @@
-summary: 'Approve and execute a pending remediation (playbook → verify → Slack confirm)'
-description: 'Seth runs this to approve or reject a pending remediation. Executes playbook, verifies, posts Slack confirmation.'
+summary: Approve and execute a pending remediation (playbook → verify → Slack confirm)
+description: Seth runs this to approve or reject a pending remediation. Executes
+  playbook, verifies, posts Slack confirmation.
 lock: '!inline f/devops/approve_remediation.script.lock'
 kind: script
 schema:
@@ -10,6 +11,15 @@ schema:
       type: string
       description: ''
       default: approve
+      originalType: string
+    rating:
+      type: number
+      description: ''
+      default: 0
+    rating_notes:
+      type: string
+      description: ''
+      default: ''
       originalType: string
     remediation_id:
       type: string

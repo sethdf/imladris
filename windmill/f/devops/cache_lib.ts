@@ -209,6 +209,44 @@ export function init(): boolean {
       CREATE INDEX IF NOT EXISTS idx_remediation_dedup ON pending_remediations(dedup_hash);
     `);
 
+    // ── Remediation outcomes table (feedback loop) ──
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS remediation_outcomes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        remediation_id TEXT NOT NULL,
+        dedup_hash TEXT NOT NULL,
+        action_type TEXT NOT NULL DEFAULT 'automated',
+        description TEXT DEFAULT '',
+        target_resource TEXT DEFAULT '',
+        commands_executed TEXT DEFAULT '[]',
+        execution_success INTEGER NOT NULL DEFAULT 0,
+        execution_output TEXT DEFAULT '',
+        verified INTEGER DEFAULT NULL,
+        verification_summary TEXT DEFAULT '',
+        rating INTEGER DEFAULT NULL CHECK (rating IS NULL OR rating BETWEEN 1 AND 5),
+        rating_notes TEXT DEFAULT '',
+        alert_domain TEXT DEFAULT '',
+        alert_type TEXT DEFAULT '',
+        completed_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        rated_at INTEGER DEFAULT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_rem_outcome_dedup ON remediation_outcomes(dedup_hash);
+      CREATE INDEX IF NOT EXISTS idx_rem_outcome_domain ON remediation_outcomes(alert_domain);
+      CREATE INDEX IF NOT EXISTS idx_rem_outcome_type ON remediation_outcomes(alert_type);
+      CREATE INDEX IF NOT EXISTS idx_rem_outcome_rating ON remediation_outcomes(rating);
+    `);
+
+    // Migrations: add free-form columns to pending_remediations (idempotent)
+    const remMigrations = [
+      "ALTER TABLE pending_remediations ADD COLUMN action_type TEXT DEFAULT 'automated'",
+      "ALTER TABLE pending_remediations ADD COLUMN description TEXT DEFAULT ''",
+      "ALTER TABLE pending_remediations ADD COLUMN commands TEXT DEFAULT '[]'",
+      "ALTER TABLE pending_remediations ADD COLUMN rollback_commands TEXT DEFAULT '[]'",
+    ];
+    for (const migration of remMigrations) {
+      try { db.exec(migration); } catch { /* Column already exists */ }
+    }
+
     // ── Resource inventory table (auto-discovery) ──
     db.exec(`
       CREATE TABLE IF NOT EXISTS resource_inventory (
@@ -1407,6 +1445,10 @@ export interface RemediationInput {
   why_this_playbook?: string;
   diagnosis_summary?: string;
   severity?: string;
+  action_type?: string;
+  description?: string;
+  commands?: string[];
+  rollback_commands?: string[];
 }
 
 export function createPendingRemediation(input: RemediationInput): string | null {
@@ -1416,8 +1458,8 @@ export function createPendingRemediation(input: RemediationInput): string | null
     init();
     const id = `rem-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     db.prepare(`
-      INSERT INTO pending_remediations (id, dedup_hash, task_id, sdp_link, playbook, target_resource, playbook_params, blast_radius, rollback_plan, remediation_confidence, why_this_playbook, diagnosis_summary, severity, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+      INSERT INTO pending_remediations (id, dedup_hash, task_id, sdp_link, playbook, target_resource, playbook_params, blast_radius, rollback_plan, remediation_confidence, why_this_playbook, diagnosis_summary, severity, status, action_type, description, commands, rollback_commands)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
     `).run(
       id, input.dedup_hash, input.task_id || null, input.sdp_link || null,
       input.playbook, input.target_resource,
@@ -1425,6 +1467,10 @@ export function createPendingRemediation(input: RemediationInput): string | null
       input.blast_radius, input.rollback_plan, input.remediation_confidence,
       input.why_this_playbook || "", input.diagnosis_summary || "",
       input.severity || "",
+      input.action_type || "automated",
+      input.description || "",
+      JSON.stringify(input.commands || []),
+      JSON.stringify(input.rollback_commands || []),
     );
     db.close();
     return id;
@@ -1501,11 +1547,87 @@ export function getRemediableItems(limit: number = 20): any[] {
       FROM triage_results tr
       WHERE tr.investigation_result IS NOT NULL
         AND tr.investigation_result LIKE '%remediation_proposal%'
-        AND tr.investigation_result LIKE '%playbook%'
         AND tr.dedup_hash NOT IN (SELECT dedup_hash FROM pending_remediations)
       ORDER BY tr.created_at DESC
       LIMIT ?
     `).all(limit) as any[];
+    db.close();
+    return rows;
+  } catch { db.close(); return []; }
+}
+
+// ── Remediation Outcomes (feedback loop) ──
+
+export interface RemediationOutcomeInput {
+  remediation_id: string;
+  dedup_hash: string;
+  action_type: string;
+  description: string;
+  target_resource: string;
+  commands_executed: string[];
+  execution_success: boolean;
+  execution_output: string;
+  verified?: boolean;
+  verification_summary?: string;
+  alert_domain?: string;
+  alert_type?: string;
+}
+
+export function recordRemediationOutcome(input: RemediationOutcomeInput): boolean {
+  const db = getDb();
+  if (!db) return false;
+  try {
+    init();
+    db.prepare(`
+      INSERT INTO remediation_outcomes (remediation_id, dedup_hash, action_type, description, target_resource, commands_executed, execution_success, execution_output, verified, verification_summary, alert_domain, alert_type)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      input.remediation_id, input.dedup_hash, input.action_type,
+      input.description, input.target_resource,
+      JSON.stringify(input.commands_executed),
+      input.execution_success ? 1 : 0, input.execution_output,
+      input.verified === undefined ? null : input.verified ? 1 : 0,
+      input.verification_summary || "",
+      input.alert_domain || "", input.alert_type || "",
+    );
+    db.close();
+    return true;
+  } catch { db.close(); return false; }
+}
+
+export function rateRemediation(remediationId: string, rating: number, notes: string = ""): boolean {
+  const db = getDb();
+  if (!db) return false;
+  try {
+    init();
+    db.prepare(`
+      UPDATE remediation_outcomes SET rating = ?, rating_notes = ?, rated_at = unixepoch()
+      WHERE remediation_id = ?
+    `).run(rating, notes, remediationId);
+    db.close();
+    return true;
+  } catch { db.close(); return false; }
+}
+
+export function getRemediationOutcomes(domain?: string, alertType?: string, limit: number = 20): any[] {
+  const db = getDb();
+  if (!db) return [];
+  try {
+    init();
+    const conditions: string[] = [];
+    const params: any[] = [];
+    if (domain) { conditions.push("alert_domain = ?"); params.push(domain); }
+    if (alertType) { conditions.push("alert_type = ?"); params.push(alertType); }
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+    params.push(limit);
+    const rows = db.prepare(`
+      SELECT remediation_id, dedup_hash, action_type, description, target_resource,
+             execution_success, execution_output, verified, verification_summary,
+             rating, rating_notes, alert_domain, alert_type, completed_at, rated_at
+      FROM remediation_outcomes ${where}
+      ORDER BY completed_at DESC
+      LIMIT ?
+    `).all(...params) as any[];
     db.close();
     return rows;
   } catch { db.close(); return []; }

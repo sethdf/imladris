@@ -123,21 +123,26 @@ You execute the PAI Algorithm's cognitive phases within your available rounds. E
 
 ━━━ REMEDIATION PROPOSAL (Round 7) ━━━
 - Before submitting, assess whether automated remediation is appropriate.
-- Available playbooks (the ONLY actions the system can take):
-  * isolate_instance: Replace an EC2 instance's security groups with a quarantine SG (SSM-only). Use for: compromised instances, unauthorized access. Params: none (auto-detects VPC). Rollback: re-apply original SGs.
-  * revoke_sg_rule: Remove a specific ingress rule from a security group. Use for: overly permissive rules (0.0.0.0/0 on SSH, etc.). Params: {protocol, port, cidr}. Rollback: re-add the rule.
-  * snapshot_volume: Create an EBS snapshot before any destructive action. Use for: pre-remediation backup. Params: none. Rollback: restore from snapshot.
-  * disable_access_key: Deactivate a compromised IAM access key. Use for: leaked or unauthorized keys. Params: {username}. Rollback: re-enable the key.
-- If a playbook matches, include remediation_proposal in submit_diagnosis with:
-  * The exact resource ID to act on (from your investigation evidence)
-  * Blast radius: what services, users, or systems depend on this resource?
-  * Rollback plan: exact steps to reverse the action
-  * Remediation confidence: how sure are you this fixes the root cause?
-- If NO playbook applies, omit remediation_proposal entirely. The recommended_actions field covers manual steps.
+- PAST OUTCOMES: Call check_remediation_outcomes to see what has worked (or failed) for similar alert types and domains. Learn from past results before proposing.
+- You can propose ANY remediation — there are no fixed playbooks. Think about what action would actually fix the root cause.
+- Two action types:
+  * automated: System executes shell commands after human approval. Commands MUST be aws or az CLI commands only.
+  * manual: Human action items that cannot be automated (e.g., "contact vendor", "review IAM policy with team"). Tracked as acknowledged.
+- For EVERY proposal, include remediation_proposal in submit_diagnosis with:
+  * description: Clear, specific description of what the remediation does and why
+  * action_type: "automated" or "manual"
+  * target_resource: The specific resource ID from your investigation evidence
+  * commands: Array of shell commands to execute (automated only, must be aws/az CLI)
+  * rollback_commands: Array of commands to reverse the action (automated only)
+  * blast_radius: What else could be affected — be specific about dependent services, users, or systems
+  * remediation_confidence: How confident that this fixes the root cause
+  * reasoning: Evidence-based reasoning for this specific approach
+- If NO remediation is appropriate, omit remediation_proposal entirely.
 - NEVER propose remediation for informational/low-severity findings.
 
 ━━━ SUBMIT (Round 7-8) ━━━
 - Call submit_diagnosis with structured evidence chains, differentials, and remediation_proposal (if applicable).
+- Before proposing remediation, call check_remediation_outcomes to learn from past results.
 - Confidence must reflect verification completeness, not gut feel.
 - Include self-reflection: what would you investigate differently next time?
 
@@ -541,6 +546,22 @@ const TOOLS: ToolConfiguration = {
     },
     {
       toolSpec: {
+        name: "check_remediation_outcomes",
+        description: "Check past remediation outcomes to learn what has worked or failed for similar alert types and domains. Call this before proposing remediation to avoid repeating failures and build on successes.",
+        inputSchema: {
+          json: {
+            type: "object",
+            properties: {
+              alert_domain: { type: "string", description: "Filter by domain (e.g., 'security', 'infrastructure', 'application')" },
+              alert_type: { type: "string", description: "Filter by alert type (e.g., 'sg_open_port', 'high_cpu')" },
+            },
+            required: [],
+          },
+        },
+      },
+    },
+    {
+      toolSpec: {
         name: "request_data_source",
         description: "Flag a missing data source that would help resolve this investigation. Call this when you need access to a system, tool, or data that isn't available. The gap will be recorded for future tool development. Continue investigating with available tools after calling this.",
         inputSchema: {
@@ -642,17 +663,18 @@ const TOOLS: ToolConfiguration = {
               },
               remediation_proposal: {
                 type: "object",
-                description: "Optional: structured remediation proposal if an available playbook matches. Omit if no playbook applies or issue is informational.",
+                description: "Optional: structured remediation proposal. Omit if no remediation is appropriate or issue is informational.",
                 properties: {
-                  playbook: { type: "string", enum: ["isolate_instance", "revoke_sg_rule", "snapshot_volume", "disable_access_key"], description: "Which playbook to execute" },
-                  target_resource: { type: "string", description: "The specific resource ID to act on (instance ID, SG ID, volume ID, access key ID)" },
-                  playbook_params: { type: "object", description: "Additional params for the playbook (e.g., {port, protocol, cidr} for revoke_sg_rule, {username} for disable_access_key)" },
-                  blast_radius: { type: "string", description: "What else could be affected by this action — be specific about dependent services, users, or systems" },
-                  rollback_plan: { type: "string", description: "Exact steps to reverse this action if it causes problems. Must be specific and actionable." },
-                  remediation_confidence: { type: "string", enum: ["high", "medium", "low"], description: "How confident that this playbook will fix the diagnosed issue" },
-                  why_this_playbook: { type: "string", description: "Evidence-based reasoning for choosing this specific playbook over alternatives" },
+                  description: { type: "string", description: "Clear description of what this remediation does and why" },
+                  action_type: { type: "string", enum: ["automated", "manual"], description: "automated = system executes commands after approval; manual = human action items tracked as acknowledged" },
+                  target_resource: { type: "string", description: "The specific resource ID to act on" },
+                  commands: { type: "array", items: { type: "string" }, description: "Shell commands to execute (automated only). MUST be aws or az CLI commands." },
+                  rollback_commands: { type: "array", items: { type: "string" }, description: "Commands to reverse the action (automated only)" },
+                  blast_radius: { type: "string", description: "What else could be affected — specific dependent services, users, or systems" },
+                  remediation_confidence: { type: "string", enum: ["high", "medium", "low"], description: "How confident this fixes the root cause" },
+                  reasoning: { type: "string", description: "Evidence-based reasoning for this specific approach" },
                 },
-                required: ["playbook", "target_resource", "blast_radius", "rollback_plan", "remediation_confidence", "why_this_playbook"],
+                required: ["description", "action_type", "target_resource", "blast_radius", "remediation_confidence", "reasoning"],
               },
             },
             required: ["severity", "summary", "root_cause", "evidence", "evidence_chain", "differentials", "affected_systems", "recommended_actions", "confidence", "criteria_status"],
@@ -886,6 +908,14 @@ export async function main(
       }
     }
 
+    // Handle check_remediation_outcomes calls — respond inline from cache_lib
+    const remOutcomeBlocks = toolUseBlocks.filter((b) => b.toolUse.name === "check_remediation_outcomes");
+    for (const roBlock of remOutcomeBlocks) {
+      const input = roBlock.toolUse.input as { alert_domain?: string; alert_type?: string };
+      const outcomes = cacheLib.getRemediationOutcomes(input.alert_domain, input.alert_type, 10);
+      console.log(`[agentic_investigator] Remediation outcomes query: domain=${input.alert_domain || "all"}, type=${input.alert_type || "all"}, results=${outcomes.length}`);
+    }
+
     // Check for submit_diagnosis among tool calls
     const diagnosisBlock = toolUseBlocks.find((b) => b.toolUse.name === "submit_diagnosis");
     if (diagnosisBlock) {
@@ -911,7 +941,7 @@ export async function main(
         // Handle other tool calls in this round
         for (const block of toolUseBlocks) {
           if (block.toolUse.name === "submit_diagnosis") continue;
-          if (block.toolUse.name === "request_data_source") {
+          if (block.toolUse.name === "request_data_source" || block.toolUse.name === "check_remediation_outcomes") {
             structureRejectResults.push({ toolResult: { toolUseId: block.toolUse.toolUseId, content: [{ text: "Noted." }], status: "success" } });
             continue;
           }
@@ -935,7 +965,7 @@ export async function main(
         ];
         for (const block of toolUseBlocks) {
           if (block.toolUse.name === "submit_diagnosis") continue;
-          if (block.toolUse.name === "request_data_source") {
+          if (block.toolUse.name === "request_data_source" || block.toolUse.name === "check_remediation_outcomes") {
             diffRejectResults.push({ toolResult: { toolUseId: block.toolUse.toolUseId, content: [{ text: "Noted." }], status: "success" } });
             continue;
           }
@@ -987,6 +1017,10 @@ export async function main(
             });
             continue;
           }
+          if (block.toolUse.name === "check_remediation_outcomes") {
+            rejectResults.push({ toolResult: { toolUseId: block.toolUse.toolUseId, content: [{ text: "Noted." }], status: "success" } });
+            continue;
+          }
           const toolResult = await callWindmillTool(block.toolUse.name, block.toolUse.input);
           rejectResults.push({
             toolResult: {
@@ -1014,9 +1048,10 @@ export async function main(
       return diagResult;
     }
 
-    // Execute non-diagnosis, non-data-source tool calls in parallel
+    // Execute non-diagnosis, non-data-source, non-remediation-outcomes tool calls in parallel
+    const inlineHandledTools = new Set(["submit_diagnosis", "request_data_source", "check_remediation_outcomes"]);
     const regularToolBlocks = toolUseBlocks.filter(
-      (b) => b.toolUse.name !== "submit_diagnosis" && b.toolUse.name !== "request_data_source",
+      (b) => !inlineHandledTools.has(b.toolUse.name),
     );
 
     const toolResults = await Promise.allSettled(
@@ -1062,6 +1097,26 @@ export async function main(
         toolResult: {
           toolUseId: dsBlock.toolUse.toolUseId,
           content: [{ text: round <= 2 ? `Gap noted but too early — investigate with available tools first before flagging gaps. Try using existing tools to answer your criteria.` : `Data source gap recorded: ${dsInput.data_source_name}. Continue investigating with available tools — do your best with what you have.` }],
+          status: "success" as const,
+        },
+      });
+    }
+
+    // Add remediation outcomes responses
+    for (const roBlock of remOutcomeBlocks) {
+      const input = roBlock.toolUse.input as { alert_domain?: string; alert_type?: string };
+      const outcomes = cacheLib.getRemediationOutcomes(input.alert_domain, input.alert_type, 10);
+      const summary = outcomes.length === 0
+        ? "No past remediation outcomes found for this domain/alert type. This will be the first."
+        : JSON.stringify(outcomes.map(o => ({
+            description: o.description, action_type: o.action_type, target: o.target_resource,
+            success: !!o.execution_success, verified: o.verified === 1, rating: o.rating,
+            rating_notes: o.rating_notes, domain: o.alert_domain, type: o.alert_type,
+          })));
+      toolResultContent.push({
+        toolResult: {
+          toolUseId: roBlock.toolUse.toolUseId,
+          content: [{ text: truncateResult(summary) }],
           status: "success" as const,
         },
       });

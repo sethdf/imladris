@@ -988,7 +988,7 @@ export async function main(
         try {
           const invResult = JSON.parse(item.investigation_result);
           const proposal = invResult?.diagnosis?.remediation_proposal;
-          if (!proposal?.playbook || !proposal?.target_resource) continue;
+          if (!proposal?.target_resource || (!proposal?.description && !proposal?.playbook)) continue;
 
           // Build SDP link
           let sdpLink = "";
@@ -1010,15 +1010,19 @@ export async function main(
             dedup_hash: item.dedup_hash,
             task_id: item.task_id || null,
             sdp_link: sdpLink,
-            playbook: proposal.playbook,
+            playbook: proposal.description || proposal.playbook || "free-form",
             target_resource: proposal.target_resource,
             playbook_params: proposal.playbook_params || {},
             blast_radius: proposal.blast_radius,
-            rollback_plan: proposal.rollback_plan,
+            rollback_plan: proposal.rollback_plan || (proposal.rollback_commands || []).join("; "),
             remediation_confidence: proposal.remediation_confidence || "medium",
-            why_this_playbook: proposal.why_this_playbook || "",
+            why_this_playbook: proposal.reasoning || proposal.why_this_playbook || "",
             diagnosis_summary: invResult.diagnosis?.summary || item.subject,
             severity: invResult.diagnosis?.severity || item.urgency,
+            action_type: proposal.action_type || "automated",
+            description: proposal.description || "",
+            commands: proposal.commands || [],
+            rollback_commands: proposal.rollback_commands || [],
           });
 
           if (!remId) {
@@ -1055,8 +1059,15 @@ export async function main(
               {
                 type: "section",
                 fields: [
-                  { type: "mrkdwn", text: `*Playbook:*\n\`${proposal.playbook}\`` },
+                  { type: "mrkdwn", text: `*Action:*\n${proposal.description || proposal.playbook}` },
                   { type: "mrkdwn", text: `*Target:*\n\`${proposal.target_resource}\`` },
+                ],
+              },
+              {
+                type: "section",
+                fields: [
+                  { type: "mrkdwn", text: `*Type:*\n${(proposal.action_type || "automated").toUpperCase()}` },
+                  { type: "mrkdwn", text: `*Commands:*\n${(proposal.commands || []).length > 0 ? (proposal.commands || []).map((c: string) => `\`${c}\``).join("\n") : "Manual action"}` },
                 ],
               },
               {
@@ -1070,14 +1081,14 @@ export async function main(
                 type: "section",
                 text: {
                   type: "mrkdwn",
-                  text: `*Rollback Plan:*\n${proposal.rollback_plan}`,
+                  text: `*Rollback:*\n${proposal.rollback_plan || (proposal.rollback_commands || []).map((c: string) => `\`${c}\``).join("\n") || "See investigation details"}`,
                 },
               },
               {
                 type: "section",
                 text: {
                   type: "mrkdwn",
-                  text: `*Why This Playbook:*\n${proposal.why_this_playbook || "See investigation details"}`,
+                  text: `*Reasoning:*\n${proposal.reasoning || proposal.why_this_playbook || "See investigation details"}`,
                 },
               },
               { type: "divider" },
@@ -1101,7 +1112,7 @@ export async function main(
               },
             ];
 
-            const fallbackText = `[REMEDIATION APPROVAL] ${severity} — ${proposal.playbook} on ${proposal.target_resource} — ID: ${remId}`;
+            const fallbackText = `[REMEDIATION APPROVAL] ${severity} — ${proposal.description || proposal.playbook} on ${proposal.target_resource} — ID: ${remId}`;
 
             try {
               const resp = await fetch("https://slack.com/api/chat.postMessage", {
@@ -1132,7 +1143,7 @@ export async function main(
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
-                message: `Remediation approval required. ${proposal.playbook} on ${proposal.target_resource}. Check Slack.`,
+                message: `Remediation approval required. ${proposal.description || proposal.playbook} on ${proposal.target_resource}. Check Slack.`,
               }),
             });
           } catch { /* non-fatal */ }
