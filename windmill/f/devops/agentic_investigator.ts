@@ -120,6 +120,7 @@ You execute the PAI Algorithm's cognitive phases within your available rounds. E
 - Evidence chain audit: Every claim in your diagnosis must trace to a specific tool call (tool name, raw value, resource ID). No inference without evidence.
 - Adversarial self-challenge: "What would disprove this diagnosis? What haven't I checked?"
 - If verification reveals gaps, use remaining rounds to fill them.
+- QUALITY CHECK: Call check_investigation_quality to see how past investigations of similar alerts were rated. If similar alerts had common misdiagnosis patterns, verify you haven't made the same mistakes.
 
 ━━━ REMEDIATION PROPOSAL (Round 7) ━━━
 - Before submitting, assess whether automated remediation is appropriate.
@@ -546,6 +547,22 @@ const TOOLS: ToolConfiguration = {
     },
     {
       toolSpec: {
+        name: "check_investigation_quality",
+        description: "Check past investigation quality data — ratings, common misdiagnosis types, and accuracy by domain and alert type. Call this early to learn what investigation approaches have worked or failed for similar alerts.",
+        inputSchema: {
+          json: {
+            type: "object",
+            properties: {
+              alert_domain: { type: "string", description: "Filter by domain (e.g., 'security', 'infrastructure', 'work')" },
+              alert_type: { type: "string", description: "Filter by alert type (e.g., 'security', 'outage', 'access')" },
+            },
+            required: [],
+          },
+        },
+      },
+    },
+    {
+      toolSpec: {
         name: "check_remediation_outcomes",
         description: "Check past remediation outcomes to learn what has worked or failed for similar alert types and domains. Call this before proposing remediation to avoid repeating failures and build on successes.",
         inputSchema: {
@@ -908,6 +925,14 @@ export async function main(
       }
     }
 
+    // Handle check_investigation_quality calls — respond inline from cache_lib
+    const invQualityBlocks = toolUseBlocks.filter((b) => b.toolUse.name === "check_investigation_quality");
+    for (const iqBlock of invQualityBlocks) {
+      const input = iqBlock.toolUse.input as { alert_domain?: string; alert_type?: string };
+      const quality = cacheLib.getInvestigationQuality(input.alert_domain, input.alert_type, 10);
+      console.log(`[agentic_investigator] Investigation quality query: domain=${input.alert_domain || "all"}, type=${input.alert_type || "all"}, results=${quality.length}`);
+    }
+
     // Handle check_remediation_outcomes calls — respond inline from cache_lib
     const remOutcomeBlocks = toolUseBlocks.filter((b) => b.toolUse.name === "check_remediation_outcomes");
     for (const roBlock of remOutcomeBlocks) {
@@ -915,6 +940,9 @@ export async function main(
       const outcomes = cacheLib.getRemediationOutcomes(input.alert_domain, input.alert_type, 10);
       console.log(`[agentic_investigator] Remediation outcomes query: domain=${input.alert_domain || "all"}, type=${input.alert_type || "all"}, results=${outcomes.length}`);
     }
+
+    // Tools handled inline (not via callWindmillTool)
+    const inlineHandledTools = new Set(["submit_diagnosis", "request_data_source", "check_remediation_outcomes", "check_investigation_quality"]);
 
     // Check for submit_diagnosis among tool calls
     const diagnosisBlock = toolUseBlocks.find((b) => b.toolUse.name === "submit_diagnosis");
@@ -941,7 +969,7 @@ export async function main(
         // Handle other tool calls in this round
         for (const block of toolUseBlocks) {
           if (block.toolUse.name === "submit_diagnosis") continue;
-          if (block.toolUse.name === "request_data_source" || block.toolUse.name === "check_remediation_outcomes") {
+          if (inlineHandledTools.has(block.toolUse.name) && block.toolUse.name !== "submit_diagnosis") {
             structureRejectResults.push({ toolResult: { toolUseId: block.toolUse.toolUseId, content: [{ text: "Noted." }], status: "success" } });
             continue;
           }
@@ -965,7 +993,7 @@ export async function main(
         ];
         for (const block of toolUseBlocks) {
           if (block.toolUse.name === "submit_diagnosis") continue;
-          if (block.toolUse.name === "request_data_source" || block.toolUse.name === "check_remediation_outcomes") {
+          if (inlineHandledTools.has(block.toolUse.name) && block.toolUse.name !== "submit_diagnosis") {
             diffRejectResults.push({ toolResult: { toolUseId: block.toolUse.toolUseId, content: [{ text: "Noted." }], status: "success" } });
             continue;
           }
@@ -1017,7 +1045,7 @@ export async function main(
             });
             continue;
           }
-          if (block.toolUse.name === "check_remediation_outcomes") {
+          if (inlineHandledTools.has(block.toolUse.name)) {
             rejectResults.push({ toolResult: { toolUseId: block.toolUse.toolUseId, content: [{ text: "Noted." }], status: "success" } });
             continue;
           }
@@ -1048,8 +1076,7 @@ export async function main(
       return diagResult;
     }
 
-    // Execute non-diagnosis, non-data-source, non-remediation-outcomes tool calls in parallel
-    const inlineHandledTools = new Set(["submit_diagnosis", "request_data_source", "check_remediation_outcomes"]);
+    // Execute regular tool calls (not inline-handled) in parallel
     const regularToolBlocks = toolUseBlocks.filter(
       (b) => !inlineHandledTools.has(b.toolUse.name),
     );
@@ -1097,6 +1124,26 @@ export async function main(
         toolResult: {
           toolUseId: dsBlock.toolUse.toolUseId,
           content: [{ text: round <= 2 ? `Gap noted but too early — investigate with available tools first before flagging gaps. Try using existing tools to answer your criteria.` : `Data source gap recorded: ${dsInput.data_source_name}. Continue investigating with available tools — do your best with what you have.` }],
+          status: "success" as const,
+        },
+      });
+    }
+
+    // Add investigation quality responses
+    for (const iqBlock of invQualityBlocks) {
+      const input = iqBlock.toolUse.input as { alert_domain?: string; alert_type?: string };
+      const quality = cacheLib.getInvestigationQuality(input.alert_domain, input.alert_type, 10);
+      const summary = quality.length === 0
+        ? "No past investigation quality data found for this domain/alert type."
+        : JSON.stringify(quality.map((q: any) => ({
+            rating: q.rating, misdiagnosis_type: q.misdiagnosis_type,
+            domain: q.alert_domain, type: q.alert_type,
+            notes: q.notes, rated_at: q.rated_at,
+          })));
+      toolResultContent.push({
+        toolResult: {
+          toolUseId: iqBlock.toolUse.toolUseId,
+          content: [{ text: truncateResult(summary) }],
           status: "success" as const,
         },
       });

@@ -1430,6 +1430,43 @@ export function getFeedbackStats(daysBack: number = 30): {
   }
 }
 
+/** Get triage context (domain, alert_type) for a dedup_hash */
+export function getTriageContext(dedupHash: string): { domain: string; alert_type: string; source_system: string } | null {
+  const db = getDb();
+  if (!db) return null;
+  try {
+    init();
+    const row = db.prepare(
+      "SELECT domain, alert_type, source_system FROM triage_results WHERE dedup_hash = ? ORDER BY classified_at DESC LIMIT 1"
+    ).get(dedupHash) as any;
+    db.close();
+    return row ? { domain: row.domain || "", alert_type: row.alert_type || "", source_system: row.source_system || "" } : null;
+  } catch { db.close(); return null; }
+}
+
+/** Get past investigation quality data by domain/alert_type (for investigator feedback loop) */
+export function getInvestigationQuality(domain?: string, alertType?: string, limit: number = 10): any[] {
+  const db = getDb();
+  if (!db) return [];
+  try {
+    init();
+    const conditions: string[] = [];
+    const params: any[] = [];
+    if (domain) { conditions.push("alert_domain = ?"); params.push(domain); }
+    if (alertType) { conditions.push("alert_type = ?"); params.push(alertType); }
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+    params.push(limit);
+    const rows = db.prepare(`
+      SELECT dedup_hash, rating, misdiagnosis_type, alert_domain, alert_type, notes, rated_at
+      FROM investigation_feedback ${where}
+      ORDER BY rated_at DESC
+      LIMIT ?
+    `).all(...params) as any[];
+    db.close();
+    return rows;
+  } catch { db.close(); return []; }
+}
+
 // ── Pending Remediations ──
 
 export interface RemediationInput {

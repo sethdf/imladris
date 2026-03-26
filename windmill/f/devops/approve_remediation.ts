@@ -139,6 +139,11 @@ export async function main(
   const remDescription = rem.description || rem.playbook || "unknown action";
   const actionType = rem.action_type || "automated";
 
+  // Enrich with triage context (domain, alert_type) for feedback loop
+  const triageCtx = cacheLib.getTriageContext?.(rem.dedup_hash) || { domain: "", alert_type: "", source_system: "" };
+  const alertDomain = triageCtx.domain;
+  const alertType = triageCtx.alert_type;
+
   // Handle rejection
   if (action === "reject") {
     cacheLib.updateRemediationStatus(remediation_id, "rejected");
@@ -150,7 +155,7 @@ export async function main(
       action_type: actionType, description: remDescription,
       target_resource: rem.target_resource, commands_executed: [],
       execution_success: false, execution_output: "Rejected by operator",
-      alert_domain: "", alert_type: "",
+      alert_domain: alertDomain, alert_type: alertType,
     });
 
     if (rem.slack_channel) {
@@ -182,7 +187,7 @@ export async function main(
       action_type: "manual", description: remDescription,
       target_resource: rem.target_resource, commands_executed: [],
       execution_success: true, execution_output: "Manual remediation acknowledged",
-      alert_domain: "", alert_type: "",
+      alert_domain: alertDomain, alert_type: alertType,
     });
 
     if (rem.slack_channel) {
@@ -234,7 +239,7 @@ export async function main(
       action_type: "automated", description: remDescription,
       target_resource: rem.target_resource, commands_executed: [],
       execution_success: false, execution_output: errMsg,
-      alert_domain: "", alert_type: "",
+      alert_domain: alertDomain, alert_type: alertType,
     });
 
     return { success: false, remediation_id, action: "executed", error: errMsg };
@@ -271,7 +276,7 @@ export async function main(
       target_resource: rem.target_resource,
       commands_executed: executionResults.filter(r => r.success).map(r => r.command),
       execution_success: false, execution_output: executionOutput,
-      alert_domain: "", alert_type: "",
+      alert_domain: alertDomain, alert_type: alertType,
     });
 
     const rollbackInfo = rollbackCommands.length > 0
