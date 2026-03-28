@@ -1,224 +1,182 @@
-// Windmill Script: Weekly Compliance Scan
-// Decision 26: Automatic reports — CIS benchmark compliance via Powerpipe
-//
-// Requires: powerpipe with aws_compliance mod installed
+// Windmill Script: Compliance Scan via Steampipe PostgreSQL
+// Runs targeted security queries against steampipe's PostgreSQL interface
+// instead of shelling out to powerpipe CLI.
 
-import { execSync } from "child_process";
-import {
-  appendFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  writeFileSync,
-} from "fs";
-import { join } from "path";
-import { homedir } from "os";
-
-const HOME = homedir();
-const COMPLIANCE_LOG = join(HOME, ".claude", "logs", "compliance-scans.jsonl");
-const LAST_RUN_PATH = join(HOME, ".claude", "state", "last-compliance.json");
-
-interface ControlSummary {
-  total: number;
-  passing: number;
-  failing: number;
-  error: number;
-  skip: number;
+interface CheckDefinition {
+  category: string;
+  label: string;
+  query: string;
 }
 
-interface ComplianceResult {
+interface Finding {
+  category: string;
+  status: "alarm" | "ok";
+  count: number;
+  details: any[];
+}
+
+interface ComplianceReport {
   generated: string;
-  benchmark: string;
-  summary: ControlSummary;
-  critical_failures: { title: string; status: string; reason?: string }[];
-}
-
-function ensureDirs(): void {
-  for (const dir of [
-    join(HOME, ".claude", "logs"),
-    join(HOME, ".claude", "state"),
-  ]) {
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  }
-}
-
-function powerpipeAvailable(): boolean {
-  try {
-    execSync("which powerpipe", { encoding: "utf-8", timeout: 2000 });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function parseResults(raw: Record<string, unknown>): {
-  summary: ControlSummary;
-  failures: { title: string; status: string; reason?: string }[];
-} {
-  const groups = (raw.groups || raw.children || []) as Record<string, unknown>[];
-  let passing = 0;
-  let failing = 0;
-  let errorCount = 0;
-  let skip = 0;
-  const failures: { title: string; status: string; reason?: string }[] = [];
-
-  function walk(node: Record<string, unknown>): void {
-    const status = String(node.status || "").toLowerCase();
-    if (status === "ok" || status === "pass") passing++;
-    else if (status === "alarm" || status === "fail") {
-      failing++;
-      failures.push({
-        title: String(node.title || node.name || "Unknown"),
-        status,
-        reason: node.reason ? String(node.reason) : undefined,
-      });
-    } else if (status === "error") errorCount++;
-    else if (status === "skip") skip++;
-
-    const children = (node.groups ||
-      node.children ||
-      node.controls ||
-      []) as Record<string, unknown>[];
-    for (const child of children) walk(child);
-  }
-
-  for (const group of groups) walk(group);
-
-  // If no nested results, check top-level summary
-  const total = passing + failing + errorCount + skip;
-  if (total === 0 && raw.summary) {
-    const s = raw.summary as Record<string, number>;
-    return {
-      summary: {
-        total: (s.ok || 0) + (s.alarm || 0) + (s.error || 0) + (s.skip || 0),
-        passing: s.ok || 0,
-        failing: s.alarm || 0,
-        error: s.error || 0,
-        skip: s.skip || 0,
-      },
-      failures,
-    };
-  }
-
-  return {
-    summary: { total, passing, failing, error: errorCount, skip },
-    failures,
+  checks_run: number;
+  findings: Finding[];
+  summary: {
+    alarm: number;
+    ok: number;
+    total_findings: number;
   };
 }
 
-function loadLastRun(): ComplianceResult | null {
-  if (!existsSync(LAST_RUN_PATH)) return null;
+const CHECKS: CheckDefinition[] = [
+  {
+    category: "config_noncompliant",
+    label: "AWS Config non-compliant rules",
+    query: `SELECT config_rule_name, compliance_type, count(*) as resources
+            FROM aws_config_rule_compliance_detail
+            WHERE compliance_type = 'NON_COMPLIANT'
+            GROUP BY config_rule_name, compliance_type
+            ORDER BY resources DESC
+            LIMIT 20`,
+  },
+  {
+    category: "public_s3",
+    label: "Public S3 buckets",
+    query: `SELECT name, region, account_id
+            FROM aws_s3_bucket
+            WHERE bucket_policy_is_public = true
+               OR block_public_acls = false`,
+  },
+  {
+    category: "unencrypted_ebs",
+    label: "Unencrypted in-use EBS volumes",
+    query: `SELECT volume_id, region, account_id, state
+            FROM aws_ebs_volume
+            WHERE encrypted = false AND state = 'in-use'`,
+  },
+  {
+    category: "open_security_groups",
+    label: "Open security groups (0.0.0.0/0 non-HTTP ingress)",
+    query: `SELECT group_id, account_id, ip_protocol, from_port, to_port, region
+            FROM aws_vpc_security_group_rule
+            WHERE is_egress = false
+              AND cidr_ipv4 = '0.0.0.0/0'
+              AND (from_port IS NULL OR from_port NOT IN (443, 80))
+            ORDER BY from_port`,
+  },
+  {
+    category: "old_access_keys",
+    label: "IAM access keys older than 90 days",
+    query: `SELECT user_name, access_key_id, account_id, create_date
+            FROM aws_iam_access_key
+            WHERE create_date < now() - interval '90 days'
+              AND status = 'Active'`,
+  },
+  {
+    category: "root_access_keys",
+    label: "Root account access keys",
+    query: `SELECT account_id, user_name
+            FROM aws_iam_access_key
+            WHERE user_name = '<root_account>'`,
+  },
+];
+
+async function getVariable(path: string): Promise<string | undefined> {
+  const base = process.env.BASE_INTERNAL_URL || "http://windmill_server:8000";
+  const token = process.env.WM_TOKEN;
+  const workspace = process.env.WM_WORKSPACE || "imladris";
+  if (!token) return undefined;
   try {
-    return JSON.parse(readFileSync(LAST_RUN_PATH, "utf-8"));
+    const resp = await fetch(
+      `${base}/api/w/${workspace}/variables/get_value/${path}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    if (!resp.ok) return undefined;
+    const val = await resp.text();
+    const parsed = val.startsWith('"') ? JSON.parse(val) : val;
+    return parsed.trim();
   } catch {
-    return null;
+    return undefined;
   }
+}
+
+async function runCheck(
+  client: any,
+  check: CheckDefinition,
+): Promise<Finding> {
+  const result = await client.query(check.query);
+  const rows = result.rows || [];
+  return {
+    category: check.category,
+    status: rows.length > 0 ? "alarm" : "ok",
+    count: rows.length,
+    details: rows.slice(0, 10),
+  };
 }
 
 export async function main(
-  benchmark: string = "aws_compliance.benchmark.cis_v300",
-  compare_last: boolean = true,
-) {
-  ensureDirs();
-
-  if (!powerpipeAvailable()) {
-    return {
-      error: "powerpipe not installed or not in PATH",
-      setup:
-        "Install powerpipe and run: powerpipe mod install github.com/turbot/steampipe-mod-aws-compliance",
-    };
+  benchmark: string = "",
+  format: string = "json",
+): Promise<ComplianceReport | { error: string }> {
+  // Get steampipe password from Windmill variable
+  const password = await getVariable("f/devops/steampipe_password");
+  if (!password) {
+    return { error: "Could not retrieve steampipe password from f/devops/steampipe_password" };
   }
 
-  let rawOutput: string;
+  const { Client } = (await import("pg")) as any;
+  const client = new Client({
+    host: "172.17.0.1",
+    port: 9193,
+    database: "steampipe",
+    user: "steampipe",
+    password,
+    connectionTimeoutMillis: 5000,
+    query_timeout: 60000,
+  });
+
   try {
-    rawOutput = execSync(
-      `powerpipe benchmark run ${benchmark} --output json`,
-      { encoding: "utf-8", timeout: 300000 },
-    );
+    await client.connect();
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return {
-      error: "Powerpipe benchmark failed",
-      detail: message,
-      benchmark,
-    };
+    return { error: `Failed to connect to steampipe: ${message}` };
   }
 
-  let raw: Record<string, unknown>;
-  try {
-    raw = JSON.parse(rawOutput);
-  } catch {
-    return { error: "Failed to parse powerpipe output", raw_length: rawOutput.length };
-  }
+  const findings: Finding[] = [];
+  let checksRun = 0;
 
-  const { summary, failures } = parseResults(raw);
-  const now = new Date();
-
-  const result: ComplianceResult = {
-    generated: now.toISOString(),
-    benchmark,
-    summary,
-    critical_failures: failures.slice(0, 50),
-  };
-
-  // Compare against last run
-  let comparison: {
-    alert: boolean;
-    new_failures: number;
-    resolved: number;
-    delta: Record<string, number>;
-  } | null = null;
-
-  if (compare_last) {
-    const lastRun = loadLastRun();
-    if (lastRun) {
-      const lastFailTitles = new Set(
-        lastRun.critical_failures.map((f) => f.title),
-      );
-      const currentFailTitles = new Set(failures.map((f) => f.title));
-
-      const newFailures = failures.filter((f) => !lastFailTitles.has(f.title));
-      const resolved = lastRun.critical_failures.filter(
-        (f) => !currentFailTitles.has(f.title),
-      );
-
-      comparison = {
-        alert: newFailures.length > 0,
-        new_failures: newFailures.length,
-        resolved: resolved.length,
-        delta: {
-          total: summary.total - lastRun.summary.total,
-          passing: summary.passing - lastRun.summary.passing,
-          failing: summary.failing - lastRun.summary.failing,
-        },
-      };
+  for (const check of CHECKS) {
+    try {
+      const finding = await runCheck(client, check);
+      findings.push(finding);
+      checksRun++;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      findings.push({
+        category: check.category,
+        status: "alarm",
+        count: -1,
+        details: [{ error: message, query: check.label }],
+      });
+      checksRun++;
     }
   }
 
-  // Save as last run
-  writeFileSync(LAST_RUN_PATH, JSON.stringify(result, null, 2));
+  await client.end();
 
-  // Log
-  appendFileSync(
-    COMPLIANCE_LOG,
-    JSON.stringify({
-      timestamp: now.toISOString(),
-      benchmark,
-      total: summary.total,
-      passing: summary.passing,
-      failing: summary.failing,
-      new_failures: comparison?.new_failures || 0,
-      alert: comparison?.alert || false,
-    }) + "\n",
+  const alarmCount = findings.filter((f) => f.status === "alarm" && f.count > 0).length;
+  const okCount = findings.filter((f) => f.status === "ok").length;
+  const totalFindings = findings.reduce(
+    (sum, f) => sum + (f.count > 0 ? f.count : 0),
+    0,
   );
 
   return {
-    ...result,
-    comparison,
-    alert: comparison?.alert || false,
-    pass_rate:
-      summary.total > 0
-        ? `${((summary.passing / summary.total) * 100).toFixed(1)}%`
-        : "N/A",
+    generated: new Date().toISOString(),
+    checks_run: checksRun,
+    findings,
+    summary: {
+      alarm: alarmCount,
+      ok: okCount,
+      total_findings: totalFindings,
+    },
   };
 }

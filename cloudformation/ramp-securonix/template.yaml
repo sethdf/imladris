@@ -1,0 +1,186 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Ramp Audit Log -> Securonix SIEM Integration (S3 Pull)
+  Polls Ramp audit log API every 5 minutes, transforms events,
+  writes NDJSON to S3. Securonix ingester polls via SQS/S3.
+
+Parameters:
+  RampClientId:
+    Type: String
+    NoEcho: true
+    Description: Ramp API OAuth2 Client ID
+  RampClientSecret:
+    Type: String
+    NoEcho: true
+    Description: Ramp API OAuth2 Client Secret
+
+Resources:
+  # Secrets Manager - Ramp credentials
+  RampSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: ramp-securonix/ramp-credentials
+      Description: Ramp API OAuth2 credentials for audit log ingestion
+      SecretString: !Sub |
+        {
+          "client_id": "${RampClientId}",
+          "client_secret": "${RampClientSecret}"
+        }
+
+  # SSM Parameter Store - cursor state
+  CursorParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /ramp-securonix/last-cursor
+      Type: String
+      Value: 'NONE'
+      Description: Last cursor position for Ramp audit log pagination
+
+  # SQS Queue - Securonix polls this for new S3 objects
+  NotificationQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: securonix-ramp-auditlog
+      MessageRetentionPeriod: 1209600  # 14 days
+      VisibilityTimeout: 300
+
+  # SQS Queue Policy - allow S3 to send notifications
+  NotificationQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref NotificationQueue
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowS3Notifications
+            Effect: Allow
+            Principal:
+              Service: s3.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt NotificationQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !Sub arn:aws:s3:::ramp-auditlog-securonix
+
+  # S3 Bucket - Lambda writes NDJSON files here
+  AuditLogBucket:
+    Type: AWS::S3::Bucket
+    DependsOn:
+      - NotificationQueuePolicy
+    Properties:
+      BucketName: ramp-auditlog-securonix
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteAfter30Days
+            Status: Enabled
+            ExpirationInDays: 30
+      NotificationConfiguration:
+        QueueConfigurations:
+          - Event: s3:ObjectCreated:*
+            Queue: !GetAtt NotificationQueue.Arn
+
+  # IAM Role for Lambda
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: ramp-securonix-lambda-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: ramp-securonix-lambda-policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: SecretsManagerRead
+                Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref RampSecret
+              - Sid: SSMParameterReadWrite
+                Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:PutParameter
+                Resource:
+                  - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/ramp-securonix/last-cursor
+              - Sid: S3WriteAuditLogs
+                Effect: Allow
+                Action:
+                  - s3:PutObject
+                Resource:
+                  - !Sub arn:aws:s3:::ramp-auditlog-securonix/*
+
+  # Lambda Function
+  RampSecuronixFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: ramp-securonix-audit-ingestion
+      Description: Polls Ramp audit logs and writes to S3 for Securonix ingestion
+      Runtime: python3.12
+      Handler: lambda_function.lambda_handler
+      Code:
+        ZipFile: |
+          # Placeholder - deploy actual code via aws lambda update-function-code
+          def lambda_handler(event, context):
+              return {"statusCode": 200, "message": "placeholder"}
+      Timeout: 300
+      MemorySize: 256
+      Environment:
+        Variables:
+          RAMP_SECRET_ARN: !Ref RampSecret
+          S3_BUCKET_NAME: !Ref AuditLogBucket
+          CURSOR_PARAM_NAME: /ramp-securonix/last-cursor
+      Role: !GetAtt LambdaExecutionRole.Arn
+
+  # EventBridge Rule - 5 minute schedule
+  ScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: ramp-securonix-5min-schedule
+      Description: Trigger Ramp audit log ingestion every 5 minutes
+      ScheduleExpression: rate(5 minutes)
+      State: DISABLED
+      Targets:
+        - Arn: !GetAtt RampSecuronixFunction.Arn
+          Id: RampSecuronixTarget
+
+  # Permission for EventBridge to invoke Lambda
+  SchedulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref RampSecuronixFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ScheduleRule.Arn
+
+Outputs:
+  LambdaFunctionArn:
+    Description: ARN of the Ramp-Securonix Lambda function
+    Value: !GetAtt RampSecuronixFunction.Arn
+  LambdaFunctionName:
+    Description: Name of the Lambda function
+    Value: !Ref RampSecuronixFunction
+  RampSecretArn:
+    Description: ARN of the Ramp credentials secret
+    Value: !Ref RampSecret
+  AuditLogBucketName:
+    Description: S3 bucket for Ramp audit log NDJSON files
+    Value: !Ref AuditLogBucket
+  NotificationQueueUrl:
+    Description: SQS queue URL for S3 notifications (configure in Securonix)
+    Value: !Ref NotificationQueue
+  NotificationQueueArn:
+    Description: SQS queue ARN
+    Value: !GetAtt NotificationQueue.Arn
+  ScheduleRuleName:
+    Description: EventBridge schedule rule (starts DISABLED)
+    Value: !Ref ScheduleRule

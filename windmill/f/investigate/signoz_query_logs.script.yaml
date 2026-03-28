@@ -1,0 +1,32 @@
+summary: ''
+description: ''
+lock: '!inline f/investigate/signoz_query_logs.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    limit:
+      type: number
+      description: ''
+      default: 100
+    minutes:
+      type: number
+      description: ''
+      default: 60
+    query:
+      type: string
+      description: ''
+      default: ''
+      originalType: string
+    service_name:
+      type: string
+      description: ''
+      default: null
+      originalType: string
+    severity_text:
+      type: string
+      description: ''
+      default: null
+      originalType: string
+  required: []

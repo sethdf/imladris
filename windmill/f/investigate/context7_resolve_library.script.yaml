@@ -1,18 +1,20 @@
 summary: ''
 description: ''
-lock: '!inline f/devops/cost_report.script.lock'
+lock: '!inline f/investigate/context7_resolve_library.script.lock'
 kind: script
 schema:
   $schema: https://json-schema.org/draft/2020-12/schema
   type: object
   properties:
-    format:
+    library_name:
       type: string
       description: ''
-      default: text
+      default: null
       originalType: string
-    lookback_days:
-      type: number
+    query:
+      type: string
       description: ''
-      default: 1
-  required: []
+      default: documentation
+      originalType: string
+  required:
+    - library_name

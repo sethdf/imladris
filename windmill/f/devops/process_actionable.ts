@@ -862,6 +862,46 @@ export async function main(
     }
   }
 
+  // ── Phase 2.5: Slack notification for data source gaps ──
+  let phase2DataSourceAlerts = 0;
+  for (const item of readyItems) {
+    try {
+      const invFull = JSON.parse((item as any).investigation_result || "null");
+      const gaps = invFull?.missing_data_sources as Array<{ name: string; reason: string }> | undefined;
+      if (!gaps?.length) continue;
+
+      const slackToken = await getVariable("f/devops/slack_user_token");
+      const slackChannel = await getVariable("f/devops/slack_approval_channel");
+      if (!slackToken) continue;
+
+      const gapList = gaps.map((g: { name: string; reason: string }) =>
+        `- *${g.name}*: ${g.reason}`
+      ).join("\n");
+
+      const text = `investigation couldn't fully resolve \`${item.subject.slice(0, 80)}\` — missing access to:\n\n${gapList}\n\nneed these data sources configured before this type of alert can be fully investigated.`;
+
+      await fetch("https://slack.com/api/chat.postMessage", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${slackToken}`,
+          "Content-Type": "application/json; charset=utf-8",
+        },
+        body: JSON.stringify({
+          channel: slackChannel || "U06H2KKCCET",
+          text: `[DATA SOURCE GAP] ${gaps.length} missing source(s) for: ${item.subject.slice(0, 80)}`,
+          blocks: [
+            { type: "section", text: { type: "mrkdwn", text: `:warning: *Missing Data Sources*\n${text}` } },
+            { type: "context", elements: [{ type: "mrkdwn", text: `dedup: \`${item.dedup_hash.slice(0, 12)}\`` }] },
+          ],
+        }),
+      });
+      phase2DataSourceAlerts++;
+    } catch { /* non-fatal */ }
+  }
+  if (phase2DataSourceAlerts > 0) {
+    console.log(`[process_actionable] Phase 2.5: data source gap alerts sent: ${phase2DataSourceAlerts}`);
+  }
+
   console.log(`[process_actionable] Phase 2 complete: tasks_created=${phase2TasksCreated}, notes_added=${phase2NotesAdded}`);
 
   // ════════════════════════════════════════════════════
@@ -1021,8 +1061,8 @@ export async function main(
             severity: invResult.diagnosis?.severity || item.urgency,
             action_type: proposal.action_type || "automated",
             description: proposal.description || "",
-            commands: proposal.commands || [],
-            rollback_commands: proposal.rollback_commands || [],
+            commands: Array.isArray(proposal.commands) ? proposal.commands : [],
+            rollback_commands: Array.isArray(proposal.rollback_commands) ? proposal.rollback_commands : [],
           });
 
           if (!remId) {
@@ -1030,13 +1070,54 @@ export async function main(
             continue;
           }
 
+          const severity = (invResult.diagnosis?.severity || "unknown").toUpperCase();
+
+          // Create SDP task for remediation tracking
+          let remSdpLink = sdpLink;
+          try {
+            const actionType = (proposal.action_type || "fix").replace(/_/g, " ");
+            const sdpTitle = `${actionType} — ${proposal.target_resource.slice(0, 80)}`;
+            const diagSummary = (invResult.diagnosis?.summary || item.subject).slice(0, 200);
+            const actionDesc = (proposal.description || proposal.playbook || "").slice(0, 200);
+            const sdpDesc = [
+              `<p>${diagSummary}</p>`,
+              `<ul>`,
+              `<li><b>target:</b> ${proposal.target_resource}</li>`,
+              `<li><b>action:</b> ${actionDesc}</li>`,
+              proposal.blast_radius ? `<li><b>blast radius:</b> ${proposal.blast_radius}</li>` : "",
+              proposal.rollback_plan ? `<li><b>rollback:</b> ${(proposal.rollback_plan || "").slice(0, 200)}</li>` : "",
+              `</ul>`,
+              `<p>remediation id: ${remId} — awaiting approval in slack</p>`,
+            ].filter(Boolean).join("\n");
+
+            const taskResult = await createSdpTask(
+              sdpTitle,
+              sdpDesc,
+              severity === "CRITICAL" || severity === "HIGH" ? "High" : "Medium",
+              "Seth Foley",
+              "Open",
+              baseUrl,
+              apiKey,
+            );
+            if (taskResult.success && taskResult.task_id) {
+              const sdpBase = baseUrl.replace("/api/v3", "").replace(/\/+$/, "");
+              remSdpLink = `${sdpBase}/ui/tasks/${taskResult.task_id}/details`;
+              cacheLib.updateRemediationStatus(remId, "pending", {
+                task_id: taskResult.task_id,
+                sdp_link: remSdpLink,
+              });
+              console.log(`[process_actionable] [P4] SDP remediation task created: ${taskResult.task_id}`);
+            }
+          } catch (err: any) {
+            console.error(`[process_actionable] [P4] SDP task failed: ${err.message?.slice(0, 200)}`);
+          }
+
           // Send Slack approval message (Block Kit — distinct from regular messages)
           const slackToken = await getVariable("f/devops/slack_user_token");
           const slackChannel = await getVariable("f/devops/slack_approval_channel");
-          const approvalChannel = slackChannel || "general"; // fallback
+          const approvalChannel = slackChannel || "U06H2KKCCET"; // fallback to Seth DM — never a channel
 
           if (slackToken) {
-            const severity = (invResult.diagnosis?.severity || "unknown").toUpperCase();
             const confidenceEmoji = proposal.remediation_confidence === "high" ? ":large_green_circle:" :
                                     proposal.remediation_confidence === "medium" ? ":large_yellow_circle:" : ":red_circle:";
 
@@ -1098,7 +1179,7 @@ export async function main(
                   type: "mrkdwn",
                   text: [
                     `*Remediation ID:* \`${remId}\``,
-                    sdpLink ? `*SDP Task:* <${sdpLink}|View in SDP>` : "",
+                    remSdpLink ? `*SDP Task:* <${remSdpLink}|View in SDP>` : "",
                     `\nTo approve: run \`approve_remediation\` with \`remediation_id: ${remId}\``,
                     `To reject: run \`approve_remediation\` with \`remediation_id: ${remId}, action: reject\``,
                   ].filter(Boolean).join("\n"),

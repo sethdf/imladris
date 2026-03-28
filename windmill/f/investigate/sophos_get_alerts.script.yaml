@@ -1,0 +1,57 @@
+summary: ''
+description: ''
+lock: '!inline f/investigate/sophos_get_alerts.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    category:
+      type: string
+      description: ''
+      default: null
+      enum:
+        - azure
+        - adSync
+        - applicationControl
+        - appReputation
+        - blockListed
+        - connectivity
+        - encryption
+        - denc
+        - downloadReputation
+        - endpointFirewall
+        - fakeAV
+        - general
+        - iaas
+        - iaasAzure
+        - isolation
+        - malware
+        - mtr
+        - mobiles
+        - policy
+        - protection
+        - pua
+        - runtimeDetections
+        - security
+        - smc
+        - systemHealth
+        - uav
+        - utm
+        - wireless
+        - xgEmail
+      originalType: enum
+    limit:
+      type: number
+      description: ''
+      default: 50
+    severity:
+      type: string
+      description: ''
+      default: null
+      enum:
+        - high
+        - medium
+        - low
+      originalType: enum
+  required: []

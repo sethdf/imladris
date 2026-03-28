@@ -1,0 +1,39 @@
+summary: ''
+description: ''
+lock: '!inline f/investigate/cloudflare_get_dns.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    type:
+      type: string
+      description: ''
+      default: null
+      enum:
+        - A
+        - AAAA
+        - CNAME
+        - MX
+        - TXT
+        - NS
+        - SRV
+        - CAA
+        - SPF
+      originalType: enum
+    limit:
+      type: number
+      description: ''
+      default: 100
+    search:
+      type: string
+      description: ''
+      default: null
+      originalType: string
+    zone_id:
+      type: string
+      description: ''
+      default: null
+      originalType: string
+  required:
+    - zone_id

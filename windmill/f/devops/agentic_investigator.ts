@@ -699,6 +699,214 @@ const TOOLS: ToolConfiguration = {
         },
       },
     },
+    // ── Sophos Central tools ──
+    {
+      toolSpec: {
+        name: "sophos_list_endpoints",
+        description: "List managed endpoints from Sophos Central with health status. Use to check endpoint protection status, find unhealthy machines, or verify tamper protection.",
+        inputSchema: {
+          json: {
+            type: "object",
+            properties: {
+              search: { type: "string", description: "Search by hostname or IP" },
+              health_status: { type: "string", enum: ["good", "suspicious", "bad"], description: "Filter by health status" },
+              type: { type: "string", enum: ["computer", "server"], description: "Filter by endpoint type" },
+              limit: { type: "number", description: "Max results (default 50)" },
+            },
+            required: [],
+          },
+        },
+      },
+    },
+    {
+      toolSpec: {
+        name: "sophos_get_alerts",
+        description: "Get security alerts from Sophos Central. Use to check for malware detections, policy violations, endpoint threats, and security events.",
+        inputSchema: {
+          json: {
+            type: "object",
+            properties: {
+              category: { type: "string", description: "Alert category (e.g., malware, pua, runtimeDetections, policy, protection)" },
+              severity: { type: "string", enum: ["high", "medium", "low"], description: "Filter by severity" },
+              limit: { type: "number", description: "Max results (default 50)" },
+            },
+            required: [],
+          },
+        },
+      },
+    },
+    {
+      toolSpec: {
+        name: "sophos_get_events",
+        description: "Query SIEM events from Sophos Central. Use to investigate endpoint activity, threat detections, and security events over a time range.",
+        inputSchema: {
+          json: {
+            type: "object",
+            properties: {
+              hours: { type: "number", description: "Lookback hours (default 24)" },
+              event_type: { type: "string", description: "Filter events by type or name keyword" },
+              limit: { type: "number", description: "Max results (default 100)" },
+            },
+            required: [],
+          },
+        },
+      },
+    },
+    // ── SigNoz tools ──
+    {
+      toolSpec: {
+        name: "signoz_query_logs",
+        description: "Search application and infrastructure logs in SigNoz. Use to investigate errors, trace requests, and find log entries matching a query string.",
+        inputSchema: {
+          json: {
+            type: "object",
+            properties: {
+              query: { type: "string", description: "Search string to match in log body" },
+              minutes: { type: "number", description: "Lookback minutes (default 60)" },
+              limit: { type: "number", description: "Max results (default 100)" },
+              severity_text: { type: "string", description: "Filter by severity (ERROR, WARN, INFO, DEBUG)" },
+              service_name: { type: "string", description: "Filter by service name" },
+            },
+            required: [],
+          },
+        },
+      },
+    },
+    {
+      toolSpec: {
+        name: "signoz_get_alerts",
+        description: "Get alert rules and their firing status from SigNoz. Use to check which monitoring alerts are currently firing or recently triggered.",
+        inputSchema: {
+          json: {
+            type: "object",
+            properties: {
+              status: { type: "string", enum: ["firing", "inactive", "disabled"], description: "Filter by alert state" },
+            },
+            required: [],
+          },
+        },
+      },
+    },
+    {
+      toolSpec: {
+        name: "signoz_query_metrics",
+        description: "Query infrastructure and application metrics from SigNoz. Use to check CPU, memory, request rates, error rates, and custom metrics over time.",
+        inputSchema: {
+          json: {
+            type: "object",
+            properties: {
+              metric_name: { type: "string", description: "Metric name (e.g., system.cpu.utilization, http.server.request.duration)" },
+              minutes: { type: "number", description: "Lookback minutes (default 60)" },
+              aggregate: { type: "string", enum: ["avg", "sum", "min", "max", "count", "rate"], description: "Aggregation function (default avg)" },
+              group_by: { type: "string", description: "Group by tag key" },
+              service_name: { type: "string", description: "Filter by service name" },
+            },
+            required: ["metric_name"],
+          },
+        },
+      },
+    },
+    // ── Cloudflare tools ──
+    {
+      toolSpec: {
+        name: "cloudflare_list_zones",
+        description: "List DNS zones managed in Cloudflare. Use to find zone IDs needed for DNS or firewall queries, check zone status, and verify configuration.",
+        inputSchema: {
+          json: {
+            type: "object",
+            properties: {
+              search: { type: "string", description: "Search by domain name" },
+              status: { type: "string", enum: ["active", "pending", "initializing", "moved", "deleted", "deactivated"], description: "Filter by zone status" },
+              limit: { type: "number", description: "Max results (default 50)" },
+            },
+            required: [],
+          },
+        },
+      },
+    },
+    {
+      toolSpec: {
+        name: "cloudflare_get_dns",
+        description: "Get DNS records for a Cloudflare zone. Use to verify DNS configuration, check record values, and investigate DNS-related issues. Requires zone_id from cloudflare_list_zones.",
+        inputSchema: {
+          json: {
+            type: "object",
+            properties: {
+              zone_id: { type: "string", description: "Cloudflare zone ID (from cloudflare_list_zones)" },
+              search: { type: "string", description: "Search by record name" },
+              type: { type: "string", enum: ["A", "AAAA", "CNAME", "MX", "TXT", "NS", "SRV", "CAA", "SPF"], description: "Filter by record type" },
+              limit: { type: "number", description: "Max results (default 100)" },
+            },
+            required: ["zone_id"],
+          },
+        },
+      },
+    },
+    {
+      toolSpec: {
+        name: "cloudflare_get_firewall_events",
+        description: "Query WAF and firewall events for a Cloudflare zone. Use to investigate blocked requests, DDoS events, and security incidents. Requires zone_id from cloudflare_list_zones.",
+        inputSchema: {
+          json: {
+            type: "object",
+            properties: {
+              zone_id: { type: "string", description: "Cloudflare zone ID (from cloudflare_list_zones)" },
+              hours: { type: "number", description: "Lookback hours (default 24)" },
+              action: { type: "string", enum: ["block", "challenge", "js_challenge", "managed_challenge", "allow", "log", "bypass"], description: "Filter by firewall action" },
+              limit: { type: "number", description: "Max results (default 50)" },
+            },
+            required: ["zone_id"],
+          },
+        },
+      },
+    },
+    {
+      toolSpec: {
+        name: "context7_resolve_library",
+        description: "Resolve a vendor or library name to a Context7 library ID for documentation lookups. Call this first to get the library_id, then use context7_query_docs to retrieve relevant documentation. Useful for looking up AWS, Cloudflare, Okta, Azure, Tailscale, and other vendor documentation during investigations.",
+        inputSchema: {
+          json: {
+            type: "object",
+            properties: {
+              library_name: { type: "string", description: "Vendor or library name to search (e.g., 'aws', 'cloudflare', 'okta', 'azure')" },
+              query: { type: "string", description: "Context for the search to rank results by relevance (default: 'documentation')" },
+            },
+            required: ["library_name"],
+          },
+        },
+      },
+    },
+    {
+      toolSpec: {
+        name: "context7_query_docs",
+        description: "Query vendor documentation from Context7. Returns up-to-date documentation snippets and code examples for a specific library. Requires a library_id from context7_resolve_library (e.g., '/websites/aws_amazon'). Use this to look up API usage, CLI commands, configuration options, and troubleshooting guides during investigations.",
+        inputSchema: {
+          json: {
+            type: "object",
+            properties: {
+              library_id: { type: "string", description: "Context7 library ID (e.g., '/websites/aws_amazon', '/cloudflare/cloudflare-docs'). Get this from context7_resolve_library." },
+              query: { type: "string", description: "Specific question about the library (e.g., 'how to list EC2 instances', 'WAF rule configuration')" },
+            },
+            required: ["library_id", "query"],
+          },
+        },
+      },
+    },
+    {
+      toolSpec: {
+        name: "query_steampipe",
+        description: "Run a read-only SQL query against steampipe for cross-account AWS resource lookups. Steampipe provides unified SQL access to all 16 Buxton AWS accounts (aws, aws_prod, aws_ai_dev, aws_audit, aws_dev01, aws_qat, aws_uat, aws_testing, aws_contractors, aws_dr, aws_data_collection, aws_logs, aws_log_archive, aws_org, aws_dev, aws_imladris) plus AzureAD, Cloudflare, and GitHub. Use standard PostgreSQL syntax. Common tables: aws_ec2_instance, aws_s3_bucket, aws_iam_user, aws_vpc_security_group, aws_cloudtrail_trail_event, aws_rds_db_instance, aws_lambda_function, aws_ecs_service, aws_cost_by_service_daily. Results limited to 100 rows. No write operations allowed.",
+        inputSchema: {
+          json: {
+            type: "object",
+            properties: {
+              query: { type: "string", description: "SQL query to execute against steampipe (e.g., \"SELECT instance_id, instance_state, account_id FROM aws_ec2_instance WHERE instance_state = 'running'\")" },
+            },
+            required: ["query"],
+          },
+        },
+      },
+    },
   ],
 };
 

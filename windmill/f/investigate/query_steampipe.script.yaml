@@ -1,18 +1,15 @@
 summary: ''
 description: ''
-lock: '!inline f/devops/cost_report.script.lock'
+lock: '!inline f/investigate/query_steampipe.script.lock'
 kind: script
 schema:
   $schema: https://json-schema.org/draft/2020-12/schema
   type: object
   properties:
-    format:
+    query:
       type: string
       description: ''
-      default: text
+      default: null
       originalType: string
-    lookback_days:
-      type: number
-      description: ''
-      default: 1
-  required: []
+  required:
+    - query

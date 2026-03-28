@@ -1,0 +1,41 @@
+summary: ''
+description: ''
+lock: '!inline f/investigate/signoz_query_metrics.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    aggregate:
+      type: string
+      description: ''
+      default: avg
+      enum:
+        - avg
+        - sum
+        - min
+        - max
+        - count
+        - rate
+      originalType: enum
+    group_by:
+      type: string
+      description: ''
+      default: null
+      originalType: string
+    metric_name:
+      type: string
+      description: ''
+      default: null
+      originalType: string
+    minutes:
+      type: number
+      description: ''
+      default: 60
+    service_name:
+      type: string
+      description: ''
+      default: null
+      originalType: string
+  required:
+    - metric_name

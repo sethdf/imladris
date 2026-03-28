@@ -119,7 +119,9 @@ export function init(): boolean {
       "ALTER TABLE triage_results ADD COLUMN incident_id TEXT DEFAULT NULL",
     ];
     for (const migration of migrations) {
-      try { db.exec(migration); } catch { /* Column already exists — expected on subsequent runs */ }
+      try { db.exec(migration); } catch (e: any) {
+        if (!String(e?.message).includes("duplicate column")) console.warn(`[cache_lib] Migration warning: ${e?.message?.slice(0, 200)}`);
+      }
     }
     try {
       db.exec("CREATE INDEX IF NOT EXISTS idx_triage_results_task ON triage_results(task_id)");
@@ -244,7 +246,9 @@ export function init(): boolean {
       "ALTER TABLE pending_remediations ADD COLUMN rollback_commands TEXT DEFAULT '[]'",
     ];
     for (const migration of remMigrations) {
-      try { db.exec(migration); } catch { /* Column already exists */ }
+      try { db.exec(migration); } catch (e: any) {
+        if (!String(e?.message).includes("duplicate column")) console.warn(`[cache_lib] Migration warning: ${e?.message?.slice(0, 200)}`);
+      }
     }
 
     // ── Resource inventory table (auto-discovery) ──
@@ -1539,7 +1543,7 @@ export function getPendingRemediations(): any[] {
 export function updateRemediationStatus(
   id: string,
   status: string,
-  extraFields?: { slack_ts?: string; slack_channel?: string; pre_state?: string; execution_result?: string; verification_result?: string },
+  extraFields?: { slack_ts?: string; slack_channel?: string; pre_state?: string; execution_result?: string; verification_result?: string; task_id?: string; sdp_link?: string },
 ): boolean {
   const db = getDb();
   if (!db) return false;
@@ -1555,6 +1559,8 @@ export function updateRemediationStatus(
     if (extraFields?.pre_state) { sets.push("pre_state = ?"); params.push(extraFields.pre_state); }
     if (extraFields?.execution_result) { sets.push("execution_result = ?"); params.push(extraFields.execution_result); }
     if (extraFields?.verification_result) { sets.push("verification_result = ?"); params.push(extraFields.verification_result); }
+    if (extraFields?.task_id) { sets.push("task_id = ?"); params.push(extraFields.task_id); }
+    if (extraFields?.sdp_link) { sets.push("sdp_link = ?"); params.push(extraFields.sdp_link); }
     params.push(id);
     db.prepare(`UPDATE pending_remediations SET ${sets.join(", ")} WHERE id = ?`).run(...params);
     db.close();

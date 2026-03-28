@@ -1,0 +1,36 @@
+summary: ''
+description: ''
+lock: '!inline f/investigate/cloudflare_get_firewall_events.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    action:
+      type: string
+      description: ''
+      default: null
+      enum:
+        - block
+        - challenge
+        - js_challenge
+        - managed_challenge
+        - allow
+        - log
+        - bypass
+      originalType: enum
+    hours:
+      type: number
+      description: ''
+      default: 24
+    limit:
+      type: number
+      description: ''
+      default: 50
+    zone_id:
+      type: string
+      description: ''
+      default: null
+      originalType: string
+  required:
+    - zone_id

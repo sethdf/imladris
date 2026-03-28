@@ -1,0 +1,8 @@
+schedule: 0 */30 * * * *
+timezone: America/New_York
+enabled: true
+script_path: f/devops/parse_windmill_logs
+is_flow: false
+args: {}
+summary: Parse failed job logs with Haiku and alert on actionable errors every 30 minutes
+no_flow_overlap: true

@@ -1,18 +1,22 @@
 summary: ''
 description: ''
-lock: '!inline f/devops/cost_report.script.lock'
+lock: '!inline f/investigate/sophos_get_events.script.lock'
 kind: script
 schema:
   $schema: https://json-schema.org/draft/2020-12/schema
   type: object
   properties:
-    format:
+    event_type:
       type: string
       description: ''
-      default: text
+      default: null
       originalType: string
-    lookback_days:
+    hours:
       type: number
       description: ''
-      default: 1
+      default: 24
+    limit:
+      type: number
+      description: ''
+      default: 100
   required: []

@@ -9,9 +9,11 @@ schema:
     benchmark:
       type: string
       description: ''
-      default: aws_compliance.benchmark.cis_v300
-    compare_last:
-      type: boolean
+      default: ''
+      originalType: string
+    format:
+      type: string
       description: ''
-      default: true
+      default: json
+      originalType: string
   required: []

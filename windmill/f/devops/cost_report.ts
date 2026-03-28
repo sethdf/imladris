@@ -1,32 +1,29 @@
 // Windmill Script: Daily Cost Report
 // Decision 26: Automatic daily reports — AWS cost breakdown via Steampipe
 //
-// Requires: steampipe with aws plugin configured
-
-import { execSync } from "child_process";
-import { appendFileSync, existsSync, mkdirSync } from "fs";
-import { join } from "path";
-import { homedir } from "os";
-
-const HOME = homedir();
-const COST_LOG = join(HOME, ".claude", "logs", "cost-reports.jsonl");
+// Connects to Steampipe's PostgreSQL interface at 172.17.0.1:9193
 
 interface CostEntry {
   service: string;
   cost: number;
 }
 
-function ensureDirs(): void {
-  const logDir = join(HOME, ".claude", "logs");
-  if (!existsSync(logDir)) mkdirSync(logDir, { recursive: true });
-}
-
-function steampipeAvailable(): boolean {
+async function getVariable(path: string): Promise<string | undefined> {
+  const base = process.env.BASE_INTERNAL_URL || "http://windmill_server:8000";
+  const token = process.env.WM_TOKEN;
+  const workspace = process.env.WM_WORKSPACE || "imladris";
+  if (!token) return undefined;
   try {
-    execSync("which steampipe", { encoding: "utf-8", timeout: 2000 });
-    return true;
+    const resp = await fetch(
+      `${base}/api/w/${workspace}/variables/get_value/${path}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    if (!resp.ok) return undefined;
+    const val = await resp.text();
+    const parsed = val.startsWith('"') ? JSON.parse(val) : val;
+    return parsed.trim();
   } catch {
-    return false;
+    return undefined;
   }
 }
 
@@ -34,30 +31,39 @@ export async function main(
   lookback_days: number = 1,
   format: string = "text",
 ) {
-  ensureDirs();
-
-  if (!steampipeAvailable()) {
-    return {
-      error: "steampipe not installed or not in PATH",
-      setup: "Install steampipe and the aws plugin: steampipe plugin install aws",
-    };
+  const password = await getVariable("f/devops/steampipe_password");
+  if (!password) {
+    return { error: "Could not retrieve steampipe_password from Windmill variables" };
   }
 
-  const query = `select service, unblended_cost_amount::numeric as cost from aws_cost_by_service_daily where period_start >= now() - interval '${lookback_days} day' group by service, cost order by cost desc limit 20`;
+  const query = `
+    SELECT service, SUM(unblended_cost_amount::numeric) AS cost
+    FROM aws_cost_by_service_daily
+    WHERE period_start >= now() - interval '${lookback_days} day'
+    GROUP BY service
+    ORDER BY cost DESC
+    LIMIT 20
+  `;
 
   let entries: CostEntry[] = [];
   let totalCost = 0;
 
   try {
-    const result = execSync(
-      `steampipe query --output json "${query}"`,
-      { encoding: "utf-8", timeout: 30000 },
-    );
+    const { Client } = (await import("pg")) as any;
+    const client = new Client({
+      host: "172.17.0.1",
+      port: 9193,
+      database: "steampipe",
+      user: "steampipe",
+      password,
+      connectionTimeoutMillis: 5000,
+      query_timeout: 30000,
+    });
+    await client.connect();
+    const result = await client.query(query);
+    await client.end();
 
-    const parsed = JSON.parse(result);
-    const rows = parsed.rows || parsed || [];
-
-    entries = rows.map((r: Record<string, unknown>) => ({
+    entries = (result.rows || []).map((r: Record<string, unknown>) => ({
       service: String(r.service || "Unknown"),
       cost: Number(r.cost || 0),
     }));
@@ -65,27 +71,10 @@ export async function main(
     totalCost = entries.reduce((sum, e) => sum + e.cost, 0);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return {
-      error: "Steampipe query failed",
-      detail: message,
-      query,
-    };
+    return { error: `Steampipe query failed: ${message}` };
   }
 
   const now = new Date();
-
-  // Log
-  appendFileSync(
-    COST_LOG,
-    JSON.stringify({
-      timestamp: now.toISOString(),
-      lookback_days,
-      total_cost: Math.round(totalCost * 100) / 100,
-      service_count: entries.length,
-      top_service: entries[0]?.service || "none",
-      top_cost: entries[0]?.cost || 0,
-    }) + "\n",
-  );
 
   const report = {
     generated: now.toISOString(),

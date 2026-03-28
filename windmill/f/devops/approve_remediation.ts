@@ -9,7 +9,7 @@
 // CRITICAL: This is the ONLY path to execute write actions.
 // Safety boundary: only aws/az CLI commands allowed for automated execution.
 
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 
 // ── Windmill helpers ──
 
@@ -71,17 +71,27 @@ async function postSlack(channel: string, text: string, blocks?: any[]): Promise
 }
 
 // ── Safety: only aws/az CLI commands allowed ──
+// Uses execFileSync (no shell) to prevent command injection via metacharacters.
 
-const ALLOWED_PREFIXES = ["aws ", "az "];
+const ALLOWED_BINARIES = ["aws", "az"];
+const SHELL_METACHARACTERS = /[;|&`$(){}!#<>\n\r\\]/;
 
 function isCommandSafe(cmd: string): boolean {
   const trimmed = cmd.trim();
-  return ALLOWED_PREFIXES.some(prefix => trimmed.startsWith(prefix));
+  // Reject any shell metacharacters — defense in depth alongside execFileSync
+  if (SHELL_METACHARACTERS.test(trimmed)) return false;
+  return ALLOWED_BINARIES.some(bin => trimmed === bin || trimmed.startsWith(bin + " "));
+}
+
+function parseCommand(cmd: string): { binary: string; args: string[] } {
+  const parts = cmd.trim().split(/\s+/);
+  return { binary: parts[0], args: parts.slice(1) };
 }
 
 function executeCommand(cmd: string): { success: boolean; output: string; error?: string } {
+  const { binary, args } = parseCommand(cmd);
   try {
-    const output = execSync(cmd, { encoding: "utf-8", timeout: 60000 }).trim();
+    const output = execFileSync(binary, args, { encoding: "utf-8", timeout: 60000 }).trim();
     return { success: true, output };
   } catch (e: unknown) {
     const err = e as Error & { stderr?: string };
@@ -340,7 +350,7 @@ export async function main(
     execution_success: true, execution_output: executionOutput,
     verified: verificationResult?.verified,
     verification_summary: verificationResult?.summary || "",
-    alert_domain: "", alert_type: "",
+    alert_domain: alertDomain, alert_type: alertType,
   });
 
   // Post Slack confirmation
