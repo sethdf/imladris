@@ -1,5 +1,4 @@
 ---
-id: cloudformation/index
 sidebar_position: 1
 ---
 

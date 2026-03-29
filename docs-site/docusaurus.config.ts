@@ -5,7 +5,7 @@ import type * as Preset from "@docusaurus/preset-classic";
 const config: Config = {
   title: "Imladris",
   tagline: "Personal cloud workstation — EC2 + Windmill + PAI",
-  favicon: "img/favicon.ico",
+  favicon: undefined,
 
   url: "https://sethdf.github.io",
   baseUrl: "/imladris/",
@@ -32,13 +32,9 @@ const config: Config = {
         entryPointStrategy: "expand",
         tsconfig: "../tsconfig.json",
         out: "api/devops",
-        sidebar: {
-          categoryLabel: "DevOps API",
-          position: 5,
-        },
         name: "DevOps Scripts",
         readme: "none",
-        plugin: ["typedoc-plugin-markdown"],
+        skipErrorChecking: true,
         sourceLinkTemplate:
           "https://github.com/sethdf/imladris/blob/main/{path}#L{line}",
       },
@@ -51,13 +47,9 @@ const config: Config = {
         entryPointStrategy: "expand",
         tsconfig: "../tsconfig.json",
         out: "api/investigate",
-        sidebar: {
-          categoryLabel: "Investigate API",
-          position: 6,
-        },
         name: "Investigation Tools",
         readme: "none",
-        plugin: ["typedoc-plugin-markdown"],
+        skipErrorChecking: true,
         sourceLinkTemplate:
           "https://github.com/sethdf/imladris/blob/main/{path}#L{line}",
       },

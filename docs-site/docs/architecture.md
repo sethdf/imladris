@@ -1,5 +1,4 @@
 ---
-id: architecture
 sidebar_position: 5
 ---
 

@@ -1,5 +1,4 @@
 ---
-id: pai-config
 sidebar_position: 6
 ---
 

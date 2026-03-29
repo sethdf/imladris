@@ -1,5 +1,4 @@
 ---
-id: windmill/devops
 sidebar_position: 1
 ---
 

@@ -1,5 +1,4 @@
 ---
-id: windmill/investigate
 sidebar_position: 2
 ---
 

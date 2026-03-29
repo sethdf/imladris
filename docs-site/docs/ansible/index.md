@@ -1,5 +1,4 @@
 ---
-id: ansible/index
 sidebar_position: 1
 ---
 
