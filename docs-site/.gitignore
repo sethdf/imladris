@@ -1,0 +1,9 @@
+# Dependencies
+node_modules/
+
+# Build output
+build/
+.docusaurus/
+
+# Generated TypeDoc API reference (auto-generated on build)
+docs/api/
