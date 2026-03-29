@@ -4,6 +4,8 @@ sidebar_position: 2
 
 # Investigation Tools
 
+> **Origin: Imladris additive** — These scripts are specific to this workstation's data sources and integrations. They are not part of PAI upstream. PAI's `agentic_investigator` calls these as tools during autonomous investigation; the tools themselves are imladris-specific.
+
 ~45 read-only scripts in `windmill/f/investigate/` are the investigation layer. They are called by `agentic_investigator.ts` during autonomous investigation, and are usable directly from Windmill or via MCP tools in Claude Code.
 
 All scripts are **read-only** — they never modify resources.

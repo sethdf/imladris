@@ -4,6 +4,8 @@ sidebar_position: 1
 
 # DevOps Automation
 
+> **Origin: Imladris additive** — These scripts are specific to this workstation's automation pipeline. They are not part of PAI upstream. PAI provides the AI reasoning layer (Algorithm, Bedrock calls); these scripts provide the data sources, actions, and integrations that PAI acts on.
+
 ~55 Windmill scripts in `windmill/f/devops/` form the automation backbone. They run on schedule, via webhook, or are called by other scripts in the pipeline.
 
 [📁 View all sources → `windmill/f/devops/`](https://github.com/sethdf/imladris/tree/main/windmill/f/devops)

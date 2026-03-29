@@ -4,6 +4,8 @@ sidebar_position: 1
 
 # Ansible
 
+> **Origin: Imladris additive** — These roles configure this specific workstation. They are not part of PAI upstream.
+
 16 roles manage the complete OS-level state of imladris. Run via `ansible-playbook site.yml`.
 
 ## Playbooks

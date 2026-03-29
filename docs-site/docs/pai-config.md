@@ -4,7 +4,9 @@ sidebar_position: 6
 
 # PAI Configuration
 
-`pai-config/` contains the PAI (Personal AI Infrastructure) layer — the hooks, skills, and agents that power Claude Code's behavior on imladris.
+> **Origin: PAI (upstream)** — Everything in this section is part of the [PAI system](https://github.com/danielmiessler/PAI). It is synced from PAI upstream and is not imladris-specific. It would be present in any PAI installation.
+
+`pai-config/` contains the PAI layer — the hooks, skills, and agents that power Claude Code's behavior on imladris.
 
 [📁 View source → `pai-config/`](https://github.com/sethdf/imladris/tree/main/pai-config)
 

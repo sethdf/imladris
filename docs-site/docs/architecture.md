@@ -4,6 +4,8 @@ sidebar_position: 5
 
 # Architecture Decisions
 
+> **Origin: Imladris additive** — These decisions govern this specific workstation's design. PAI has its own architectural principles (Algorithm, MEMORY, ISC methodology); these decisions govern how the imladris infrastructure layer is built on top of PAI.
+
 37 architecture decisions define how imladris is built and how it evolves. Full source: [`ARCHITECTURE.md`](https://github.com/sethdf/imladris/blob/main/ARCHITECTURE.md)
 
 ## Core Vision

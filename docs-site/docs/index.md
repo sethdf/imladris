@@ -28,11 +28,24 @@ Imladris automates the full lifecycle of IT operations work:
 | **Configuration** | Ansible for all OS-level state (16 roles) |
 | **Monitoring** | SigNoz OTel collector + CloudWatch |
 
+## What Comes From Where
+
+Imladris is two things layered together: the **PAI system** (upstream, portable) and the **imladris-specific additions** that make it a working DevOps workstation.
+
+| Layer | Origin | What it includes |
+|-------|--------|-----------------|
+| **PAI** | Upstream from [danielmiessler/PAI](https://github.com/danielmiessler/PAI) | Algorithm, MEMORY, hooks, skills, agents — the AI reasoning and learning system |
+| **Imladris additive** | This repo only | Windmill automation, investigation tools, CloudFormation infra, Ansible OS config |
+
+PAI is the reasoning engine. Imladris gives it infrastructure, tools, and data sources to act on.
+
 ## Areas of Operation
 
-- [**Infrastructure**](/cloudformation) — CloudFormation templates for EC2, IAM, KMS, cross-account roles, SigNoz, Securonix
-- [**Configuration**](/ansible) — Ansible roles for all services (Windmill, Tailscale, Docker, MCP tools, voice, etc.)
-- [**DevOps Automation**](/windmill/devops) — ~55 Windmill scripts for triage, investigation, SDP, Slack, monitoring
-- [**Investigation Tools**](/windmill/investigate) — ~45 read-only scripts for AWS, Azure, Cloudflare, SIEM, Slack, Telegram
-- [**Architecture Decisions**](/architecture) — 37 decisions covering infrastructure, security, and integration patterns
-- [**PAI Configuration**](/pai-config) — Hooks, skills, and agents powering the AI layer
+| Area | Origin | Description |
+|------|--------|-------------|
+| [**Infrastructure**](/cloudformation) | Imladris | CloudFormation templates for EC2, IAM, KMS, cross-account roles, SigNoz, Securonix |
+| [**Configuration**](/ansible) | Imladris | Ansible roles for all services (Windmill, Tailscale, Docker, MCP tools, voice, etc.) |
+| [**DevOps Automation**](/windmill/devops) | Imladris | ~55 Windmill scripts for triage, investigation, SDP, Slack, monitoring |
+| [**Investigation Tools**](/windmill/investigate) | Imladris | ~45 read-only scripts for AWS, Azure, Cloudflare, SIEM, Slack, Telegram |
+| [**Architecture Decisions**](/architecture) | Imladris | 37 decisions covering infrastructure, security, and integration patterns |
+| [**PAI Configuration**](/pai-config) | PAI | Hooks, skills, and agents powering the AI layer |

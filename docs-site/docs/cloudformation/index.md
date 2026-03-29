@@ -4,6 +4,8 @@ sidebar_position: 1
 
 # CloudFormation
 
+> **Origin: Imladris additive** — These templates are specific to this workstation. They are not part of PAI upstream.
+
 All AWS infrastructure is defined as CloudFormation. No manual console changes.
 
 ## Templates
