@@ -50,8 +50,8 @@ services:
     volumes:
       - /local/cache:/local/cache
       - /usr/lib/nodejs20/lib/node_modules/@anthropic-ai:/usr/lib/node_modules/@anthropic-ai:ro
-      - /home/ec2-user/.claude:/home/ec2-user/.claude:rw
-      - /home/ec2-user/.claude.json:/home/ec2-user/.claude.json:rw
+      - /home/ec2-user/.claude:/home/ec2-user/.claude:ro
+      - /home/ec2-user/.claude.json:/home/ec2-user/.claude.json:ro
       - ./scripts/native-worker-entrypoint.sh:/scripts/native-worker-entrypoint.sh:ro
       - ./knowledge:/home/ec2-user/repos/imladris/knowledge:ro
     depends_on:
@@ -74,8 +74,8 @@ services:
     volumes:
       - /local/cache:/local/cache
       - /usr/lib/nodejs20/lib/node_modules/@anthropic-ai:/usr/lib/node_modules/@anthropic-ai:ro
-      - /home/ec2-user/.claude:/home/ec2-user/.claude:rw
-      - /home/ec2-user/.claude.json:/home/ec2-user/.claude.json:rw
+      - /home/ec2-user/.claude:/home/ec2-user/.claude:ro
+      - /home/ec2-user/.claude.json:/home/ec2-user/.claude.json:ro
       - ./scripts/native-worker-entrypoint.sh:/scripts/native-worker-entrypoint.sh:ro
       - ./knowledge:/home/ec2-user/repos/imladris/knowledge:ro
     depends_on:
@@ -97,8 +97,8 @@ services:
     volumes:
       - /local/cache:/local/cache
       - /usr/lib/nodejs20/lib/node_modules/@anthropic-ai:/usr/lib/node_modules/@anthropic-ai:ro
-      - /home/ec2-user/.claude:/home/ec2-user/.claude:rw
-      - /home/ec2-user/.claude.json:/home/ec2-user/.claude.json:rw
+      - /home/ec2-user/.claude:/home/ec2-user/.claude:ro
+      - /home/ec2-user/.claude.json:/home/ec2-user/.claude.json:ro
       - ./scripts/native-worker-entrypoint.sh:/scripts/native-worker-entrypoint.sh:ro
       - ./knowledge:/home/ec2-user/repos/imladris/knowledge:ro
     depends_on:
@@ -120,8 +120,8 @@ services:
     volumes:
       - /local/cache:/local/cache
       - /usr/lib/nodejs20/lib/node_modules/@anthropic-ai:/usr/lib/node_modules/@anthropic-ai:ro
-      - /home/ec2-user/.claude:/home/ec2-user/.claude:rw
-      - /home/ec2-user/.claude.json:/home/ec2-user/.claude.json:rw
+      - /home/ec2-user/.claude:/home/ec2-user/.claude:ro
+      - /home/ec2-user/.claude.json:/home/ec2-user/.claude.json:ro
       - ./scripts/native-worker-entrypoint.sh:/scripts/native-worker-entrypoint.sh:ro
       - ./knowledge:/home/ec2-user/repos/imladris/knowledge:ro
     depends_on:
@@ -143,8 +143,8 @@ services:
     volumes:
       - /local/cache:/local/cache
       - /usr/lib/nodejs20/lib/node_modules/@anthropic-ai:/usr/lib/node_modules/@anthropic-ai:ro
-      - /home/ec2-user/.claude:/home/ec2-user/.claude:rw
-      - /home/ec2-user/.claude.json:/home/ec2-user/.claude.json:rw
+      - /home/ec2-user/.claude:/home/ec2-user/.claude:ro
+      - /home/ec2-user/.claude.json:/home/ec2-user/.claude.json:ro
       - ./scripts/native-worker-entrypoint.sh:/scripts/native-worker-entrypoint.sh:ro
       - ./knowledge:/home/ec2-user/repos/imladris/knowledge:ro
     depends_on:

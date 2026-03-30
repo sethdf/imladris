@@ -8,6 +8,8 @@ sidebar_position: 5
 
 37 architecture decisions define how imladris is built and how it evolves. Full source: [`ARCHITECTURE.md`](https://github.com/sethdf/imladris/blob/main/ARCHITECTURE.md)
 
+> **See also:** [Cognitive Architecture](./cognitive-architecture) — the neuroscience and first-principles rationale behind why these decisions were made.
+
 ## Core Vision
 
 A cloud-based, secure, **deterministic-first** workstation where Claude + PAI is the single interface for all DevOps work. One session. Zero authentication friction. Zero data loss. Zero context friction. Zero downtime.

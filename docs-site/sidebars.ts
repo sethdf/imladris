@@ -8,6 +8,11 @@ const sidebars: SidebarsConfig = {
       label: "Overview",
     },
     {
+      type: "doc",
+      id: "cognitive-architecture",
+      label: "Cognitive Architecture",
+    },
+    {
       type: "category",
       label: "Infrastructure",
       collapsed: false,
