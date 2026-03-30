@@ -462,6 +462,46 @@ These are specific behaviors that violate bedrock principles. The principle is n
 
 ---
 
+## Part XIII: Operational Principles — The Steering Rules Layer
+
+The 16 founding principles explain *why* PAI+imladris is designed as it is. A second tier — the `AISTEERINGRULES.md` — enforces *how* the AI must operate within that design. These are not separate philosophy; they are each a direct enforcement mechanism for one of the 4 bedrock principles, loaded at every session start.
+
+| Operational Rule | Bedrock Principle | Why This Rule Exists |
+|-----------------|-------------------|----------------------|
+| **Surgical fixes only** — never add or remove components as a fix | Falsifiability | Minimal diffs produce falsifiable results; large rewrites obscure what changed |
+| **Never assert without verification** — show evidence, not claims | Falsifiability | A claim without evidence is not falsifiable — it's noise in the feedback loop |
+| **First principles over bolt-ons** — understand → simplify → reduce → add | Falsifiability | Bolt-ons mask root causes and prevent true hypothesis testing |
+| **Build ISC from every request** — decompose to verifiable criteria first | Falsifiability | ISC is Principle #15 (Science as Cognitive Loop) instantiated per task |
+| **One change when debugging** — isolate, verify, proceed | Falsifiability | Changing multiple variables simultaneously destroys experimental validity |
+| **Error recovery** — review, identify violation, fix, capture learning | Falsifiability | Errors are data; the learning loop requires honest post-mortems |
+| **Ask before destructive actions** — force push, rm -rf, prod deploy | Alignment | Irreversible actions bypass the human gate required by Principle #8 |
+| **Plan means stop** — present plan, wait for approval | Alignment | Execution without consent violates the principal-agent boundary |
+| **AskUserQuestion for choices** — structured options, not prose | Alignment | Human decision authority requires clear option surfaces, not buried prose |
+| **Don't modify user content without asking** | Alignment | Seth's words are Seth's; AI does not overwrite the principal's authored content |
+| **Check git remote before push** | Alignment | Verifying intent before irreversible shared-state action |
+| **Minimal scope** — only change what was asked | Bandwidth | Unrequested changes consume Seth's 10 bits/sec review capacity on things not requested |
+| **Read before modifying** | Persistence | Observe current state before changing it; no blind writes |
+| **PAI Inference Tool for AI calls** | Persistence | Consistent tracing and logging of all AI calls through a single instrumented path |
+
+### The Two-Tier Principle Architecture
+
+```
+TIER 1: Founding Principles (PAISYSTEMARCHITECTURE.md)
+  WHY the system exists and is designed this way
+  → 16 principles grounded in cognitive science
+  → Permanent, rarely change
+
+TIER 2: Operational Rules (AISTEERINGRULES.md)
+  HOW the AI must behave within the design
+  → Enforcement mechanisms for the 4 bedrock principles
+  → Force-loaded at every session start via settings.json
+  → Can be updated as failure patterns are observed
+```
+
+The operational rules are the system learning from its own failure patterns. When a rule exists in `AISTEERINGRULES.md`, there is a past incident that motivated it. The rules are not arbitrary constraints — they are crystallized learning, exactly what the NEXTUP/dream-consolidation analogy predicts: high-salience failures (unexpected errors, wrong assertions, scope creep) consolidate into persistent behavioral modification.
+
+---
+
 ## What This Document Is and Isn't
 
 **This document is:**
