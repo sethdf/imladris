@@ -1,40 +1,48 @@
 // Windmill Script: Cloudflare List Zones
 // Investigation tool — lists DNS zones with status and plan info.
+// Migrated from direct Cloudflare API to Steampipe (read-only by enforcement).
 
-import { cloudflareFetch } from "./cloudflare_helper.ts";
+import { steampipeQuery } from "./steampipe_helper.ts";
 
 export async function main(
   search?: string,
   status?: "active" | "pending" | "initializing" | "moved" | "deleted" | "deactivated",
   limit: number = 50,
 ) {
-  const params: Record<string, string | number | boolean | undefined> = {
-    per_page: limit,
-    order: "name",
-    direction: "asc",
-  };
+  const conditions: string[] = [];
+  const params: any[] = [];
 
-  if (search) params.name = search;
-  if (status) params.status = status;
+  if (search) {
+    params.push(`%${search}%`);
+    conditions.push(`name ILIKE $${params.length}`);
+  }
+  if (status) {
+    params.push(status);
+    conditions.push(`status = $${params.length}`);
+  }
 
-  const data = await cloudflareFetch("/zones", { params });
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
-  const zones = (data.result || []).map((z: any) => ({
-    id: z.id,
-    name: z.name,
-    status: z.status,
-    paused: z.paused,
-    type: z.type,
-    plan: z.plan?.name,
-    name_servers: z.name_servers,
-    created_on: z.created_on,
-    modified_on: z.modified_on,
-    ssl_status: z.ssl?.status,
-  }));
+  const rows = await steampipeQuery(`
+    SELECT
+      id,
+      name,
+      status,
+      paused,
+      zone_type               AS type,
+      plan_name               AS plan,
+      name_servers,
+      created_on,
+      modified_on
+    FROM cloudflare.cloudflare_zone
+    ${where}
+    ORDER BY name ASC
+    LIMIT ${limit}
+  `, params.length ? params : undefined);
 
   return {
-    total: data.result_info?.total_count ?? zones.length,
-    returned: zones.length,
-    zones,
+    total: rows.length,
+    returned: rows.length,
+    zones: rows,
   };
 }

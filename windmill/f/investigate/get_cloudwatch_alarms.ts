@@ -1,9 +1,8 @@
 // Windmill Script: Get CloudWatch Alarms (Read-Only)
-// Investigation tool — lists CloudWatch alarms across AWS accounts.
-// Supports filtering by alarm state (ALARM, OK, INSUFFICIENT_DATA).
+// Investigation tool — lists CloudWatch metric and composite alarms across AWS accounts.
+// Migrated from AWS SDK to Steampipe (read-only by enforcement).
 
-import { CloudWatchClient, DescribeAlarmsCommand, type StateValue } from "@aws-sdk/client-cloudwatch";
-import { getAwsCredentials, AWS_ACCOUNTS, resolveAccounts } from "./aws_helper.ts";
+import { steampipeQuery, awsSchema } from "./steampipe_helper.ts";
 
 export async function main(
   account: string = "all",
@@ -11,64 +10,89 @@ export async function main(
   alarm_name_contains?: string,
   limit: number = 100,
 ) {
-  const targets = resolveAccounts(account);
-  const allAlarms: any[] = [];
+  const schema = awsSchema(account);
+  const alarms: any[] = [];
 
-  const results = await Promise.allSettled(
-    targets.map(async (acct) => {
-      const creds = await getAwsCredentials(acct);
-      const region = AWS_ACCOUNTS[acct]?.region || "us-east-1";
-      const cw = new CloudWatchClient({ region, credentials: creds });
+  // --- Metric alarms ---
+  {
+    const conditions: string[] = [];
+    const params: any[] = [];
 
-      const resp = await cw.send(new DescribeAlarmsCommand({
-        StateValue: state as StateValue | undefined,
-        MaxRecords: Math.min(limit, 100),
-      }));
+    if (state) {
+      params.push(state);
+      conditions.push(`state_value = $${params.length}`);
+    }
+    if (alarm_name_contains) {
+      params.push(`%${alarm_name_contains}%`);
+      conditions.push(`name ILIKE $${params.length}`);
+    }
 
-      const alarms: any[] = [];
-      for (const a of resp.MetricAlarms || []) {
-        if (alarm_name_contains && !a.AlarmName?.toLowerCase().includes(alarm_name_contains.toLowerCase())) continue;
-        alarms.push({
-          account: acct,
-          alarm_name: a.AlarmName,
-          state: a.StateValue,
-          state_reason: a.StateReason,
-          state_updated: a.StateUpdatedTimestamp?.toISOString(),
-          metric_name: a.MetricName,
-          namespace: a.Namespace,
-          statistic: a.Statistic,
-          threshold: a.Threshold,
-          comparison: a.ComparisonOperator,
-          period: a.Period,
-          evaluation_periods: a.EvaluationPeriods,
-          actions: a.AlarmActions,
-        });
-      }
+    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
-      for (const a of resp.CompositeAlarms || []) {
-        if (alarm_name_contains && !a.AlarmName?.toLowerCase().includes(alarm_name_contains.toLowerCase())) continue;
-        alarms.push({
-          account: acct,
-          alarm_name: a.AlarmName,
-          state: a.StateValue,
-          state_reason: a.StateReason,
-          state_updated: a.StateUpdatedTimestamp?.toISOString(),
-          type: "composite",
-          alarm_rule: a.AlarmRule,
-          actions: a.AlarmActions,
-        });
-      }
-      return alarms;
-    })
-  );
+    const rows = await steampipeQuery(`
+      SELECT
+        arn,
+        name                    AS alarm_name,
+        state_value             AS state,
+        state_reason,
+        state_updated_timestamp AS state_updated,
+        metric_name,
+        namespace,
+        statistic,
+        threshold,
+        comparison_operator     AS comparison,
+        period,
+        evaluation_periods,
+        alarm_actions           AS actions,
+        account_id
+      FROM ${schema}.aws_cloudwatch_alarm
+      ${where}
+      LIMIT ${limit}
+    `, params.length ? params : undefined);
 
-  for (const r of results) {
-    if (r.status === "fulfilled") allAlarms.push(...r.value);
+    alarms.push(...rows);
+  }
+
+  // --- Composite alarms (best-effort — table may not exist in all plugin versions) ---
+  try {
+    const conditions: string[] = [];
+    const params: any[] = [];
+
+    if (state) {
+      params.push(state);
+      conditions.push(`state_value = $${params.length}`);
+    }
+    if (alarm_name_contains) {
+      params.push(`%${alarm_name_contains}%`);
+      conditions.push(`name ILIKE $${params.length}`);
+    }
+
+    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
+    const rows = await steampipeQuery(`
+      SELECT
+        arn,
+        name                    AS alarm_name,
+        state_value             AS state,
+        state_reason,
+        state_updated_timestamp AS state_updated,
+        'composite'             AS type,
+        alarm_rule,
+        alarm_actions           AS actions,
+        account_id
+      FROM ${schema}.aws_cloudwatch_composite_alarm
+      ${where}
+      LIMIT ${limit}
+    `, params.length ? params : undefined);
+
+    alarms.push(...rows);
+  } catch {
+    // composite alarm table absent in this plugin version — metric alarms only
   }
 
   return {
-    count: allAlarms.length,
-    accounts_queried: targets.length,
-    alarms: allAlarms.slice(0, limit),
+    count: alarms.length,
+    accounts_queried: account === "all" ? "all" : 1,
+    alarms: alarms.slice(0, limit),
   };
 }

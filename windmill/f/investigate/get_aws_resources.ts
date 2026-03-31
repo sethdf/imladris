@@ -1,12 +1,8 @@
 // Windmill Script: Get AWS Resources (Read-Only)
 // Investigation tool — queries RDS, Lambda, S3, or ECS resources across accounts.
-// Takes a resource_type parameter to select which AWS service to query.
+// Migrated from AWS SDK to Steampipe (read-only by enforcement).
 
-import { RDSClient, DescribeDBInstancesCommand } from "@aws-sdk/client-rds";
-import { LambdaClient, ListFunctionsCommand } from "@aws-sdk/client-lambda";
-import { S3Client, ListBucketsCommand } from "@aws-sdk/client-s3";
-import { ECSClient, ListClustersCommand, DescribeServicesCommand, ListServicesCommand } from "@aws-sdk/client-ecs";
-import { getAwsCredentials, AWS_ACCOUNTS, resolveAccounts } from "./aws_helper.ts";
+import { steampipeQuery, awsSchema } from "./steampipe_helper.ts";
 
 export async function main(
   resource_type: "rds" | "lambda" | "s3" | "ecs",
@@ -14,116 +10,115 @@ export async function main(
   name_contains?: string,
   limit: number = 100,
 ) {
-  const targets = resolveAccounts(account);
-  const allResources: any[] = [];
+  const schema = awsSchema(account);
 
-  const results = await Promise.allSettled(
-    targets.map(async (acct) => {
-      const creds = await getAwsCredentials(acct);
-      const region = AWS_ACCOUNTS[acct]?.region || "us-east-1";
-
-      switch (resource_type) {
-        case "rds": return await queryRds(creds, region, acct, name_contains);
-        case "lambda": return await queryLambda(creds, region, acct, name_contains);
-        case "s3": return await queryS3(creds, region, acct, name_contains);
-        case "ecs": return await queryEcs(creds, region, acct, name_contains);
-        default: return [];
-      }
-    })
-  );
-
-  for (const r of results) {
-    if (r.status === "fulfilled") allResources.push(...r.value);
+  switch (resource_type) {
+    case "rds":    return await queryRds(schema, name_contains, limit);
+    case "lambda": return await queryLambda(schema, name_contains, limit);
+    case "s3":     return await queryS3(schema, name_contains, limit);
+    case "ecs":    return await queryEcs(schema, name_contains, limit);
+    default:       return { error: `Unknown resource_type: ${resource_type}` };
   }
-
-  return {
-    resource_type,
-    count: allResources.length,
-    accounts_queried: targets.length,
-    resources: allResources.slice(0, limit),
-  };
 }
 
-async function queryRds(creds: any, region: string, acct: string, nameFilter?: string) {
-  const rds = new RDSClient({ region, credentials: creds });
-  const resp = await rds.send(new DescribeDBInstancesCommand({}));
-  const items: any[] = [];
-  for (const db of resp.DBInstances || []) {
-    if (nameFilter && !db.DBInstanceIdentifier?.toLowerCase().includes(nameFilter.toLowerCase())) continue;
-    items.push({
-      account: acct,
-      type: "rds",
-      identifier: db.DBInstanceIdentifier,
-      engine: db.Engine,
-      engine_version: db.EngineVersion,
-      instance_class: db.DBInstanceClass,
-      status: db.DBInstanceStatus,
-      storage_gb: db.AllocatedStorage,
-      multi_az: db.MultiAZ,
-      vpc_id: db.DBSubnetGroup?.VpcId,
-      endpoint: db.Endpoint?.Address,
-      port: db.Endpoint?.Port,
-    });
-  }
-  return items;
+async function queryRds(schema: string, nameFilter?: string, limit: number = 100) {
+  const conditions = nameFilter ? [`db_instance_identifier ILIKE $1`] : [];
+  const params = nameFilter ? [`%${nameFilter}%`] : [];
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
+  const rows = await steampipeQuery(`
+    SELECT
+      arn,
+      db_instance_identifier  AS identifier,
+      engine,
+      engine_version,
+      class                   AS instance_class,
+      status,
+      allocated_storage       AS storage_gb,
+      multi_az,
+      vpc_id,
+      endpoint_address        AS endpoint,
+      endpoint_port           AS port,
+      account_id
+    FROM ${schema}.aws_rds_db_instance
+    ${where}
+    LIMIT ${limit}
+  `, params.length ? params : undefined);
+
+  return { resource_type: "rds", count: rows.length, account: schema, resources: rows };
 }
 
-async function queryLambda(creds: any, region: string, acct: string, nameFilter?: string) {
-  const lambda = new LambdaClient({ region, credentials: creds });
-  const resp = await lambda.send(new ListFunctionsCommand({ MaxItems: 200 }));
-  const items: any[] = [];
-  for (const fn of resp.Functions || []) {
-    if (nameFilter && !fn.FunctionName?.toLowerCase().includes(nameFilter.toLowerCase())) continue;
-    items.push({
-      account: acct,
-      type: "lambda",
-      function_name: fn.FunctionName,
-      runtime: fn.Runtime,
-      memory_mb: fn.MemorySize,
-      timeout_sec: fn.Timeout,
-      handler: fn.Handler,
-      last_modified: fn.LastModified,
-      code_size_bytes: fn.CodeSize,
-      role: fn.Role,
-    });
-  }
-  return items;
+async function queryLambda(schema: string, nameFilter?: string, limit: number = 100) {
+  const conditions = nameFilter ? [`name ILIKE $1`] : [];
+  const params = nameFilter ? [`%${nameFilter}%`] : [];
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
+  const rows = await steampipeQuery(`
+    SELECT
+      arn,
+      name                    AS function_name,
+      runtime,
+      memory_size             AS memory_mb,
+      timeout                 AS timeout_sec,
+      handler,
+      last_modified,
+      code_size               AS code_size_bytes,
+      role,
+      account_id
+    FROM ${schema}.aws_lambda_function
+    ${where}
+    LIMIT ${limit}
+  `, params.length ? params : undefined);
+
+  return { resource_type: "lambda", count: rows.length, account: schema, resources: rows };
 }
 
-async function queryS3(creds: any, region: string, acct: string, nameFilter?: string) {
-  const s3 = new S3Client({ region, credentials: creds });
-  const resp = await s3.send(new ListBucketsCommand({}));
-  const items: any[] = [];
-  for (const b of resp.Buckets || []) {
-    if (nameFilter && !b.Name?.toLowerCase().includes(nameFilter.toLowerCase())) continue;
-    items.push({
-      account: acct,
-      type: "s3",
-      bucket_name: b.Name,
-      created: b.CreationDate?.toISOString(),
-    });
-  }
-  return items;
+async function queryS3(schema: string, nameFilter?: string, limit: number = 100) {
+  const conditions = nameFilter ? [`name ILIKE $1`] : [];
+  const params = nameFilter ? [`%${nameFilter}%`] : [];
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
+  const rows = await steampipeQuery(`
+    SELECT
+      name                    AS bucket_name,
+      creation_date           AS created,
+      region,
+      account_id
+    FROM ${schema}.aws_s3_bucket
+    ${where}
+    LIMIT ${limit}
+  `, params.length ? params : undefined);
+
+  return { resource_type: "s3", count: rows.length, account: schema, resources: rows };
 }
 
-async function queryEcs(creds: any, region: string, acct: string, nameFilter?: string) {
-  const ecs = new ECSClient({ region, credentials: creds });
-  const clustersResp = await ecs.send(new ListClustersCommand({}));
-  const items: any[] = [];
+async function queryEcs(schema: string, nameFilter?: string, limit: number = 100) {
+  const conditions = nameFilter ? [`c.cluster_name ILIKE $1`] : [];
+  const params = nameFilter ? [`%${nameFilter}%`] : [];
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
-  for (const clusterArn of clustersResp.clusterArns || []) {
-    const clusterName = clusterArn.split("/").pop() || clusterArn;
-    if (nameFilter && !clusterName.toLowerCase().includes(nameFilter.toLowerCase())) continue;
+  // Cluster list with service count via subquery
+  const rows = await steampipeQuery(`
+    SELECT
+      c.cluster_arn,
+      c.cluster_name,
+      c.status,
+      c.account_id,
+      (
+        SELECT COUNT(*)
+        FROM ${schema}.aws_ecs_service s
+        WHERE s.cluster_arn = c.cluster_arn
+      ) AS service_count,
+      ARRAY(
+        SELECT s.service_name
+        FROM ${schema}.aws_ecs_service s
+        WHERE s.cluster_arn = c.cluster_arn
+        LIMIT 20
+      ) AS services
+    FROM ${schema}.aws_ecs_cluster c
+    ${where}
+    LIMIT ${limit}
+  `, params.length ? params : undefined);
 
-    const svcsResp = await ecs.send(new ListServicesCommand({ cluster: clusterArn, maxResults: 50 }));
-    items.push({
-      account: acct,
-      type: "ecs_cluster",
-      cluster_name: clusterName,
-      cluster_arn: clusterArn,
-      service_count: svcsResp.serviceArns?.length || 0,
-      services: (svcsResp.serviceArns || []).map(arn => arn.split("/").pop()),
-    });
-  }
-  return items;
+  return { resource_type: "ecs", count: rows.length, account: schema, resources: rows };
 }

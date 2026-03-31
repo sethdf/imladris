@@ -1,9 +1,9 @@
 // Windmill Script: Check Network (Read-Only)
 // Investigation tool — DNS lookups, reverse DNS, and TLS certificate checks.
 // Useful for investigating domain ownership, IP attribution, and certificate validity.
+// Migrated from Node.js native DNS/TLS to Steampipe net plugin (read-only by enforcement).
 
-import { resolve, resolve4, resolve6, reverse, resolveMx, resolveTxt } from "node:dns/promises";
-import * as tls from "node:tls";
+import { steampipeQuery } from "./steampipe_helper.ts";
 
 export async function main(
   action: "dns_lookup" | "reverse_dns" | "check_certificate" | "mx_lookup" | "txt_lookup",
@@ -13,79 +13,93 @@ export async function main(
 
   switch (action) {
     case "dns_lookup": {
-      const [ipv4, ipv6] = await Promise.allSettled([
-        resolve4(target),
-        resolve6(target),
-      ]);
-      return {
-        action: "dns_lookup",
-        hostname: target,
-        ipv4: ipv4.status === "fulfilled" ? ipv4.value : [],
-        ipv6: ipv6.status === "fulfilled" ? ipv6.value : [],
-      };
+      const rows = await steampipeQuery(`
+        SELECT domain, type, ip, ttl
+        FROM net.net_dns_record
+        WHERE domain = $1 AND type IN ('A', 'AAAA')
+        ORDER BY type, ip
+      `, [target]);
+
+      const ipv4 = rows.filter((r: any) => r.type === "A").map((r: any) => r.ip);
+      const ipv6 = rows.filter((r: any) => r.type === "AAAA").map((r: any) => r.ip);
+
+      return { action: "dns_lookup", hostname: target, ipv4, ipv6 };
     }
 
     case "reverse_dns": {
-      try {
-        const hostnames = await reverse(target);
-        return { action: "reverse_dns", ip: target, hostnames };
-      } catch (e: any) {
-        return { action: "reverse_dns", ip: target, error: e.message };
-      }
+      const rows = await steampipeQuery(`
+        SELECT domain, type, target AS hostname, ttl
+        FROM net.net_dns_record
+        WHERE domain = $1 AND type = 'PTR'
+      `, [target]);
+
+      return {
+        action: "reverse_dns",
+        ip: target,
+        hostnames: rows.map((r: any) => r.hostname).filter(Boolean),
+      };
     }
 
     case "check_certificate": {
-      return new Promise((res) => {
-        const socket = tls.connect({ host: target, port: 443, servername: target }, () => {
-          const cert = socket.getPeerCertificate();
-          socket.destroy();
-          res({
-            action: "check_certificate",
-            hostname: target,
-            subject: cert.subject,
-            issuer: cert.issuer,
-            valid_from: cert.valid_from,
-            valid_to: cert.valid_to,
-            serial: cert.serialNumber,
-            fingerprint: cert.fingerprint256,
-            alt_names: cert.subjectaltname?.split(", "),
-            authorized: socket.authorized,
-          });
-        });
-        socket.on("error", (e) => {
-          res({ action: "check_certificate", hostname: target, error: e.message });
-        });
-        socket.setTimeout(5000, () => {
-          socket.destroy();
-          res({ action: "check_certificate", hostname: target, error: "Connection timeout" });
-        });
-      });
+      const rows = await steampipeQuery(`
+        SELECT
+          domain,
+          subject,
+          issuer,
+          not_before      AS valid_from,
+          not_after       AS valid_to,
+          serial_number   AS serial,
+          sha256_fingerprint AS fingerprint,
+          dns_names       AS alt_names,
+          is_valid_at
+        FROM net.net_certificate
+        WHERE domain = $1
+      `, [target]);
+
+      if (!rows.length) return { action: "check_certificate", hostname: target, error: "No certificate data returned" };
+      const cert = rows[0];
+
+      return {
+        action:      "check_certificate",
+        hostname:    target,
+        subject:     cert.subject,
+        issuer:      cert.issuer,
+        valid_from:  cert.valid_from,
+        valid_to:    cert.valid_to,
+        serial:      cert.serial,
+        fingerprint: cert.fingerprint,
+        alt_names:   cert.alt_names || [],
+        authorized:  cert.is_valid_at,
+      };
     }
 
     case "mx_lookup": {
-      try {
-        const records = await resolveMx(target);
-        return {
-          action: "mx_lookup",
-          hostname: target,
-          mx_records: records.sort((a, b) => a.priority - b.priority),
-        };
-      } catch (e: any) {
-        return { action: "mx_lookup", hostname: target, error: e.message };
-      }
+      const rows = await steampipeQuery(`
+        SELECT domain, type, target AS exchange, priority, ttl
+        FROM net.net_dns_record
+        WHERE domain = $1 AND type = 'MX'
+        ORDER BY priority ASC
+      `, [target]);
+
+      return {
+        action: "mx_lookup",
+        hostname: target,
+        mx_records: rows.map((r: any) => ({ exchange: r.exchange, priority: r.priority })),
+      };
     }
 
     case "txt_lookup": {
-      try {
-        const records = await resolveTxt(target);
-        return {
-          action: "txt_lookup",
-          hostname: target,
-          txt_records: records.map(r => r.join("")),
-        };
-      } catch (e: any) {
-        return { action: "txt_lookup", hostname: target, error: e.message };
-      }
+      const rows = await steampipeQuery(`
+        SELECT domain, type, value, ttl
+        FROM net.net_dns_record
+        WHERE domain = $1 AND type = 'TXT'
+      `, [target]);
+
+      return {
+        action: "txt_lookup",
+        hostname: target,
+        txt_records: rows.map((r: any) => r.value).filter(Boolean),
+      };
     }
   }
 }

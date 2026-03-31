@@ -1,7 +1,8 @@
 // Windmill Script: Cloudflare Get DNS Records
 // Investigation tool — retrieves DNS records for a zone.
+// Migrated from direct Cloudflare API to Steampipe (read-only by enforcement).
 
-import { cloudflareFetch } from "./cloudflare_helper.ts";
+import { steampipeQuery } from "./steampipe_helper.ts";
 
 export async function main(
   zone_id: string,
@@ -13,33 +14,44 @@ export async function main(
     return { error: "zone_id is required. Use cloudflare_list_zones to find zone IDs." };
   }
 
-  const params: Record<string, string | number | boolean | undefined> = {
-    per_page: limit,
-    order: "type",
-    direction: "asc",
-  };
+  const conditions: string[] = [];
+  const params: any[] = [];
 
-  if (search) params.name = search;
-  if (type) params.type = type;
+  params.push(zone_id);
+  conditions.push(`zone_id = $${params.length}`);
 
-  const data = await cloudflareFetch(`/zones/${zone_id}/dns_records`, { params });
+  if (search) {
+    params.push(`%${search}%`);
+    conditions.push(`name ILIKE $${params.length}`);
+  }
+  if (type) {
+    params.push(type);
+    conditions.push(`type = $${params.length}`);
+  }
 
-  const records = (data.result || []).map((r: any) => ({
-    id: r.id,
-    name: r.name,
-    type: r.type,
-    content: r.content,
-    proxied: r.proxied,
-    ttl: r.ttl,
-    priority: r.priority,
-    created_on: r.created_on,
-    modified_on: r.modified_on,
-  }));
+  const where = `WHERE ${conditions.join(" AND ")}`;
+
+  const rows = await steampipeQuery(`
+    SELECT
+      id,
+      name,
+      type,
+      content,
+      proxied,
+      ttl,
+      priority,
+      created_on,
+      modified_on
+    FROM cloudflare.cloudflare_dns_record
+    ${where}
+    ORDER BY type ASC, name ASC
+    LIMIT ${limit}
+  `, params);
 
   return {
     zone_id,
-    total: data.result_info?.total_count ?? records.length,
-    returned: records.length,
-    records,
+    total: rows.length,
+    returned: rows.length,
+    records: rows,
   };
 }

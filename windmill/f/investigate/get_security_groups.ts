@@ -1,14 +1,9 @@
 // Windmill Script: Get Security Groups (Read-Only)
 // Investigation tool — lists VPC security groups and their rules across AWS accounts.
 // Useful for investigating open ports, overly permissive rules, or VPC topology.
+// Migrated from AWS SDK to Steampipe (read-only by enforcement).
 
-import {
-  EC2Client,
-  DescribeSecurityGroupsCommand,
-  DescribeSecurityGroupRulesCommand,
-  type Filter,
-} from "@aws-sdk/client-ec2";
-import { getAwsCredentials, AWS_ACCOUNTS, resolveAccounts } from "./aws_helper.ts";
+import { steampipeQuery, awsSchema } from "./steampipe_helper.ts";
 
 export async function main(
   account: string = "all",
@@ -18,74 +13,73 @@ export async function main(
   include_rules: boolean = true,
   limit: number = 50,
 ) {
-  const targets = resolveAccounts(account);
-  const allGroups: any[] = [];
+  const schema = awsSchema(account);
 
-  const results = await Promise.allSettled(
-    targets.map(async (acct) => {
-      const creds = await getAwsCredentials(acct);
-      const region = AWS_ACCOUNTS[acct]?.region || "us-east-1";
-      const ec2 = new EC2Client({ region, credentials: creds });
+  const conditions: string[] = [];
+  const params: any[] = [];
 
-      const filters: Filter[] = [];
-      if (vpc_id) filters.push({ Name: "vpc-id", Values: [vpc_id] });
-      if (group_id) filters.push({ Name: "group-id", Values: [group_id] });
-
-      const sgResp = await ec2.send(new DescribeSecurityGroupsCommand({
-        Filters: filters.length > 0 ? filters : undefined,
-        MaxResults: Math.min(limit, 1000),
-      }));
-
-      const groups: any[] = [];
-      for (const sg of sgResp.SecurityGroups || []) {
-        if (group_name_contains && !sg.GroupName?.toLowerCase().includes(group_name_contains.toLowerCase())) continue;
-
-        const group: any = {
-          account: acct,
-          group_id: sg.GroupId,
-          group_name: sg.GroupName,
-          description: sg.Description,
-          vpc_id: sg.VpcId,
-        };
-
-        if (include_rules) {
-          group.ingress_rules = (sg.IpPermissions || []).map(formatRule);
-          group.egress_rules = (sg.IpPermissionsEgress || []).map(formatRule);
-        }
-
-        groups.push(group);
-      }
-      return groups;
-    })
-  );
-
-  for (const r of results) {
-    if (r.status === "fulfilled") allGroups.push(...r.value);
+  if (vpc_id) {
+    params.push(vpc_id);
+    conditions.push(`vpc_id = $${params.length}`);
+  }
+  if (group_id) {
+    params.push(group_id);
+    conditions.push(`group_id = $${params.length}`);
+  }
+  if (group_name_contains) {
+    params.push(`%${group_name_contains}%`);
+    conditions.push(`group_name ILIKE $${params.length}`);
   }
 
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
+  const rulesCols = include_rules
+    ? `, ip_permissions AS ingress_rules, ip_permissions_egress AS egress_rules`
+    : "";
+
+  const rows = await steampipeQuery(`
+    SELECT
+      group_id,
+      group_name,
+      description,
+      vpc_id,
+      account_id
+      ${rulesCols}
+    FROM ${schema}.aws_vpc_security_group
+    ${where}
+    LIMIT ${limit}
+  `, params.length ? params : undefined);
+
+  // Normalize rule shape to match prior SDK output format
+  const groups = rows.map((sg: any) => {
+    const out: any = {
+      account: sg.account_id,
+      group_id: sg.group_id,
+      group_name: sg.group_name,
+      description: sg.description,
+      vpc_id: sg.vpc_id,
+    };
+    if (include_rules) {
+      out.ingress_rules = (sg.ingress_rules || []).map(formatRule);
+      out.egress_rules  = (sg.egress_rules  || []).map(formatRule);
+    }
+    return out;
+  });
+
   return {
-    count: allGroups.length,
-    accounts_queried: targets.length,
-    security_groups: allGroups.slice(0, limit),
+    count: groups.length,
+    accounts_queried: account === "all" ? "all" : 1,
+    security_groups: groups,
   };
 }
 
 function formatRule(perm: any) {
   return {
-    protocol: perm.IpProtocol === "-1" ? "all" : perm.IpProtocol,
-    from_port: perm.FromPort,
-    to_port: perm.ToPort,
-    ipv4_ranges: (perm.IpRanges || []).map((r: any) => ({
-      cidr: r.CidrIp,
-      description: r.Description,
-    })),
-    ipv6_ranges: (perm.Ipv6Ranges || []).map((r: any) => ({
-      cidr: r.CidrIpv6,
-      description: r.Description,
-    })),
-    source_groups: (perm.UserIdGroupPairs || []).map((g: any) => ({
-      group_id: g.GroupId,
-      description: g.Description,
-    })),
+    protocol:      perm.IpProtocol === "-1" ? "all" : perm.IpProtocol,
+    from_port:     perm.FromPort,
+    to_port:       perm.ToPort,
+    ipv4_ranges:   (perm.IpRanges     || []).map((r: any) => ({ cidr: r.CidrIp,   description: r.Description })),
+    ipv6_ranges:   (perm.Ipv6Ranges   || []).map((r: any) => ({ cidr: r.CidrIpv6, description: r.Description })),
+    source_groups: (perm.UserIdGroupPairs || []).map((g: any) => ({ group_id: g.GroupId, description: g.Description })),
   };
 }

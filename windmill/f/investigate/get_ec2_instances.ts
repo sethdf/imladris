@@ -1,9 +1,9 @@
 // Windmill Script: Get EC2 Instances (Read-Only)
 // Investigation tool — lists EC2 instances across AWS accounts.
 // Supports filtering by state, instance ID, name, IP, or VPC.
+// Migrated from AWS SDK to Steampipe (read-only by enforcement).
 
-import { EC2Client, DescribeInstancesCommand, type Filter } from "@aws-sdk/client-ec2";
-import { getAwsCredentials, AWS_ACCOUNTS, resolveAccounts } from "./aws_helper.ts";
+import { steampipeQuery, awsSchema } from "./steampipe_helper.ts";
 
 export async function main(
   account: string = "all",
@@ -14,60 +14,61 @@ export async function main(
   vpc_id?: string,
   limit: number = 100,
 ) {
-  const targets = resolveAccounts(account);
-  const allInstances: any[] = [];
+  const schema = awsSchema(account);
 
-  const results = await Promise.allSettled(
-    targets.map(async (acct) => {
-      const creds = await getAwsCredentials(acct);
-      const region = AWS_ACCOUNTS[acct]?.region || "us-east-1";
-      const ec2 = new EC2Client({ region, credentials: creds });
+  const conditions: string[] = [];
+  const params: any[] = [];
 
-      const filters: Filter[] = [];
-      if (state) filters.push({ Name: "instance-state-name", Values: [state] });
-      if (instance_id) filters.push({ Name: "instance-id", Values: [instance_id] });
-      if (name_contains) filters.push({ Name: "tag:Name", Values: [`*${name_contains}*`] });
-      if (private_ip) filters.push({ Name: "private-ip-address", Values: [private_ip] });
-      if (vpc_id) filters.push({ Name: "vpc-id", Values: [vpc_id] });
-
-      const resp = await ec2.send(new DescribeInstancesCommand({
-        Filters: filters.length > 0 ? filters : undefined,
-        MaxResults: Math.min(limit, 1000),
-      }));
-
-      const instances: any[] = [];
-      for (const r of resp.Reservations || []) {
-        for (const i of r.Instances || []) {
-          instances.push({
-            account: acct,
-            instance_id: i.InstanceId,
-            state: i.State?.Name,
-            state_reason: i.StateReason?.Message || undefined,
-            state_transition_reason: i.StateTransitionReason || undefined,
-            type: i.InstanceType,
-            name: i.Tags?.find(t => t.Key === "Name")?.Value || "",
-            private_ip: i.PrivateIpAddress,
-            public_ip: i.PublicIpAddress,
-            vpc_id: i.VpcId,
-            subnet_id: i.SubnetId,
-            az: i.Placement?.AvailabilityZone,
-            launch_time: i.LaunchTime?.toISOString(),
-            platform: i.PlatformDetails || i.Platform || "Linux",
-            iam_role: i.IamInstanceProfile?.Arn,
-          });
-        }
-      }
-      return instances;
-    })
-  );
-
-  for (const r of results) {
-    if (r.status === "fulfilled") allInstances.push(...r.value);
+  if (state) {
+    params.push(state);
+    conditions.push(`instance_state = $${params.length}`);
+  }
+  if (instance_id) {
+    params.push(instance_id);
+    conditions.push(`instance_id = $${params.length}`);
+  }
+  if (name_contains) {
+    params.push(`%${name_contains}%`);
+    conditions.push(`tags->>'Name' ILIKE $${params.length}`);
+  }
+  if (private_ip) {
+    params.push(private_ip);
+    conditions.push(`private_ip_address = $${params.length}`);
+  }
+  if (vpc_id) {
+    params.push(vpc_id);
+    conditions.push(`vpc_id = $${params.length}`);
   }
 
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+  const sql = `
+    SELECT
+      instance_id,
+      instance_state          AS state,
+      state_reason_message    AS state_reason,
+      state_transition_reason,
+      instance_type           AS type,
+      tags->>'Name'           AS name,
+      private_ip_address      AS private_ip,
+      public_ip_address       AS public_ip,
+      vpc_id,
+      subnet_id,
+      placement_availability_zone AS az,
+      launch_time,
+      platform_details        AS platform,
+      iam_instance_profile_arn AS iam_role,
+      account_id
+    FROM ${schema}.aws_ec2_instance
+    ${where}
+    LIMIT ${limit}
+  `;
+
+  const rows = await steampipeQuery(sql, params.length > 0 ? params : undefined);
+
   return {
-    count: allInstances.length,
-    accounts_queried: targets.length,
-    instances: allInstances.slice(0, limit),
+    count: rows.length,
+    account,
+    instances: rows,
   };
 }
