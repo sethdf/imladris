@@ -4,7 +4,7 @@ sidebar_position: 2
 
 # Cognitive Architecture
 
-> **How to read this document:** The Docusaurus site tells you *what* each component does and *where* to find it. This document tells you *why* everything is the way it is — the principles behind every design decision, grounded in neuroscience, applied through PAI, and implemented in imladris. Use it to evaluate whether a proposed change is principled or unprincipled.
+> **How to read this document:** This docs site tells you *what* each component does and *where* to find it. This document tells you *why* everything is the way it is — the principles behind every design decision, grounded in neuroscience, applied through PAI, and implemented in imladris. Use it to evaluate whether a proposed change is principled or unprincipled.
 
 ---
 
@@ -432,14 +432,15 @@ Honest accounting of where the architecture is principled in design but not yet 
 
 | Gap | Principle Violated | Status |
 |-----|-------------------|--------|
-| No triage feedback loop (outcome→quality improvement) | Persistence + Alignment | Phase 5+ |
-| Entity extraction not automated (manual correlation) | Bandwidth Principle | Phase 5+ |
-| Contextual surfacing into active workstreams | Bandwidth Principle | Phase 5+ |
-| Time-series trend storage | Persistence Principle | Phase 5+ |
+| Triage feedback loop (outcome→quality improvement) — `triage_feedback.ts` + `trend_engine.ts` exist but loop is partial | Persistence + Alignment | Phase 3 — spec in [Roadmap](./specs/implementation-roadmap) |
+| Entity extraction not automated (manual correlation) — must be designed with feedback loop | Bandwidth Principle | Phase 3 — spec in [Roadmap](./specs/implementation-roadmap) |
+| Contextual surfacing into active workstreams — `contextual_surface.ts` exists but partial; requires entity + feedback first | Bandwidth Principle | Phase 3 — blocked by entity extraction |
+| Time-series trend storage — `trend_engine.ts` exists and handles this; partial implementation in progress | Persistence Principle | Phase 3 (completing trend_engine) |
 | .claude volumes were `:rw` for Windmill workers | Falsifiability (immune system) | **Fixed 2026-03-30** |
-| PAI sessions not yet containerized | Scaffolding > Model | Phase 1 target |
-| Ansible still 16 roles (host-coupled) | Scaffolding > Model | Phase 1 target |
-| MEMORY merge strategy for concurrent sessions | Persistence Principle | Phase 2 target |
+| PAI sessions not yet containerized | Scaffolding > Model | **Specced — [Docker-Modular](./specs/docker-modular) Phase 1** |
+| Ansible still 16 roles (host-coupled) | Scaffolding > Model | **Specced — [Docker-Modular](./specs/docker-modular) Phase 1** |
+| MEMORY merge strategy for concurrent sessions | Persistence Principle | **Specced — [Docker-Modular](./specs/docker-modular) Phase 2** |
+| Platform is domain-specific (DevOps only) | Bandwidth Principle (limits who benefits) | **Specced — [Modularization](./specs/modularization)** |
 
 ---
 
@@ -518,7 +519,7 @@ The operational rules are the system learning from its own failure patterns. Whe
 
 ---
 
-## Docusaurus Site Map
+## Docs Site Map
 
 | What you want to know | Where to look |
 |----------------------|--------------|
@@ -528,7 +529,7 @@ The operational rules are the system learning from its own failure patterns. Whe
 | What Ansible roles configure | [Ansible](./ansible/) |
 | What CloudFormation templates deploy | [CloudFormation](./cloudformation/) |
 | What PAI config (skills, hooks) is deployed | [PAI Configuration](./pai-config) |
-| The Docker-modular redesign plan | `~/.claude/MEMORY/WORK/20260329-150000_docker-modular-imladris/ARCHITECTURE.md` |
+| The Docker-modular redesign plan | [Docker-Modular Architecture](./specs/docker-modular) |
 
 ---
 

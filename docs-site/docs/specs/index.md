@@ -6,9 +6,11 @@ sidebar_position: 1
 
 Specs and implementation plans for work not yet built. These are concrete designs — architecture decisions made, approaches agreed, ready to implement.
 
-| Spec | Area | Status |
-|------|------|--------|
-| [Docker-Modular Architecture](./docker-modular) | Infrastructure | Ready |
-| [PAI Memory Sync](./memory-sync) | PAI / Postgres | Draft |
-| [Investigate-First Pipeline](./investigate-first-pipeline) | Windmill | Ready |
-| [Status Dashboard](./status-dashboard) | Windmill | Ready |
+| Spec | Area | Phase | Status |
+|------|------|-------|--------|
+| [Status Dashboard](./status-dashboard) | Windmill | 0 | Ready |
+| [Investigate-First Pipeline](./investigate-first-pipeline) | Windmill | 0 | Ready |
+| [Domain-Modular Architecture](./modularization) | Platform structure | 1 | Design done |
+| [Docker-Modular Architecture](./docker-modular) | Infrastructure | 1 | Ready |
+| [PAI Memory Sync](./memory-sync) | PAI / Postgres | 2 | Draft |
+| [Implementation Roadmap](./implementation-roadmap) | All | — | Living doc |

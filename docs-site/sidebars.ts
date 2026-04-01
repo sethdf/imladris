@@ -18,10 +18,12 @@ const sidebars: SidebarsConfig = {
       collapsed: false,
       items: [
         "specs/index",
+        "specs/implementation-roadmap",
+        "specs/status-dashboard",
+        "specs/investigate-first-pipeline",
+        "specs/modularization",
         "specs/docker-modular",
         "specs/memory-sync",
-        "specs/investigate-first-pipeline",
-        "specs/status-dashboard",
       ],
     },
     {
