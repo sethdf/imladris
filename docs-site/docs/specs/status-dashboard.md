@@ -70,8 +70,8 @@ Windmill UI renders the JSON result in a readable tree view — no custom HTML n
 ## Verification
 
 1. Deploy script: `wmill script generate-metadata` + `wmill sync push`
-2. Run quick mode: `wmill script run f/devops/status_check -d '{"mode":"quick"}'` — returns in <3s with box health
-3. Run full mode: `wmill script run f/devops/status_check -d '{"mode":"full"}'` — returns in <20s with all data sources
+2. Run quick mode: `wmill script run f/devops/status_check -d '{"mode":"quick"}'` — returns in &lt;3s with box health
+3. Run full mode: `wmill script run f/devops/status_check -d '{"mode":"full"}'` — returns in &lt;20s with all data sources
 4. Verify gotchas array catches known issues (Okta unconfigured should always appear)
 5. Set up `tailscale serve`: `sudo tailscale serve --bg 8000`
 6. Access from another Tailscale device to confirm HTTPS works

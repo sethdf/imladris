@@ -373,7 +373,7 @@ Large files (failure transcripts, etc.) need compression for efficient storage a
 
 ### Strategy
 
-1. Files <= 100KB: push as-is (plain text)
+1. Files &lt;= 100KB: push as-is (plain text)
 2. Files > 100KB: gzip before push, store compressed in `content` column with `compressed: true` in metadata
 3. If gzipped content still > 50MB: **chunk into multiple rows** with sequence numbers (Postgres `TEXT` has no practical size limit, but chunking keeps individual rows manageable)
 4. On pull: reassemble chunks if needed, decompress if flagged
