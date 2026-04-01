@@ -10,7 +10,8 @@ import { join, dirname } from "path";
 function getHome(): string { return process.env.HOME || "/root"; }
 
 function getStatePath(): string {
-  return join(getHome(), ".claude", "state", "cron-last-run.json");
+  // /local/cache is writable in Windmill workers; ~/.claude is mounted :ro
+  return "/local/cache/pai-state/cron-last-run.json";
 }
 
 interface LastRunMap {

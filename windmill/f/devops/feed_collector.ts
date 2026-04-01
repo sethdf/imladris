@@ -13,8 +13,9 @@ import { homedir } from "os";
 import { shouldCatchUp, recordRun, type CatchupInfo } from "./catchup_lib.ts";
 
 const HOME = homedir();
-const FEED_LOG = join(HOME, ".claude", "logs", "feed-events.jsonl");
-const SEEN_FILE = join(HOME, ".claude", "state", "feed-seen.json");
+// /local/cache is writable in Windmill workers; ~/.claude is mounted :ro
+const FEED_LOG = "/local/cache/pai-logs/feed-events.jsonl";
+const SEEN_FILE = "/local/cache/pai-state/feed-seen.json";
 
 // Default security feeds
 const DEFAULT_FEEDS = [
@@ -33,10 +34,8 @@ interface FeedItem {
 }
 
 function ensureDirs(): void {
-  const logDir = join(HOME, ".claude", "logs");
-  const stateDir = join(HOME, ".claude", "state");
-  if (!existsSync(logDir)) mkdirSync(logDir, { recursive: true });
-  if (!existsSync(stateDir)) mkdirSync(stateDir, { recursive: true });
+  if (!existsSync("/local/cache/pai-logs")) mkdirSync("/local/cache/pai-logs", { recursive: true });
+  if (!existsSync("/local/cache/pai-state")) mkdirSync("/local/cache/pai-state", { recursive: true });
 }
 
 function loadSeen(): Set<string> {

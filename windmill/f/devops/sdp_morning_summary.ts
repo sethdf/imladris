@@ -11,7 +11,8 @@ import { homedir } from "os";
 import { shouldCatchUp, recordRun, type CatchupInfo } from "./catchup_lib.ts";
 
 const HOME = homedir();
-const SUMMARY_LOG = join(HOME, ".claude", "logs", "morning-summaries.jsonl");
+// /local/cache is writable in Windmill workers; ~/.claude is mounted :ro
+const SUMMARY_LOG = "/local/cache/pai-logs/morning-summaries.jsonl";
 
 const SDP_HEADERS = {
   Accept: "application/vnd.manageengine.sdp.v3+json",
@@ -77,8 +78,7 @@ async function fetchTickets(
 }
 
 function ensureDirs(): void {
-  const logDir = join(HOME, ".claude", "logs");
-  if (!existsSync(logDir)) mkdirSync(logDir, { recursive: true });
+  if (!existsSync("/local/cache/pai-logs")) mkdirSync("/local/cache/pai-logs", { recursive: true });
 }
 
 const TWENTY_FOUR_HOURS_MS = 24 * 3600000;

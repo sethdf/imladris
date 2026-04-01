@@ -11,8 +11,9 @@ import { join } from "path";
 import { shouldCatchUp, recordRun, type CatchupInfo } from "./catchup_lib.ts";
 
 const HOME = process.env.HOME || "/root";
-const LOG_FILE = join(HOME, ".claude", "logs", "upstream-updates.jsonl");
-const SEEN_FILE = join(HOME, ".claude", "state", "upstream-seen.json");
+// /local/cache is writable in Windmill workers; ~/.claude is mounted :ro
+const LOG_FILE = "/local/cache/pai-logs/upstream-updates.jsonl";
+const SEEN_FILE = "/local/cache/pai-state/upstream-seen.json";
 const TWENTY_FOUR_HOURS_MS = 24 * 3600000;
 
 // ── Monitored Sources ──────────────────────────────────────────────
@@ -211,10 +212,8 @@ interface SeenState {
 // ── Helpers ────────────────────────────────────────────────────────
 
 function ensureDirs(): void {
-  const logDir = join(HOME, ".claude", "logs");
-  const stateDir = join(HOME, ".claude", "state");
-  if (!existsSync(logDir)) mkdirSync(logDir, { recursive: true });
-  if (!existsSync(stateDir)) mkdirSync(stateDir, { recursive: true });
+  if (!existsSync("/local/cache/pai-logs")) mkdirSync("/local/cache/pai-logs", { recursive: true });
+  if (!existsSync("/local/cache/pai-state")) mkdirSync("/local/cache/pai-state", { recursive: true });
 }
 
 function loadSeen(): SeenState {

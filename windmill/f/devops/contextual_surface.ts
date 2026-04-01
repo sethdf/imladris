@@ -12,8 +12,9 @@ import { shouldCatchUp, recordRun, type CatchupInfo } from "./catchup_lib.ts";
 
 const HOME = homedir();
 const STATE_PATH = join(HOME, ".claude", "state", "current-work.json");
-const FEED_LOG = join(HOME, ".claude", "logs", "feed-events.jsonl");
-const ENTITY_LOG = join(HOME, ".claude", "logs", "entity-extractions.jsonl");
+// /local/cache is writable in Windmill workers; ~/.claude is mounted :ro
+const FEED_LOG = "/local/cache/pai-logs/feed-events.jsonl";
+const ENTITY_LOG = "/local/cache/pai-logs/entity-extractions.jsonl";
 
 interface Workstream {
   name: string;
