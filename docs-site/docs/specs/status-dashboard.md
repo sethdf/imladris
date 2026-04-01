@@ -1,3 +1,7 @@
+---
+sidebar_position: 5
+---
+
 # Status Page: Tailscale-Only Health Dashboard
 
 ## Context

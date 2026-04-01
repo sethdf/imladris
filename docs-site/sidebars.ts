@@ -13,9 +13,16 @@ const sidebars: SidebarsConfig = {
       label: "Cognitive Architecture",
     },
     {
-      type: "doc",
-      id: "memory-sync",
-      label: "Memory Sync (Postgres)",
+      type: "category",
+      label: "Planned Work",
+      collapsed: false,
+      items: [
+        "specs/index",
+        "specs/docker-modular",
+        "specs/memory-sync",
+        "specs/investigate-first-pipeline",
+        "specs/status-dashboard",
+      ],
     },
     {
       type: "category",
