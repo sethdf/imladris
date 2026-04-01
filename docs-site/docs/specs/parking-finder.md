@@ -2,9 +2,11 @@
 
 ## Overview
 
-CLI tool and optional Windmill cron that finds the closest free parking with real-time availability near Epicentral Coworking (220 E Pikes Peak Ave, Colorado Springs).
+CLI tool and optional Windmill cron that finds the closest free parking near Epicentral Coworking (220 E Pikes Peak Ave, Colorado Springs).
 
 Data source: City of Colorado Springs parking system powered by SpotParking. Public API, no authentication required.
+
+**Prototype tested 2026-04-01** — working code at `~/Projects/parking-finder/parking.ts`.
 
 ## API Details
 
@@ -31,20 +33,55 @@ Origin: https://colorado-springs.modii.co
 }
 ```
 
-**Response:** Binary Protobuf (`application/octet-stream`), type `spotparking.GeoHashCollectionOfZones`
+**Response:** Binary Protobuf (`application/octet-stream`), ~1.5 MB
 
-**Fields per zone:**
-- `id` — UUID string (stable identifier)
-- `type` — NORMAL, OUTLINE, BAY, GARAGE, MULTI_LEVEL, POI, ROUTE, AREA
-- `paths[]` — lat/lon polygon points defining zone boundary
-- `schedule` — parking rules (time windows, intervals, restrictions)
-- `tariffs[]` — `chargeInterval`, `currency`, `displayCharge`, `displayChargeUnitSize`, `cappedCharge`
-- `conditions` — restriction type details (free, metered, loading, reserved, etc.)
+#### Protobuf Structure (Reverse-Engineered)
 
-**Notes:**
-- 566 total zones across downtown Colorado Springs
-- Response is ~1.5 MB Protobuf; Protobuf schema embedded in the Modii JS bundle
-- Cache this data — zone geometry changes infrequently (daily refresh is fine)
+```
+Top level: repeated field 1 = GeohashGroup
+  GeohashGroup:
+    field 1 (string) = geohash (e.g. "9wvkvx")
+    repeated field 2 (message) = Zone
+
+  Zone:
+    field 1 (message) = Schedule
+      field 1 (varint) = totalIntervals
+      field 2 (varint) = cycleDuration (30240 = ~3 weeks in minutes)
+      field 3 (message) = baseDate
+        field 1 (varint) = unix timestamp
+      repeated field 4 (message) = ScheduleInterval
+        field 1 (varint) = startOffset
+        field 2 (varint) = duration
+        field 7 (varint) = restrictionType
+        field 8 (varint) = intervalIndex
+    repeated field 2 (message) = Coordinate
+      field 1 (double) = latitude
+      field 2 (double) = longitude
+    field 3 (string) = zone UUID
+    field 4 (varint) = zoneType (0=Street, 1=Route, 2=Outline, 3=Bay, 4=Garage)
+    field 9 (varint) = directionality
+```
+
+#### Restriction Types (schedule.field4.field7)
+
+| Value | Meaning | Count (tested) |
+|-------|---------|----------------|
+| 0 | Free/Unrestricted | 14,065 intervals |
+| 1 | Permit Required | 279 intervals |
+| 2 | Metered/Paid | 13,581 intervals |
+| 3 | Time-Limited | 3,967 intervals |
+| 4 | No Parking | 1,954 intervals |
+| 98 | Special | 14 intervals |
+
+**Key finding:** Most downtown street zones are "mixed" — they alternate between free (restriction=0) at certain hours and metered/restricted at other times. Single-interval zones with restriction=4 (no parking) are most common (1,248 of 1,437 simple zones).
+
+#### Zone Counts (Tested 2026-04-01)
+
+- **2,177 total zones** parsed (14 geohash cells)
+- **2,122 street** (type 0) — the useful ones for parking
+- **35 outlines** (type 2) — area boundaries, not parkable
+- **14 routes** (type 1)
+- **6 garages** (type 4, 3 unique — duplicated across geohash cells)
 
 ### Real-Time Occupancy
 
@@ -66,105 +103,70 @@ Origin: https://colorado-springs.modii.co
 }
 ```
 
-**Response:**
-```json
-{
-  "data": {
-    "<zone-uuid>": {
-      "_zoneId": "<zone-uuid>",
-      "occupancy": [
-        {"occupancyRate": {"value": 0, "type": "Number"}},
-        {"occupancyStatus": {"value": "LOW", "type": "String"}},
-        {"capacity": {"value": 10, "type": "Number"}},
-        {"occupancyLastUpdate": {"value": "2026-04-01T18:15:57.923Z", "type": "Date"}}
-      ]
-    }
-  }
-}
-```
-
-**Notes:**
-- 311 of 566 zones have live occupancy sensors
-- Timestamps update sub-minute (near real-time)
-- `occupancyStatus` values: LOW, MEDIUM, HIGH
-- Can batch multiple zone IDs in a single request
-- EV charger status also available via `chargingStatus` field
-
-### Zone References
-
-```
-GET /1.1/query/references?zoneReferenceId=<uuid>
-```
-
-Returns zone metadata (areaReferenceId, rawDataPointIds). Useful for grouping zones by area.
+**Status as of 2026-04-01: NO ZONES RETURNING DATA.** The API accepts requests and returns structured responses, but every zone returns `{"type": "Error", "value": "Not Found"}` for all occupancy fields. This includes garages, outlines, and street zones. Either sensors are not deployed in Colorado Springs, or the data feed is down. The endpoint should be re-tested periodically — the infrastructure exists even if the data doesn't flow yet.
 
 ## Epicentral Location
 
 - **Address:** 220 E Pikes Peak Ave, Colorado Springs, CO 80903
 - **Coordinates:** 38.8339, -104.8186
 
+## Test Results (2026-04-01)
+
+Within 0.5 mi of Epicentral:
+- **12 always-free zones** (closest at 0.26 mi)
+- **280 mixed zones** (free at certain hours, metered at others)
+- **0 metered-only zones** (all metered zones also have free intervals)
+- **592 restricted zones** (no parking, permit only)
+
+The closest always-free zone is at `38.8336, -104.8235` (~0.26 mi walk, ~5 min).
+
 ## Implementation
 
-### Phase 1: CLI Tool
+### Phase 1: CLI Tool (Prototype Complete)
 
-**Location:** `scripts/parking-finder.ts` (Bun TypeScript)
+**Prototype location:** `~/Projects/parking-finder/parking.ts`
 
-**Behavior:**
-1. On first run, fetch all zone geometry from `/1.4/query/client/zoneGroups`
-2. Decode Protobuf response (extract schema from Modii JS bundle, or reverse-engineer minimal proto definition)
-3. Filter for free parking zones (tariff displayCharge = 0 or no tariff)
-4. Calculate centroid of each free zone polygon
-5. Compute walking distance from Epicentral coordinates (haversine for initial sort, optionally Google Directions API for walking time)
-6. For the nearest N free zones, hit `/1.4/dynamic/complex` for live occupancy
-7. Output ranked list: distance, capacity, occupancy status, last updated
+**What works now:**
+1. Fetches all zone geometry from SpotParking API
+2. Decodes Protobuf using `protobufjs` generic reader (no .proto schema needed)
+3. Parses schedule intervals and extracts restriction types per zone
+4. Classifies zones as Free / Free* (time-dependent) / Mixed / Metered / Restricted
+5. Calculates haversine distance from Epicentral
+6. Outputs sorted list with Google Maps links for each zone
 
-**Cache strategy:**
-- Zone geometry cached to `~/.cache/parking-finder/zones.json` (refresh daily)
-- Occupancy fetched live on every run
+**What needs work for production:**
+- **Time-aware filtering:** Parse the schedule cycle (30240 minutes, ~3 weeks) to determine which restriction applies RIGHT NOW, not just whether free intervals exist
+- **Zone caching:** Cache protobuf response locally, refresh daily
+- **Deduplication:** Some zones appear in multiple geohash cells (garages confirmed duplicated)
+- **Street names:** The API doesn't return street names. Could reverse-geocode centroids via Google Maps or OpenStreetMap Nominatim
+- **Google Maps links → directions:** Replace `?q=lat,lng` with `?saddr=Epicentral&daddr=lat,lng` for walking directions
 
-**Output format:**
-```
-Parking near Epicentral (220 E Pikes Peak Ave)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
- #  Zone                Distance  Spots  Status   Updated
- 1  S Nevada Ave (100)  0.1 mi    8/10   LOW      2m ago
- 2  E Pikes Peak (300)  0.2 mi    3/6    MEDIUM   1m ago
- 3  S Tejon St (200)    0.3 mi    12/15  LOW      30s ago
-```
-
-### Phase 2: Windmill Cron (Optional)
+### Phase 2: Windmill Cron (Future)
 
 **Location:** `windmill/f/devops/parking_check.ts`
 
-**Behavior:**
-- Runs weekday mornings before typical arrival (e.g. 7:30 AM MT)
-- Checks occupancy of top 5 nearest free zones
-- Sends Slack notification with best option
-- Only notifies if a LOW occupancy spot exists within 0.3 miles
+Blocked by occupancy sensors — without live availability data, a morning notification would just show the same static list every day. Revisit when the occupancy endpoint starts returning data.
 
-### Phase 3: Enhancements (Optional)
+**Alternative:** Could still be useful if time-aware filtering is implemented — notify which zones are currently in their "free" window based on schedule data alone.
 
-- Time-aware filtering: some free zones have time restrictions (e.g. free after 6 PM only). Use schedule data to filter for currently-free zones.
-- Walking directions: integrate with Google Maps Directions API for actual walking time instead of haversine distance.
-- Historical patterns: log occupancy over time to predict best arrival windows.
+### Phase 3: Enhancements (Future)
 
-## Technical Considerations
+- **Walking directions:** Google Maps Directions API for actual walking time
+- **Historical patterns:** If occupancy sensors come online, log data to predict best arrival windows
+- **Interactive map:** Simple HTML page with Leaflet showing free zones color-coded by distance
 
-- **Protobuf decoding:** The zone geometry endpoint returns binary Protobuf. Need to either:
-  - Extract the `.proto` schema from the Modii JS bundle (`spotparking.GeoHashCollectionOfZones`)
-  - Use `protobuf.js` with a reverse-engineered minimal schema
-  - Or parse the raw binary with a generic Protobuf decoder
-- **No auth required:** API is open with `Access-Control-Allow-Origin: *`. Only need `Origin: https://colorado-springs.modii.co` header.
-- **Rate limiting:** Unknown. Be respectful — cache geometry, only poll occupancy when needed.
-- **Fragility:** This is an undocumented API. Could change without notice. Pin to known working request formats.
+## Technical Notes
+
+- **No auth required.** API is open, CORS allows all origins. Only needs `Origin: https://colorado-springs.modii.co` header.
+- **Protobuf decoding without .proto schema.** The prototype uses `protobufjs.Reader` for generic field-by-field parsing. Wire types: 0=varint, 1=double, 2=length-delimited (strings, bytes, sub-messages), 5=float32. This approach is brittle but works and avoids needing to extract the full .proto definition from the Modii JS bundle.
+- **Rate limiting:** Unknown. The prototype makes 1 API call per run. Be respectful.
+- **Fragility:** Undocumented API. Could change without notice.
 
 ## Dependencies
 
-- `protobufjs` or equivalent for Protobuf decoding
-- Bun runtime (consistent with imladris tooling)
-- Optional: Google Maps API key for walking directions
+- `protobufjs` — Protobuf decoding
+- Bun runtime
 
 ## Priority
 
-Low — quality of life tool. Build when there's downtime.
+Low — quality of life tool. Prototype works. Productionize when there's downtime.
