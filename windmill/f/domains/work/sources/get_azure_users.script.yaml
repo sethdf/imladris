@@ -1,0 +1,32 @@
+summary: ''
+description: ''
+lock: '!inline f/domains/work/sources/get_azure_users.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    department:
+      type: string
+      description: ''
+      default: null
+      originalType: string
+    email:
+      type: string
+      description: ''
+      default: null
+      originalType: string
+    enabled_only:
+      type: boolean
+      description: ''
+      default: true
+    limit:
+      type: number
+      description: ''
+      default: 50
+    name_contains:
+      type: string
+      description: ''
+      default: null
+      originalType: string
+  required: []

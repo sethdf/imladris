@@ -1,9 +1,10 @@
-schedule: "0 0 */6 * * *"
-on_failure: ""
-script_path: f/devops/discover_resources
-args:
-  stale_after_hours: 48
-  resource_types: ""
-timezone: America/Los_Angeles
-is_flow: false
+args: {}
+cron_version: v2
+email: admin@windmill.dev
 enabled: true
+is_flow: false
+no_flow_overlap: false
+schedule: 0 0 */6 * * *
+script_path: f/infra/discover_resources
+timezone: America/Los_Angeles
+ws_error_handler_muted: false

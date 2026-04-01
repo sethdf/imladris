@@ -1,0 +1,34 @@
+summary: ''
+description: ''
+lock: '!inline f/domains/work/sources/get_aws_resources.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    account:
+      type: string
+      description: ''
+      default: all
+      originalType: string
+    limit:
+      type: number
+      description: ''
+      default: 100
+    name_contains:
+      type: string
+      description: ''
+      default: null
+      originalType: string
+    resource_type:
+      type: string
+      description: ''
+      default: null
+      enum:
+        - rds
+        - lambda
+        - s3
+        - ecs
+      originalType: enum
+  required:
+    - resource_type

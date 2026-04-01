@@ -1,0 +1,17 @@
+summary: ''
+description: ''
+lock: '!inline f/core/investigation_accuracy_digest.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    days_back:
+      type: number
+      description: ''
+      default: 7
+    include_all_time:
+      type: boolean
+      description: ''
+      default: true
+  required: []

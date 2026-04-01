@@ -1,0 +1,17 @@
+summary: Batch triage Telegram messages from whitelisted chats
+description: Fetches messages from Kenan Clay DM and Buxton DB group, classifies via Haiku, stores in triage cache
+lock: '!inline f/core/batch_triage_telegram.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    max_messages_per_chat:
+      type: integer
+      default: 50
+      description: Maximum messages to fetch per chat
+    dry_run:
+      type: boolean
+      default: false
+      description: If true, classify but do not store results or update state
+  required: []

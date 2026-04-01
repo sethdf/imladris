@@ -1,0 +1,11 @@
+summary: Shared Bedrock API helper for pipeline AI calls
+description: Wraps AWS Bedrock invoke-model via CLI. Replaces claude -p with
+  direct Bedrock calls.
+lock: '!inline f/core/bedrock.script.lock'
+kind: script
+no_main_func: true
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties: {}
+  required: []

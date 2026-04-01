@@ -1,0 +1,31 @@
+summary: Batch Triage Slack Messages
+description: AI-driven Slack message triage via Haiku classification. Pulls
+  unread messages from all conversations (channels, DMs, group DMs), classifies
+  using Bedrock Haiku, marks channels as read, stores results in SQLite.
+lock: '!inline f/core/batch_triage_slack.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    channel_filter:
+      type: string
+      description: Filter channels by name or ID (empty = all)
+      default: ''
+    delay_ms:
+      type: number
+      description: Milliseconds between Slack API calls (rate limiting)
+      default: 2000
+    dry_run:
+      type: boolean
+      description: If true, classify but don't mark channels as read
+      default: false
+    max_channels:
+      type: number
+      description: Maximum number of channels to process
+      default: 100
+    max_messages_per_channel:
+      type: number
+      description: Maximum unread messages to process per channel
+      default: 50
+  required: []

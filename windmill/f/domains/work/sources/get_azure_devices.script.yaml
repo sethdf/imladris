@@ -1,0 +1,27 @@
+summary: ''
+description: ''
+lock: '!inline f/domains/work/sources/get_azure_devices.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    display_name_contains:
+      type: string
+      description: ''
+      default: null
+      originalType: string
+    is_compliant:
+      type: boolean
+      description: ''
+      default: null
+    limit:
+      type: number
+      description: ''
+      default: 50
+    os_type:
+      type: string
+      description: ''
+      default: null
+      originalType: string
+  required: []

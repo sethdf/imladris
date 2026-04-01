@@ -1,0 +1,16 @@
+summary: 'Re-ingest dismissed triage items back into the investigation pipeline'
+description: 'Resets dismissed items to uninvestigated state. Idempotent — safe to run multiple times on the same ID.'
+lock: '!inline f/core/reingest_dismissed.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    item_ids:
+      type: array
+      description: 'Array of triage_results row IDs to re-ingest'
+      items:
+        type: integer
+      originalType: number[]
+  required:
+    - item_ids

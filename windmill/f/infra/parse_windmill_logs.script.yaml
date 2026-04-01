@@ -1,0 +1,9 @@
+summary: Parse recent failed Windmill jobs, classify errors via Haiku, alert Slack
+description: Reads failed jobs from last 30min, sends error patterns to Claude Haiku for classification, posts actionable findings to Slack. Transient errors are ignored.
+lock: '!inline f/infra/parse_windmill_logs.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties: {}
+  required: []

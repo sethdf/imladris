@@ -1,0 +1,27 @@
+summary: Batch Triage Emails
+description: AI-driven email triage via Haiku classification. Paginates through
+  ALL unread M365 emails via Graph API @odata.nextLink, classifies each email
+  using Bedrock Haiku, marks AUTO emails as read, stores results in SQLite.
+lock: '!inline f/core/batch_triage_emails.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    batch_size:
+      type: number
+      description: Maximum number of emails to process in this run
+      default: 50
+    days_back:
+      type: number
+      description: How many days back to fetch unread emails
+      default: 30
+    delay_ms:
+      type: number
+      description: Milliseconds to wait between triage calls (rate limiting)
+      default: 2000
+    dry_run:
+      type: boolean
+      description: If true, classify but don't mark emails as read
+      default: false
+  required: []

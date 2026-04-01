@@ -1,0 +1,15 @@
+summary: ''
+description: ''
+lock: '!inline f/domains/work/sources/aikido_get_issue.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    issue_id:
+      type: string
+      description: ''
+      default: null
+      originalType: string
+  required:
+    - issue_id

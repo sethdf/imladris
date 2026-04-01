@@ -1,0 +1,30 @@
+summary: ''
+description: ''
+lock: '!inline f/core/rate_investigation.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    dedup_hash:
+      type: string
+      description: ''
+      default: null
+      originalType: string
+    misdiagnosis_type:
+      type: string
+      description: ''
+      default: ''
+      originalType: string
+    notes:
+      type: string
+      description: ''
+      default: ''
+      originalType: string
+    rating:
+      type: number
+      description: ''
+      default: null
+  required:
+    - dedup_hash
+    - rating

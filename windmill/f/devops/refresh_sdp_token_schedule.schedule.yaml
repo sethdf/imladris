@@ -1,7 +1,10 @@
-schedule: "0 */45 * * * *"
-on_failure: ""
-script_path: f/devops/refresh_sdp_token
 args: {}
-timezone: America/Los_Angeles
-is_flow: false
+cron_version: v2
+email: admin@windmill.dev
 enabled: true
+is_flow: false
+no_flow_overlap: false
+schedule: 0 */45 * * * *
+script_path: f/domains/work/infra/refresh_sdp_token
+timezone: America/Los_Angeles
+ws_error_handler_muted: false

@@ -1,0 +1,24 @@
+summary: List M365 Emails
+description: Fetch unread/recent emails from Microsoft 365 via Graph API for work intake.
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    days_back:
+      type: integer
+      description: Only return emails from the last N days (0 = no limit)
+      default: 7
+    limit:
+      type: integer
+      description: Maximum number of emails to return
+      default: 50
+    unread_only:
+      type: boolean
+      description: Only return unread messages
+      default: true
+    user_email:
+      type: string
+      description: User email/UPN to fetch mail for
+      default: sfoley@buxtonco.com
+  required: []

@@ -1,0 +1,27 @@
+summary: Investigate Triaged Item
+description: Evidence-based diagnostic engine using Steampipe read-only queries,
+  cross-source correlation, and AI synthesis. Never guesses — every conclusion
+  cites probe evidence.
+lock: '!inline f/core/investigate.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    content:
+      type: string
+      description: The alert/email/ticket text to investigate
+    item_id:
+      type: string
+      description: Optional item ID for tracking
+      default: ''
+    source:
+      type: string
+      description: 'Source system: m365, sdp, slack, github, aws'
+      default: m365
+    triage_classification:
+      type: string
+      description: 'Classification from triage: NOTIFY, QUEUE, AUTO'
+      default: QUEUE
+  required:
+    - content

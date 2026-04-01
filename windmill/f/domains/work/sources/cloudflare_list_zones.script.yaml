@@ -1,0 +1,30 @@
+summary: ''
+description: ''
+lock: '!inline f/domains/work/sources/cloudflare_list_zones.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    limit:
+      type: number
+      description: ''
+      default: 50
+    search:
+      type: string
+      description: ''
+      default: null
+      originalType: string
+    status:
+      type: string
+      description: ''
+      default: null
+      enum:
+        - active
+        - pending
+        - initializing
+        - moved
+        - deleted
+        - deactivated
+      originalType: enum
+  required: []

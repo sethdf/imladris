@@ -1,8 +1,0 @@
-schedule: 0 */5 * * * *
-timezone: America/New_York
-enabled: true
-script_path: f/devops/monitor_worker_health
-is_flow: false
-args: {}
-summary: Check worker health and cancel stuck jobs every 5 minutes
-no_flow_overlap: true

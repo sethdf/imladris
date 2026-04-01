@@ -1,8 +1,10 @@
-schedule: '0 0 6 * * *'
-timezone: 'UTC'
-enabled: true
-script_path: f/devops/audit_investigation_coverage
-is_flow: false
 args: {}
-summary: 'Daily audit: check BWS credential sources have investigation tools'
-no_flow_overlap: true
+cron_version: v2
+email: admin@windmill.dev
+enabled: true
+is_flow: false
+no_flow_overlap: false
+schedule: 0 0 6 * * *
+script_path: f/domains/work/actions/audit_investigation_coverage
+timezone: UTC
+ws_error_handler_muted: false

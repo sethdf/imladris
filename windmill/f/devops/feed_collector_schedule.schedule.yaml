@@ -1,7 +1,10 @@
-schedule: "0 0 */6 * * *"
-on_failure: ""
-script_path: f/devops/feed_collector
 args: {}
-timezone: America/Los_Angeles
-is_flow: false
+cron_version: v2
+email: admin@windmill.dev
 enabled: true
+is_flow: false
+no_flow_overlap: false
+schedule: 0 0 */6 * * *
+script_path: f/core/feed_collector
+timezone: America/Los_Angeles
+ws_error_handler_muted: false

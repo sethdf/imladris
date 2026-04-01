@@ -1,9 +1,10 @@
-schedule: "0 0 17 * * *"
-on_failure: ""
-script_path: f/devops/activity_report
-args:
-  period: daily
-  format: text
-timezone: America/Los_Angeles
-is_flow: false
+args: {}
+cron_version: v2
+email: admin@windmill.dev
 enabled: true
+is_flow: false
+no_flow_overlap: false
+schedule: 0 0 10 * * *
+script_path: f/core/activity_report
+timezone: America/Los_Angeles
+ws_error_handler_muted: false
