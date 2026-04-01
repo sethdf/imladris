@@ -5,6 +5,6 @@ enabled: true
 is_flow: false
 no_flow_overlap: false
 schedule: 0 */30 * * * *
-script_path: f/infra/parse_windmill_logs
+script_path: f/imladris/parse_windmill_logs
 timezone: America/New_York
 ws_error_handler_muted: false

@@ -2,7 +2,7 @@ summary: Health dashboard — box health, data sources, gotchas
 description: 'Three modes: quick (~2s box health), full (~15s everything),
   datasources (~10s 3rd-party only). Returns structured JSON with auto-populated
   gotchas array.'
-lock: '!inline f/infra/status_check.script.lock'
+lock: '!inline f/imladris/status_check.script.lock'
 kind: script
 schema:
   $schema: https://json-schema.org/draft/2020-12/schema

@@ -5,6 +5,6 @@ enabled: false
 is_flow: false
 no_flow_overlap: false
 schedule: 0 */5 * * * *
-script_path: f/infra/monitor_worker_health
+script_path: f/imladris/monitor_worker_health
 timezone: America/New_York
 ws_error_handler_muted: false
