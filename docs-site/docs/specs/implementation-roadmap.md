@@ -80,7 +80,13 @@ With structural and infra foundations stable, expand PAI's intelligence capabili
 - **Risk:** Medium-high. Self-hosted Postgres (not RDS/Aurora — Apache AGE requires self-hosted). Requires PAI containers to be running.
 - **Dependency:** Phase 1b (PAI containerization), Docker-Modular infra stable
 
-### 2b: Personal Domain Pack (initial)
+### 2b: Multi-Schema Postgres + Hive Collective
+- **Why here:** Extends the base memory-sync with domain partitioning and cross-instance sharing. Requires Postgres to be running (2a) before schemas can be created.
+- **Scope:** Per the [spec](./postgres-multi-schema): four schemas (core/work/personal/shared), SQLite→Postgres triage sync, hive logical replication between instances, PreCompact direct Postgres write for zero-loss compaction protection.
+- **Risk:** Low-medium. Additive to memory-sync. Logical replication over Tailscale is well-supported. The `shared` schema graduation mechanism requires discipline (explicit, not automatic).
+- **Dependency:** Phase 2a (Postgres running with base schema)
+
+### 2c: Personal Domain Pack (initial)
 - **Why here:** Directory structure exists (Phase 1a), Postgres ready (Phase 2a enables richer queries for personal data)
 - **Scope:** Telegram-first. Ingest personal Telegram messages into cache (scoped — explicit connections only, no ambient expansion). Surface patterns via existing pipeline. No new action targets in initial slice.
 - **Risk:** Low-medium. Telegram integration already exists in `shared/telegram_*.ts`. Scope discipline is the risk — define the ingestion boundary explicitly and don't expand it.

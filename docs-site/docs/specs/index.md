@@ -13,4 +13,5 @@ Specs and implementation plans for work not yet built. These are concrete design
 | [Domain-Modular Architecture](./modularization) | Platform structure | 1 | Design done |
 | [Docker-Modular Architecture](./docker-modular) | Infrastructure | 1 | Ready |
 | [PAI Memory Sync](./memory-sync) | PAI / Postgres | 2 | Draft |
+| [Postgres Multi-Schema + Hive](./postgres-multi-schema) | PAI / Postgres | 2 | Ready |
 | [Implementation Roadmap](./implementation-roadmap) | All | — | Living doc |

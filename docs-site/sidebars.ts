@@ -24,6 +24,7 @@ const sidebars: SidebarsConfig = {
         "specs/modularization",
         "specs/docker-modular",
         "specs/memory-sync",
+        "specs/postgres-multi-schema",
       ],
     },
     {
