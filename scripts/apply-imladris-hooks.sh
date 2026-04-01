@@ -46,6 +46,7 @@ CUSTOM_HOOKS=(
   StateSnapshot.hook.ts
   ContextCompaction.hook.ts
   CrossWorkstreamLearning.hook.ts
+  PreCompact.hook.ts
 )
 
 # ========================================
@@ -181,6 +182,11 @@ ensureEventHook(settings.hooks.UserPromptSubmit,
 ensureEventHook(settings.hooks.SessionEnd,
   'bun run \$HOME/.claude/hooks/CrossWorkstreamLearning.hook.ts');
 
+// PreCompact (PreCompact — persist context summary before compaction)
+if (!settings.hooks.PreCompact) settings.hooks.PreCompact = [];
+ensureEventHook(settings.hooks.PreCompact,
+  'bun run \$HOME/.claude/hooks/PreCompact.hook.ts');
+
 // --- Clean stale hook references (ONLY for imladris-owned hooks) ---
 // Safety: only remove entries whose command references an imladris custom hook.
 // PAI-owned hooks are NEVER touched by this cleanup, even if their path
@@ -192,6 +198,7 @@ const IMLADRIS_HOOKS = new Set([
   'StateSnapshot.hook.ts',
   'ContextCompaction.hook.ts',
   'CrossWorkstreamLearning.hook.ts',
+  'PreCompact.hook.ts',
 ]);
 const home = process.env.HOME || '/home/' + require('os').userInfo().username;
 function cleanStale(eventArray) {
