@@ -153,7 +153,7 @@ docker run -dit \
 |-------|--------------|-----------------|
 | Container detach (tmux detach) | Everything in pai-memory and pai-config | Nothing |
 | Container stop (docker stop) | Everything in named volumes | Nothing |
-| Container destroy (docker rm) | pai-memory, pai-config | pai-session-{name} workspace |
+| Container destroy (docker rm) | pai-memory, pai-config | `pai-session-{name}` workspace |
 | Host reboot | All named volumes (Docker volumes survive reboots) | Nothing |
 | Host migration | Named volumes (exported via docker save/docker volume export) | Host-local bind mounts |
 
@@ -559,7 +559,7 @@ In Phase 2: SigNoz OTEL collector receives logs from all containers via OTLP.
 
 | Container | Memory limit | CPU limit | Rationale |
 |-----------|-------------|-----------|-----------|
-| pai-{session} | 4GB | 2 CPUs | Claude Code + large context windows |
+| `pai-{session}` | 4GB | 2 CPUs | Claude Code + large context windows |
 | windmill-server | 1GB | 1 CPU | Relatively lightweight |
 | windmill-worker (each) | 2GB | 1 CPU | TypeScript workers run AWS SDK |
 | postgres | 2GB | 1 CPU | Windmill database |
