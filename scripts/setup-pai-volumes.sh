@@ -74,6 +74,11 @@ if [[ -d "${CLAUDE_DIR}/MEMORY" ]]; then
             echo 'Done copying MEMORY files'
             ls /dst/ | head -20
         "
+    # Fix ownership — alpine copies as root; node user (uid 1000) needs write access
+    docker run --rm \
+        --mount "type=volume,src=pai-memory,dst=/dst" \
+        "${HELPER_IMAGE}" \
+        sh -c "chown -R 1000:1000 /dst && echo 'Ownership set to uid 1000'"
     echo "✓ pai-memory populated"
 else
     echo "⚠ ${CLAUDE_DIR}/MEMORY not found — pai-memory will be empty (ok for fresh install)"

@@ -21,6 +21,11 @@ RUN npm install -g @anthropic-ai/claude-code bun
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
+# Pre-create directories as node user so Docker volume mounts inherit correct ownership
+# (Docker mounts over existing dirs preserve image permissions; missing dirs get root ownership)
+RUN mkdir -p /home/node/work /home/node/.claude/MEMORY \
+    && chown -R node:node /home/node
+
 # Run as node user (uid 1000 — matches ec2-user uid on host)
 USER node
 WORKDIR /home/node
