@@ -1,0 +1,162 @@
+#!/bin/bash
+# pai-session — PAI Docker session manager
+#
+# Manages named Claude Code session containers.
+# Each session is an isolated container with shared config + MEMORY volumes.
+#
+# Usage:
+#   pai-session start [name]    Create or resume a named session (default: "default")
+#   pai-session attach [name]   Attach to a running session's tmux
+#   pai-session list            List all active PAI session containers
+#   pai-session stop [name]     Stop container (state preserved in volumes)
+#   pai-session destroy [name]  Remove container and per-session workspace volume
+#
+# Prerequisites:
+#   - Docker volumes pai-config and pai-memory must exist (run setup-pai-volumes.sh first)
+#   - BWS_ACCESS_TOKEN env var set (for secrets injection)
+#
+# See: docs-site/docs/specs/docker-modular.md
+
+set -euo pipefail
+
+IMAGE="${PAI_IMAGE:-ghcr.io/sethdf/imladris/pai:latest}"
+NETWORK="${PAI_NETWORK:-imladris_net}"
+SESSION_NAME="${2:-default}"
+CONTAINER_NAME="pai-${SESSION_NAME}"
+
+# ── Secrets ────────────────────────────────────────────────────────────────
+
+_inject_secrets() {
+    local secrets_dir
+    secrets_dir="$(mktemp -d)"
+    chmod 700 "${secrets_dir}"
+    local env_file="${secrets_dir}/pai.env"
+
+    # Fetch from BWS if token is available
+    if command -v bws &>/dev/null && [[ -n "${BWS_ACCESS_TOKEN:-}" ]]; then
+        bws secret get anthropic_api_key 2>/dev/null \
+            | jq -r '"ANTHROPIC_API_KEY=\(.value)"' >> "${env_file}" || true
+        bws secret get github_pat 2>/dev/null \
+            | jq -r '"GITHUB_TOKEN=\(.value)"' >> "${env_file}" || true
+        bws secret get aws_access_key_id 2>/dev/null \
+            | jq -r '"AWS_ACCESS_KEY_ID=\(.value)"' >> "${env_file}" || true
+        bws secret get aws_secret_access_key 2>/dev/null \
+            | jq -r '"AWS_SECRET_ACCESS_KEY=\(.value)"' >> "${env_file}" || true
+    else
+        echo "# BWS not configured — add secrets manually or set BWS_ACCESS_TOKEN" > "${env_file}"
+        echo "# ANTHROPIC_API_KEY=" >> "${env_file}"
+        echo "WARNING: BWS not available. Secrets not injected. Edit ${env_file} manually." >&2
+    fi
+
+    chmod 600 "${env_file}"
+    echo "${env_file}"
+    # NOTE: secrets_dir is intentionally NOT cleaned up here — caller must rm -rf it after docker run.
+    # In production, use a tmpfs mount for true ephemeral storage:
+    #   sudo mount -t tmpfs tmpfs /run/pai-secrets && chmod 700 /run/pai-secrets
+    echo "${secrets_dir}" >> /tmp/.pai-secrets-dirs 2>/dev/null || true
+}
+
+_cleanup_secrets() {
+    # Remove any leftover secrets dirs from this session
+    if [[ -f /tmp/.pai-secrets-dirs ]]; then
+        while IFS= read -r dir; do
+            rm -rf "${dir}" 2>/dev/null || true
+        done < /tmp/.pai-secrets-dirs
+        rm -f /tmp/.pai-secrets-dirs
+    fi
+}
+
+# ── Commands ───────────────────────────────────────────────────────────────
+
+cmd_start() {
+    # Verify required volumes exist
+    if ! docker volume inspect pai-config &>/dev/null; then
+        echo "ERROR: pai-config volume not found. Run: scripts/setup-pai-volumes.sh" >&2
+        exit 1
+    fi
+    if ! docker volume inspect pai-memory &>/dev/null; then
+        echo "ERROR: pai-memory volume not found. Run: scripts/setup-pai-volumes.sh" >&2
+        exit 1
+    fi
+
+    # If container already exists (stopped), just start it
+    if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+        echo "Resuming existing session: ${CONTAINER_NAME}"
+        docker start "${CONTAINER_NAME}" 2>/dev/null || true
+        docker exec -it "${CONTAINER_NAME}" tmux attach-session -t main \
+            || docker exec -it "${CONTAINER_NAME}" tmux new-session -s main
+        return
+    fi
+
+    echo "Starting new PAI session: ${CONTAINER_NAME}"
+    local env_file
+    env_file="$(_inject_secrets)"
+
+    docker run -dit \
+        --name "${CONTAINER_NAME}" \
+        --label pai-session=true \
+        --label pai-session-name="${SESSION_NAME}" \
+        --network "${NETWORK}" \
+        --env-file "${env_file}" \
+        --add-host=host.docker.internal:host-gateway \
+        --mount type=volume,src=pai-config,dst=/home/node/.claude,readonly \
+        --mount type=volume,src=pai-memory,dst=/home/node/.claude/MEMORY \
+        --mount "type=volume,src=pai-session-${SESSION_NAME},dst=/home/node/work" \
+        --cap-drop=ALL \
+        --security-opt=no-new-privileges \
+        --memory=4g \
+        --cpus=2 \
+        "${IMAGE}"
+
+    # Clean secrets after container starts (secrets injected via env-file at run time)
+    _cleanup_secrets
+
+    docker exec -it "${CONTAINER_NAME}" tmux attach-session -t main \
+        || docker exec -it "${CONTAINER_NAME}" tmux new-session -s main
+}
+
+cmd_attach() {
+    if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+        echo "Session '${SESSION_NAME}' not running. Use: pai-session start ${SESSION_NAME}" >&2
+        exit 1
+    fi
+    docker exec -it "${CONTAINER_NAME}" tmux attach-session -t main
+}
+
+cmd_list() {
+    docker ps -a \
+        --filter label=pai-session=true \
+        --format "table {{.Names}}\t{{.Status}}\t{{.RunningFor}}"
+}
+
+cmd_stop() {
+    echo "Stopping ${CONTAINER_NAME} (volumes preserved)..."
+    docker stop "${CONTAINER_NAME}"
+}
+
+cmd_destroy() {
+    echo "Destroying session ${SESSION_NAME}..."
+    docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
+    docker volume rm "pai-session-${SESSION_NAME}" 2>/dev/null && \
+        echo "Removed volume: pai-session-${SESSION_NAME}" || true
+    echo "Done. pai-config and pai-memory volumes preserved."
+}
+
+# ── Dispatch ───────────────────────────────────────────────────────────────
+
+case "${1:-help}" in
+    start)   cmd_start ;;
+    attach)  cmd_attach ;;
+    list)    cmd_list ;;
+    stop)    cmd_stop ;;
+    destroy) cmd_destroy ;;
+    *)
+        echo "Usage: pai-session {start|attach|list|stop|destroy} [session-name]"
+        echo ""
+        echo "  start [name]    Create or resume a session (default: 'default')"
+        echo "  attach [name]   Attach to running session tmux"
+        echo "  list            Show all PAI session containers"
+        echo "  stop [name]     Stop container (state preserved)"
+        echo "  destroy [name]  Remove container + workspace volume"
+        ;;
+esac
