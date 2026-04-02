@@ -14,8 +14,8 @@ RUN apt-get update && apt-get install -y \
     rsync \
     && rm -rf /var/lib/apt/lists/*
 
-# Claude Code CLI
-RUN npm install -g @anthropic-ai/claude-code
+# Claude Code CLI + bun (required for PAI hooks and MCP server)
+RUN npm install -g @anthropic-ai/claude-code bun
 
 # Session entrypoint
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh

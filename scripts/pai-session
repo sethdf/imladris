@@ -92,12 +92,20 @@ cmd_start() {
     local env_file
     env_file="$(_inject_secrets)"
 
+    # Optional: bind-mount the imladris repo for testing (set PAI_BIND_REPO=/path/to/repo)
+    local bind_mount_flag=""
+    if [[ -n "${PAI_BIND_REPO:-}" ]]; then
+        bind_mount_flag="--mount type=bind,src=${PAI_BIND_REPO},dst=${PAI_BIND_REPO},readonly"
+    fi
+
     docker run -dit \
         --name "${CONTAINER_NAME}" \
         --label pai-session=true \
         --label pai-session-name="${SESSION_NAME}" \
         --network "${NETWORK}" \
         --env-file "${env_file}" \
+        --env PAI_DIR=/home/node/.claude \
+        --env WINDMILL_BASE=http://windmill_server:8000 \
         --add-host=host.docker.internal:host-gateway \
         --mount type=volume,src=pai-config,dst=/home/node/.claude,readonly \
         --mount type=volume,src=pai-memory,dst=/home/node/.claude/MEMORY \
@@ -106,6 +114,7 @@ cmd_start() {
         --security-opt=no-new-privileges \
         --memory=4g \
         --cpus=2 \
+        ${bind_mount_flag} \
         "${IMAGE}"
 
     # Clean secrets after container starts (secrets injected via env-file at run time)

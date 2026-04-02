@@ -52,6 +52,13 @@ docker run --rm \
         ls /dst/ | head -20
     "
 echo "✓ pai-config populated"
+
+# Create MEMORY mountpoint dir in pai-config (required for nested volume overlay at runtime)
+docker run --rm \
+    --mount "type=volume,src=pai-config,dst=/dst" \
+    "${HELPER_IMAGE}" \
+    sh -c "mkdir -p /dst/MEMORY && echo 'Created MEMORY mountpoint'"
+echo "✓ MEMORY mountpoint created in pai-config"
 echo ""
 
 # ── Populate pai-memory (only ~/.claude/MEMORY/) ────────────────────────────
