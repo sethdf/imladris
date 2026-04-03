@@ -50,46 +50,85 @@ export async function handleMemoryCommand(args: string[]): Promise<void> {
 
       const pool = makePool();
       try {
-        // Fetch all memory_objects that are candidates for embedding
-        let query = `SELECT key, content FROM memory_objects WHERE deleted = FALSE AND content IS NOT NULL`;
-        const params: string[] = [];
-        if (typeFilter) {
-          // We infer type from key, so filter post-fetch for simplicity
-        }
+        // Use a single persistent client so pgml model loads once (~6s) then
+        // stays warm for all subsequent calls (~100ms each).
+        const client = await pool.connect();
+        try {
+          // Query only unembedded/stale objects — don't re-embed what's current
+          const prefixes = ['MEMORY/LEARNING/', 'MEMORY/WORK/', 'WISDOM/', 'skills/'];
+          const exts = ['.md', '.txt', '.ts'];
+          const prefixClause = prefixes.map(p => `mo.key LIKE '${p}%'`).join(' OR ');
+          const extClause = exts.map(e => `mo.key LIKE '%${e}'`).join(' OR ');
+          const typeClause = typeFilter
+            ? `AND mo.key LIKE '${typeFilter === 'failure' ? 'MEMORY/LEARNING/FAILURES/' : typeFilter === 'learning' ? 'MEMORY/LEARNING/' : typeFilter === 'prd' ? 'MEMORY/WORK/' : typeFilter === 'skill' ? 'skills/' : '%'}%'`
+            : '';
 
-        const { rows } = await pool.query(query, params);
+          const { rows: allRows } = await client.query(`
+            SELECT mo.key, mo.content
+            FROM memory_objects mo
+            WHERE mo.deleted = FALSE
+              AND (${prefixClause})
+              AND (${extClause})
+              AND mo.key NOT LIKE '%node_modules%'
+              AND mo.key NOT LIKE '%sync-wal%'
+              AND mo.content IS NOT NULL
+              ${typeClause}
+              AND (
+                NOT EXISTS (SELECT 1 FROM memory_vectors mv WHERE mv.source_key = mo.key)
+                OR mo.updated_at > (
+                  SELECT mv.updated_at FROM memory_vectors mv
+                  WHERE mv.source_key = mo.key ORDER BY mv.chunk_index LIMIT 1
+                )
+              )
+            ORDER BY mo.key
+          `);
 
-        // Filter to embeddable keys
-        let candidates = rows.filter((r: { key: string }) => shouldEmbed(r.key));
-        if (typeFilter) {
-          candidates = candidates.filter((r: { key: string }) => inferSourceType(r.key) === typeFilter);
-        }
-        if (limitArg > 0) {
-          candidates = candidates.slice(0, limitArg);
-        }
-
-        const total = candidates.length;
-        console.log(`${dryRun ? '[DRY RUN] ' : ''}Embedding ${total} objects${typeFilter ? ` (type: ${typeFilter})` : ''}...`);
-
-        let done = 0, failed = 0, totalChunks = 0;
-        const startMs = Date.now();
-
-        for (const row of candidates) {
-          try {
-            const result = await embedObject(pool, row.key, row.content, dryRun);
-            done++;
-            totalChunks += result.chunksWritten;
-            if (done % 10 === 0 || done === total) {
-              process.stdout.write(`\r  ${done}/${total} embedded (${totalChunks} chunks, ${failed} failed)...`);
-            }
-          } catch (err) {
-            failed++;
-            if (failed <= 3) console.error(`\n  Failed: ${row.key}`, (err as Error).message);
+          let candidates = allRows;
+          if (typeFilter) {
+            candidates = candidates.filter((r: { key: string }) => inferSourceType(r.key) === typeFilter);
           }
-        }
+          if (limitArg > 0) {
+            candidates = candidates.slice(0, limitArg);
+          }
 
-        const elapsed = ((Date.now() - startMs) / 1000).toFixed(1);
-        console.log(`\nDone: ${done} objects, ${totalChunks} chunks, ${failed} failed (${elapsed}s)`);
+          const total = candidates.length;
+          if (total === 0) {
+            console.log('Nothing to embed — all objects are current.');
+            break;
+          }
+
+          console.log(`${dryRun ? '[DRY RUN] ' : ''}Embedding ${total} objects${typeFilter ? ` (type: ${typeFilter})` : ''}...`);
+
+          if (!dryRun) {
+            // Warm-up: loads model into this PG backend process once
+            process.stdout.write('  Loading model...');
+            await client.query(`SELECT pgml.embed($1, 'warmup') IS NOT NULL`, [PGML_MODEL]);
+            process.stdout.write(' ready.\n');
+          }
+
+          let done = 0, failed = 0, totalChunks = 0;
+          const startMs = Date.now();
+
+          for (const row of candidates) {
+            try {
+              const result = await embedObject(client as any, row.key, row.content, dryRun);
+              done++;
+              totalChunks += result.chunksWritten;
+              if (done % 25 === 0 || done === total) {
+                const rate = (done / ((Date.now() - startMs) / 1000)).toFixed(1);
+                process.stdout.write(`\r  ${done}/${total} (${totalChunks} chunks, ${rate} obj/s, ${failed} failed)...`);
+              }
+            } catch (err) {
+              failed++;
+              if (failed <= 3) console.error(`\n  Failed: ${row.key}`, (err as Error).message);
+            }
+          }
+
+          const elapsed = ((Date.now() - startMs) / 1000).toFixed(1);
+          console.log(`\nDone: ${done} objects, ${totalChunks} chunks, ${failed} failed (${elapsed}s)`);
+        } finally {
+          client.release();
+        }
       } finally {
         await pool.end();
       }
