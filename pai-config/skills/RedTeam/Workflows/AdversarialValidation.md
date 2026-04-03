@@ -253,3 +253,21 @@ Start with A's JWT approach (pragmatic), add B's short-lived tokens (15 min) and
 - `Tree-of-thought.md` (PAI) - For exploring branches before committing
 
 **Last Updated:** 2025-11-27
+
+---
+
+## Auto-Persist Results
+
+**Save validation to disk before returning** — decision-quality adversarial analysis shouldn't live only in conversation.
+
+1. Generate a `SLUG` from the decision/idea being validated: lowercase, hyphens, ≤30 chars
+2. Use the **Write tool** to create:
+   `~/.claude/History/redteam/YYYY-MM/YYYY-MM-DD_[SLUG]/output.md`
+   with the full validation transcript (bot-vs-bot rounds + verdict)
+3. If a work item is active, also copy there:
+   ```bash
+   WORK_DIR=$(jq -r '.work_dir // empty' ~/.claude/MEMORY/STATE/current-work.json 2>/dev/null)
+   # If $WORK_DIR is non-empty:
+   # cp History output → ~/.claude/MEMORY/WORK/$WORK_DIR/redteam-$(date +%H%M%S).md
+   ```
+4. **Failures are non-fatal** — if Write fails, continue and return results normally

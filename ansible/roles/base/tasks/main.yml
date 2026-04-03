@@ -1,0 +1,9 @@
+---
+# =============================================================================
+# Base Role — OS setup (merged: packages, nodejs, bun, ssm-disable, mosh)
+# =============================================================================
+- ansible.builtin.include_tasks: packages.yml
+- ansible.builtin.include_tasks: nodejs.yml
+- ansible.builtin.include_tasks: bun.yml
+- ansible.builtin.include_tasks: ssm-disable.yml
+- ansible.builtin.include_tasks: mosh.yml

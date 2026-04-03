@@ -444,10 +444,10 @@ async function discoverAndRegisterWindmillTools() {
 
   // Scripts to skip (this server itself, or already handled statically)
   const skipPaths = new Set([
-    "f/devops/mcp_server",
+    "f/core/mcp_server",
   ]);
   // Only register tools from these folder prefixes
-  const allowedPrefixes = ["f/investigate/", "f/devops/"];
+  const allowedPrefixes = ["f/core/", "f/domains/"];
 
   let registered = 0;
 

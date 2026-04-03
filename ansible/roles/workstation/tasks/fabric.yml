@@ -1,0 +1,71 @@
+---
+# =============================================================================
+# Miessler Go tools — installed via go install (golang required in base role)
+#
+# Fabric: https://github.com/danielmiessler/fabric
+#   Go-based AI augmentation framework, 200+ crowdsourced patterns.
+#   Usage: cat article.txt | fabric --pattern summarize
+#
+# yt: https://github.com/danielmiessler/yt
+#   YouTube transcript extractor — pairs with Fabric for video analysis.
+#   Usage: yt https://youtube.com/... | fabric --pattern extract_wisdom
+#   Requires YOUTUBE_API_KEY env var at runtime (not needed for install).
+# =============================================================================
+
+- name: Check if fabric binary is installed
+  ansible.builtin.stat:
+    path: "{{ go_bin_path }}/fabric"
+  register: fabric_binary_stat
+
+- name: Install Fabric via go install
+  ansible.builtin.shell:
+    cmd: go install github.com/danielmiessler/fabric@latest
+    executable: /bin/bash
+  become: false
+  changed_when: true
+  when: not fabric_binary_stat.stat.exists
+  environment:
+    HOME: "{{ imladris_home }}"
+    GOPATH: "{{ imladris_home }}/go"
+    PATH: "/usr/local/go/bin:/usr/bin:/bin:{{ ansible_env.PATH | default('/usr/bin:/bin') }}"
+
+# Add ~/go/bin to PATH so fabric is available in all shells
+- name: Add Go bin to PATH in bashrc
+  ansible.builtin.blockinfile:
+    path: "{{ imladris_home }}/.bashrc"
+    marker: "# {mark} ANSIBLE MANAGED - Go PATH"
+    block: |
+      export PATH="$HOME/go/bin:$PATH"
+    create: true
+    owner: "{{ imladris_user }}"
+    group: "{{ imladris_user }}"
+    mode: "0644"
+
+# yt — YouTube transcript extractor (pairs with Fabric for video research pipelines)
+- name: Check if yt binary is installed
+  ansible.builtin.stat:
+    path: "{{ go_bin_path }}/yt"
+  register: yt_binary_stat
+
+- name: Install yt (YouTube transcript extractor) via go install
+  ansible.builtin.shell:
+    cmd: go install github.com/danielmiessler/yt@latest
+    executable: /bin/bash
+  become: false
+  changed_when: true
+  when: not yt_binary_stat.stat.exists
+  environment:
+    HOME: "{{ imladris_home }}"
+    GOPATH: "{{ imladris_home }}/go"
+    PATH: "/usr/local/go/bin:/usr/bin:/bin:{{ ansible_env.PATH | default('/usr/bin:/bin') }}"
+
+# Sync patterns from GitHub — non-fatal (network may be unavailable at bake)
+- name: Update Fabric patterns from GitHub
+  ansible.builtin.command:
+    cmd: "{{ go_bin_path }}/fabric --updatepatterns"
+  become: false
+  changed_when: true
+  failed_when: false
+  when: not (ami_bake_phase | default(false))
+  environment:
+    HOME: "{{ imladris_home }}"

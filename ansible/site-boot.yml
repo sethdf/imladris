@@ -37,21 +37,13 @@
     - role: tailscale
       tags: [tailscale, network]
 
-    # Disable SSM agent (must run after SSM param retrieval in UserData)
-    - role: ssm-disable
-      tags: [ssm, security, hardening]
+    # OS setup: includes ssm-disable (packages/nodejs/bun already baked, idempotent)
+    - role: base
+      tags: [base, ssm]
 
-    # Clone repositories (fresh clone ensures latest code)
-    - role: repos
-      tags: [repos, git]
-
-    # Claude Code boot config (symlinks, dirs, settings, context seed, pai CLI)
-    - role: claude-code
-      tags: [claude, claude-code]
-
-    # AI failover wrapper (needs repo for wrapper script)
-    - role: ai-failover
-      tags: [ai-failover, failover]
+    # PAI tooling: repos clone, claude-code config, ai-failover (idempotent)
+    - role: workstation
+      tags: [workstation, repos, claude, failover]
 
     # Windmill (Docker Compose up, state restore, workspace, scripts, schedules)
     - role: windmill

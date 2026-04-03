@@ -58,3 +58,22 @@ Then select and output the most innovative approach.
 4. **Think deeply** about each option's unique angles
 5. **Select best** option based on innovation and quality
 6. **Output single response** - polished and refined
+
+
+---
+
+## Auto-Persist Results
+
+**Save output to disk before returning** — extended thinking is expensive to reproduce.
+
+1. Generate a `SLUG` from the topic/request: lowercase, hyphens, ≤30 chars
+2. Use the **Write tool** to create:
+   `~/.claude/History/thinking/YYYY-MM/YYYY-MM-DD_[SLUG]/output.md`
+   with the full creative output
+3. If a work item is active, also copy there:
+   ```bash
+   WORK_DIR=$(jq -r '.work_dir // empty' ~/.claude/MEMORY/STATE/current-work.json 2>/dev/null)
+   # If $WORK_DIR is non-empty:
+   # cp History output → ~/.claude/MEMORY/WORK/$WORK_DIR/creative-$(date +%H%M%S).md
+   ```
+4. **Failures are non-fatal** — if Write fails, continue and return results normally

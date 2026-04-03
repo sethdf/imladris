@@ -73,7 +73,8 @@ interface CurrentWork {
 // ========================================
 
 const HOME = homedir();
-const STATE_DIR = join(HOME, '.claude', 'state');
+const CLAUDE_DIR = process.env.PAI_DIR || join(HOME, '.claude');
+const STATE_DIR = join(CLAUDE_DIR, 'MEMORY', 'STATE');
 const CURRENT_WORK_PATH = join(STATE_DIR, 'current-work.json');
 
 // Phase detection patterns from voice curl messages

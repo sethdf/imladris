@@ -207,6 +207,22 @@ If user specifies custom members, adjust accordingly:
 
 **Total: 30-90 seconds for full debate**
 
+## Auto-Persist Results
+
+**Save debate transcript to disk before returning** — protects against session-end and context compaction.
+
+1. Generate a `SLUG` from the debate topic: lowercase, hyphens, ≤30 chars
+2. Use the **Write tool** to create:
+   `~/.claude/History/council/YYYY-MM/YYYY-MM-DD_[SLUG]/output.md`
+   with the full debate transcript (all rounds + synthesis)
+3. If a work item is active, also copy there:
+   ```bash
+   WORK_DIR=$(jq -r '.work_dir // empty' ~/.claude/MEMORY/STATE/current-work.json 2>/dev/null)
+   # If $WORK_DIR is non-empty:
+   # cp History output → ~/.claude/MEMORY/WORK/$WORK_DIR/council-$(date +%H%M%S).md
+   ```
+4. **Failures are non-fatal** — if Write fails, continue and return results to user normally
+
 ## Done
 
 Debate complete. The transcript shows the full intellectual journey from initial positions through challenges to synthesis.

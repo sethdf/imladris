@@ -30,41 +30,18 @@
     - role: nvme
       tags: [nvme, storage]
 
-    # System packages (wget, git, jq, tar, unzip, tmux, cronie, EPEL)
-    - role: packages
-      tags: [packages, base]
+    # OS setup: packages, nodejs, bun, mosh (ssm-disable skipped at bake via conditions)
+    - role: base
+      tags: [base, packages, nodejs, bun, mosh]
 
     # Docker + Compose (install, enable, pull images in post_tasks)
     - role: docker
       tags: [docker, containers]
 
-    # Node.js 20 via dnf module
-    - role: nodejs
-      tags: [nodejs, runtime]
-
-    # Bun runtime
-    - role: bun
-      tags: [bun, runtime]
-
-    # Bitwarden Secrets CLI binary (no credentials)
-    - role: bitwarden
-      tags: [bitwarden, secrets]
-
-    # Steampipe + AWS plugin
-    - role: steampipe
-      tags: [steampipe, query]
-
-    # mcp-tools binary
-    - role: mcp-tools
-      tags: [mcp-tools, mcp]
-
-    # Mosh (EPEL install — eliminates slow source build)
-    - role: mosh
-      tags: [mosh, network]
-
-    # Claude Code CLI install only (ami_bake_phase=true skips boot config)
-    - role: claude-code
-      tags: [claude, claude-code]
+    # PAI tooling: bitwarden, claude-code CLI, steampipe, mcp-tools
+    # (repos/ai-failover skipped at bake — no credentials/repo yet)
+    - role: workstation
+      tags: [workstation, bitwarden, claude, steampipe, mcp]
 
     # Voice server unit files + env template (service start skipped at bake)
     - role: voice-server

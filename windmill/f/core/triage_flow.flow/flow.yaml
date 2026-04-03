@@ -10,7 +10,7 @@ value:
       summary: 'Classify, investigate, and propose fix'
       value:
         type: script
-        path: f/devops/triage_pipeline
+        path: f/core/triage_pipeline
         input_transforms:
           source:
             type: javascript
@@ -39,7 +39,7 @@ value:
                 summary: 'Request human approval for proposed action'
                 value:
                   type: script
-                  path: f/devops/approval_flow
+                  path: f/core/approval_flow
                   input_transforms:
                     operation:
                       type: javascript
@@ -98,7 +98,7 @@ value:
                 summary: 'Run the response playbook (approved)'
                 value:
                   type: script
-                  path: f/devops/response_playbook
+                  path: f/core/response_playbook
                   input_transforms:
                     playbook:
                       type: javascript
@@ -121,7 +121,7 @@ value:
                 summary: 'Verify remediation succeeded'
                 value:
                   type: script
-                  path: f/devops/verify_remediation
+                  path: f/core/verify_remediation
                   input_transforms:
                     item_id:
                       type: javascript
@@ -149,7 +149,7 @@ value:
                           summary: 'Close the originating ticket'
                           value:
                             type: script
-                            path: f/devops/close_ticket
+                            path: f/domains/work/actions/close_ticket
                             input_transforms:
                               ticket_id:
                                 type: javascript

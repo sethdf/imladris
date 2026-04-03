@@ -415,7 +415,7 @@
   block:
     - name: Check for windmill scripts directory
       ansible.builtin.stat:
-        path: "{{ windmill_scripts_dir }}/f/devops"
+        path: "{{ windmill_scripts_dir }}/f"
       register: windmill_scripts_dir_stat
 
     - name: Initialize wmill in scripts directory
@@ -428,9 +428,10 @@
 
     - name: Find Windmill scripts to push
       ansible.builtin.find:
-        paths: "{{ windmill_scripts_dir }}/f/devops"
+        paths: "{{ windmill_scripts_dir }}/f"
         patterns: "*.ts"
-        excludes: "*.script.yaml"
+        recurse: true
+        excludes: "*.script.ts"
       register: windmill_script_files
       when: windmill_scripts_dir_stat.stat.exists | default(false)
 
@@ -438,7 +439,7 @@
       ansible.builtin.shell:
         cmd: |
           cd {{ windmill_scripts_dir }}
-          ls f/devops/*.ts | grep -v '.script.' | xargs -P4 -I{} timeout 60 wmill script push {}
+          find f -name '*.ts' ! -name '*.script.*' | xargs -P4 -I{} timeout 60 wmill script push {}
         chdir: "{{ windmill_scripts_dir }}"
       changed_when: true
       failed_when: false

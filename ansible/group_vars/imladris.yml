@@ -53,6 +53,7 @@ system_packages:
   - unzip
   - tmux
   - cronie
+  - golang   # required for Fabric (go install github.com/danielmiessler/fabric@latest)
   # mosh requires EPEL — installed separately in packages role
 
 # --- Docker ---
@@ -72,6 +73,9 @@ bws_access_token: ""
 
 # --- Node.js ---
 nodejs_version: "20"
+
+# --- Go / Fabric ---
+go_bin_path: "{{ imladris_home }}/go/bin"
 
 # --- Git Repositories ---
 git_repos:
@@ -120,39 +124,39 @@ windmill_admin_password: ""
 windmill_scripts_dir: "{{ imladris_repo_dir }}/windmill"
 windmill_wmill_config_dir: "{{ imladris_home }}/.config/windmill"
 windmill_schedules:
-  - path: f/devops/refresh_sdp_token_schedule
+  - path: f/domains/work/infra/refresh_sdp_token_schedule
     schedule: "0 */45 * * * *"
-    script_path: f/devops/refresh_sdp_token
-  - path: f/devops/feed_collector_schedule
+    script_path: f/domains/work/infra/refresh_sdp_token
+  - path: f/core/feed_collector_schedule
     schedule: "0 0 */6 * * *"
-    script_path: f/devops/feed_collector
-  - path: f/devops/activity_report_schedule
+    script_path: f/core/feed_collector
+  - path: f/core/activity_report_schedule
     schedule: "0 0 10 * * *"
-    script_path: f/devops/activity_report
-  - path: f/devops/contextual_surface_schedule
+    script_path: f/core/activity_report
+  - path: f/core/contextual_surface_schedule
     schedule: "0 0 */12 * * *"
-    script_path: f/devops/contextual_surface
-  - path: f/devops/sdp_morning_summary_schedule
+    script_path: f/core/contextual_surface
+  - path: f/domains/work/actions/sdp_morning_summary_schedule
     schedule: "0 0 8 * * 1-5"
-    script_path: f/devops/sdp_morning_summary
-  - path: f/devops/compliance_scan_schedule
+    script_path: f/domains/work/actions/sdp_morning_summary
+  - path: f/domains/work/sources/compliance_scan_schedule
     schedule: "0 0 7 * * 1"
-    script_path: f/devops/compliance_scan
-  - path: f/devops/cost_report_schedule
+    script_path: f/domains/work/sources/compliance_scan
+  - path: f/domains/work/sources/cost_report_schedule
     schedule: "0 0 7 * * *"
-    script_path: f/devops/cost_report
-  - path: f/devops/cross_correlate_schedule
+    script_path: f/domains/work/sources/cost_report
+  - path: f/core/correlate_triage_schedule
     schedule: "0 0 */12 * * *"
-    script_path: f/devops/cross_correlate
-  - path: f/devops/upstream_updates_schedule
+    script_path: f/core/correlate_triage
+  - path: f/shared/upstream_updates_schedule
     schedule: "0 0 8 * * *"
-    script_path: f/devops/upstream_updates
-  - path: f/devops/investigation_accuracy_digest_schedule
+    script_path: f/shared/upstream_updates
+  - path: f/core/investigation_accuracy_digest_schedule
     schedule: "0 0 8 * * 1"
-    script_path: f/devops/investigation_accuracy_digest
-  - path: f/devops/batch_triage_telegram_schedule
+    script_path: f/core/investigation_accuracy_digest
+  - path: f/core/batch_triage_telegram_schedule
     schedule: "0 */30 * * * *"
-    script_path: f/devops/batch_triage_telegram
+    script_path: f/core/batch_triage_telegram
 
 # --- Steampipe ---
 steampipe_install_url: "https://steampipe.io/install/steampipe.sh"

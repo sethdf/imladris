@@ -1,0 +1,14 @@
+---
+# =============================================================================
+# Workstation Role — PAI tooling (merged: bitwarden, repos, claude-code,
+#                                        steampipe, mcp-tools, ai-failover)
+# Dependency order: bitwarden CLI → repos (clone) → claude-code (needs repo)
+#                   → steampipe → mcp-tools → ai-failover
+# =============================================================================
+- ansible.builtin.include_tasks: bitwarden.yml
+- ansible.builtin.include_tasks: repos.yml
+- ansible.builtin.include_tasks: claude-code.yml
+- ansible.builtin.include_tasks: steampipe.yml
+- ansible.builtin.include_tasks: mcp-tools.yml
+- ansible.builtin.include_tasks: fabric.yml
+- ansible.builtin.include_tasks: ai-failover.yml

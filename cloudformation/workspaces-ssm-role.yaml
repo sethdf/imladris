@@ -1,0 +1,49 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  IAM role for AWS WorkSpaces instances to enable SSM Fleet Manager.
+  Attach to the WorkSpaces directory via InstanceIamRoleArn so the SSM agent
+  on each WorkSpace can authenticate without a reboot.
+  Target account: Buxton prod (945243322929), directory d-90676e2078.
+
+Resources:
+
+  WorkspacesSSMInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: WorkspacesSSMInstanceRole
+      Description: Allows WorkSpaces EC2 instances to register with SSM Fleet Manager
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Tags:
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Stack
+          Value: !Ref AWS::StackName
+        - Key: Purpose
+          Value: WorkSpaces-SSM
+
+  WorkspacesSSMInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: WorkspacesSSMInstanceRole
+      Roles:
+        - !Ref WorkspacesSSMInstanceRole
+
+Outputs:
+
+  RoleArn:
+    Description: ARN to set as InstanceIamRoleArn on the WorkSpaces directory
+    Value: !GetAtt WorkspacesSSMInstanceRole.Arn
+    Export:
+      Name: WorkspacesSSMInstanceRoleArn
+
+  InstanceProfileArn:
+    Description: Instance profile ARN
+    Value: !GetAtt WorkspacesSSMInstanceProfile.Arn

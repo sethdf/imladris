@@ -320,7 +320,7 @@ export async function main(
   // Verify (best-effort)
   let verificationResult: any = null;
   try {
-    const verifyResp = await runWindmillScript("f/devops/verify_remediation", {
+    const verifyResp = await runWindmillScript("f/core/verify_remediation", {
       item_id: rem.dedup_hash,
       original_investigation: JSON.stringify({
         entities: [{ value: rem.target_resource, type: guessEntityType(rem.target_resource) }],

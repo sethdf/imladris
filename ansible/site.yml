@@ -24,9 +24,9 @@
     - role: nvme
       tags: [nvme, storage]
 
-    # Step 2: System packages
-    - role: packages
-      tags: [packages, base]
+    # Step 2: OS setup (packages, nodejs, bun, ssm-disable, mosh)
+    - role: base
+      tags: [base, packages, nodejs, bun, ssm, mosh]
 
     # Step 2: Docker + Compose
     - role: docker
@@ -36,49 +36,13 @@
     - role: tailscale
       tags: [tailscale, network]
 
-    # Security: Disable SSM agent (Tailscale replaces it)
-    - role: ssm-disable
-      tags: [ssm, security, hardening]
-
-    # Step 2: Node.js
-    - role: nodejs
-      tags: [nodejs, runtime]
-
-    # Step 2: Bun runtime
-    - role: bun
-      tags: [bun, runtime]
-
-    # Step 2: Bitwarden Secrets CLI
-    - role: bitwarden
-      tags: [bitwarden, secrets]
-
-    # Step 3: Clone repositories
-    - role: repos
-      tags: [repos, git]
-
-    # Steps 4-6, 10: Claude Code (symlinks, dirs, settings, CLI, context seed)
-    - role: claude-code
-      tags: [claude, claude-code]
+    # Steps 2-13: PAI tooling (bitwarden, repos, claude-code, steampipe, mcp-tools, ai-failover)
+    - role: workstation
+      tags: [workstation, bitwarden, repos, claude, steampipe, mcp, failover]
 
     # Step 8: Windmill (Docker Compose + wmill CLI)
     - role: windmill
       tags: [windmill, automation]
-
-    # Step 9: Steampipe + AWS plugin
-    - role: steampipe
-      tags: [steampipe, query]
-
-    # Step 12: mcp-tools CLI
-    - role: mcp-tools
-      tags: [mcp-tools, mcp]
-
-    # Step 13: AI failover wrapper
-    - role: ai-failover
-      tags: [ai-failover, failover]
-
-    # Decision 42: Mosh for connection resilience
-    - role: mosh
-      tags: [mosh, network]
 
     # Decision 43: Voice server (ElevenLabs TTS with HTTP audio streaming)
     - role: voice-server

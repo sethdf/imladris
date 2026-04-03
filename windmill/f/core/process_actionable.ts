@@ -193,7 +193,7 @@ async function submitInvestigation(
 
   try {
     const submitResp = await fetch(
-      `${base}/api/w/${workspace}/jobs/run/p/f/devops/agentic_investigator`,
+      `${base}/api/w/${workspace}/jobs/run/p/f/core/agentic_investigator`,
       {
         method: "POST",
         headers: {

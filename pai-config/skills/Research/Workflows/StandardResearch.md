@@ -90,6 +90,22 @@ WebFetch(url, "Confirm article exists and summarize main point")
 🎯 COMPLETED: Research on [topic] complete
 ```
 
+## Auto-Persist Results
+
+**Save findings to disk before returning** — protects against session-end and context compaction.
+
+1. Generate a `SLUG` from the topic: lowercase, replace spaces with hyphens, strip special chars, ≤30 chars
+2. Use the **Write tool** to create:
+   `~/.claude/History/research/YYYY-MM/YYYY-MM-DD_[SLUG]/output.md`
+   with the full formatted results from Step 5
+3. If a work item is active, also copy there:
+   ```bash
+   WORK_DIR=$(jq -r '.work_dir // empty' ~/.claude/MEMORY/STATE/current-work.json 2>/dev/null)
+   # If $WORK_DIR is non-empty:
+   # cp History output → ~/.claude/MEMORY/WORK/$WORK_DIR/research-$(date +%H%M%S).md
+   ```
+4. **Failures are non-fatal** — if Write fails, continue and return results to user normally
+
 ## Speed Target
 
 ~15-30 seconds for results

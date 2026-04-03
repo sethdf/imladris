@@ -1,10 +1,11 @@
 // Windmill Script: Triage Pipeline Orchestrator
 // Central coordinator for the triage pipeline. Receives a single incoming item
-// (email, ticket, alert) and orchestrates: classify -> investigate -> propose fix.
+// (email, ticket, alert) and orchestrates: enrich -> classify -> investigate -> propose fix.
 //
 // Pipeline steps:
-//   1. CLASSIFY — AI classification via Bedrock Sonnet (NOTIFY/QUEUE/AUTO)
-//   2. INVESTIGATE — call f/devops/investigate via Windmill internal API (read-only)
+//   0. ENRICH — extract entities + query cache history for pre-classification context
+//   1. CLASSIFY — AI classification via Bedrock Sonnet (NOTIFY/QUEUE/AUTO) with context
+//   2. INVESTIGATE — call f/core/investigate via Windmill internal API (read-only)
 //   3. PROPOSE — format fixable items for human approval
 //   4. RETURN — complete pipeline result with next-step guidance
 //
@@ -61,6 +62,14 @@ interface PipelineResult {
   duration_ms: number;
 }
 
+// ── Context enrichment types ──
+
+interface EnrichedContext {
+  entities: Array<{ entity: string; type: string }>;
+  patternSummary: string;   // e.g. "entity X seen 12x: 11 AUTO, 1 QUEUE"
+  hasOpenIncidents: boolean;
+}
+
 // ── Windmill variable access ──
 
 async function getVariable(path: string): Promise<string | undefined> {
@@ -113,12 +122,78 @@ async function runWindmillScript(path: string, args: Record<string, any>): Promi
   return resp.json();
 }
 
+// ── Step 0: Enrich context (investigate-first) ──
+// Fast pre-classification context: entity extraction + cache history lookup.
+// Pure local operations (SQLite) — no network calls, no Steampipe, no Bedrock.
+// Fails open: returns empty context on any error.
+
+async function enrichContext(content: string, source: string): Promise<EnrichedContext> {
+  const empty: EnrichedContext = { entities: [], patternSummary: "", hasOpenIncidents: false };
+  try {
+    const cacheLib = await import("./cache_lib.ts");
+    if (!cacheLib.isAvailable()) return empty;
+
+    // Extract entities from raw content (max 5 most significant)
+    const rawEntities = cacheLib.extractEntities(content);
+    if (!rawEntities || rawEntities.length === 0) return empty;
+
+    // Take top 5 entities (first = most significant per extractEntities ordering)
+    const entities = rawEntities.slice(0, 5);
+
+    // Query history for each entity and build pattern summary
+    const patternParts: string[] = [];
+    let hasOpenIncidents = false;
+    const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+
+    for (const { entity } of entities) {
+      const history = cacheLib.queryEntity(entity, 20);
+      if (history.length === 0) continue;
+
+      // Count outcomes from cached triage results
+      let autoCount = 0;
+      let queueCount = 0;
+      let notifyCount = 0;
+      let hasRecent = false;
+
+      for (const item of history) {
+        const body = item.body || "";
+        if (body.includes("action=AUTO")) autoCount++;
+        else if (body.includes("action=QUEUE")) queueCount++;
+        else if (body.includes("action=NOTIFY")) notifyCount++;
+
+        // Check if there's a recent QUEUE/NOTIFY (potential open incident)
+        const cachedAt = new Date(item.cached_at || 0).getTime();
+        if (cachedAt > sevenDaysAgo && (body.includes("action=QUEUE") || body.includes("action=NOTIFY"))) {
+          hasRecent = true;
+        }
+      }
+
+      if (hasRecent) hasOpenIncidents = true;
+
+      const total = autoCount + queueCount + notifyCount;
+      if (total > 0) {
+        const parts = [`${entity}: ${total}x`];
+        if (autoCount > 0) parts.push(`${autoCount} AUTO`);
+        if (queueCount > 0) parts.push(`${queueCount} QUEUE`);
+        if (notifyCount > 0) parts.push(`${notifyCount} NOTIFY`);
+        patternParts.push(parts.join(" "));
+      }
+    }
+
+    const patternSummary = patternParts.join("; ").slice(0, 200);
+    return { entities, patternSummary, hasOpenIncidents };
+  } catch {
+    return empty;
+  }
+}
+
 // ── Step 1: Classify (via Bedrock Sonnet) ──
 
 async function classify(
   source: string,
   event_type: string,
   content: string,
+  enrichedContext?: EnrichedContext,
 ): Promise<TriageClassification> {
   // Load calibration data if available
   let calibrationContext = "";
@@ -153,12 +228,28 @@ Use this calibration data to adjust your classification. If AUTO accuracy is low
     // Calibration unavailable — proceed without
   }
 
+  // Build entity context section from enrichment
+  let entityContext = "";
+  if (enrichedContext && enrichedContext.entities.length > 0) {
+    const entityList = enrichedContext.entities.map(e => `${e.entity} (${e.type})`).join(", ");
+    entityContext = `\n\nExtracted entities: ${entityList}`;
+
+    if (enrichedContext.patternSummary) {
+      entityContext += `\nHistorical patterns (last 7 days): ${enrichedContext.patternSummary}`;
+      entityContext += `\nHint: If an entity has a high AUTO ratio historically, lean toward AUTO unless content indicates a new/changed condition.`;
+    }
+
+    if (enrichedContext.hasOpenIncidents) {
+      entityContext += `\nWarning: One or more entities have recent QUEUE/NOTIFY history — potential ongoing incident. Prefer QUEUE over AUTO.`;
+    }
+  }
+
   const prompt = `You are an event triage system. Classify this event.
 
 Source: ${source}
 Event type: ${event_type}
 Payload:
-${content.slice(0, 2000)}
+${content.slice(0, 2000)}${entityContext}
 
 Respond with ONLY valid JSON (no markdown):
 {
@@ -367,9 +458,18 @@ export async function main(
 
   const resolvedItemId = item_id || `triage-${Date.now()}`;
 
-  // ── Step 1: CLASSIFY ──
+  // ── Step 0: ENRICH CONTEXT (investigate-first) ──
+  console.log(`[pipeline] Step 0: Enriching context for ${source}/${event_type}...`);
+  const enrichedContext = await enrichContext(content, source);
+  if (enrichedContext.entities.length > 0) {
+    console.log(`[pipeline] Context: ${enrichedContext.entities.length} entities, pattern: "${enrichedContext.patternSummary.slice(0, 80)}"`);
+  } else {
+    console.log(`[pipeline] Context: no entities extracted (cold start)`);
+  }
+
+  // ── Step 1: CLASSIFY (with enriched context) ──
   console.log(`[pipeline] Step 1: Classifying ${source}/${event_type} item...`);
-  const classification = await classify(source, event_type, content);
+  const classification = await classify(source, event_type, content, enrichedContext);
   console.log(`[pipeline] Classification: ${classification.action} (${classification.urgency}) — ${classification.summary}`);
 
   // ── SHORT-CIRCUIT: AUTO items or classify_only mode ──
@@ -396,10 +496,10 @@ export async function main(
   }
 
   // ── Step 2: INVESTIGATE (QUEUE and NOTIFY items) ──
-  console.log(`[pipeline] Step 2: Investigating via f/devops/investigate...`);
+  console.log(`[pipeline] Step 2: Investigating via f/core/investigate...`);
   let investigation: any = null;
   try {
-    investigation = await runWindmillScript("f/devops/investigate", {
+    investigation = await runWindmillScript("f/core/investigate", {
       source,
       content,
       item_id: resolvedItemId,

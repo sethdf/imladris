@@ -5,6 +5,6 @@ enabled: false
 is_flow: false
 no_flow_overlap: false
 schedule: 0 0 */12 * * *
-script_path: f/devops/cross_correlate
+script_path: f/core/correlate_triage
 timezone: America/Los_Angeles
 ws_error_handler_muted: false

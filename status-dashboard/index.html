@@ -9,7 +9,7 @@
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);line-height:1.5}
 .dash{max-width:960px;margin:0 auto;padding:24px 16px}
-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:12px}
+header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:12px}
 h1{font-size:20px;font-weight:600}
 .ctrl{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .modes{display:flex;border:1px solid var(--border);border-radius:var(--r);overflow:hidden}
@@ -19,6 +19,11 @@ h1{font-size:20px;font-weight:600}
 .btn:hover{color:var(--text);background:var(--border)}
 .btn:disabled{opacity:.5;cursor:not-allowed}
 .btn.on{color:var(--blue);border-color:var(--blue);background:rgba(59,130,246,.1)}
+/* Tab nav */
+.tabs{display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:16px}
+.tab{padding:8px 18px;background:transparent;border:none;border-bottom:2px solid transparent;color:var(--dim);cursor:pointer;font-size:14px;font-weight:500;transition:all .15s;margin-bottom:-1px}
+.tab:hover{color:var(--text)}
+.tab.active{color:var(--blue);border-bottom-color:var(--blue)}
 .meta{display:flex;gap:16px;font-size:12px;color:var(--dim);padding:8px 0;border-bottom:1px solid var(--border);margin-bottom:16px}
 .err{background:rgba(239,68,68,.1);border:1px solid var(--red);color:var(--red);padding:10px 14px;border-radius:var(--r);margin-bottom:16px;font-size:13px}
 .gotchas{padding:12px 16px;border-radius:var(--r);margin-bottom:16px;font-size:14px}
@@ -49,23 +54,51 @@ tr:hover td{background:rgba(255,255,255,.02)}
 .empty{text-align:center;padding:60px 0;color:var(--dim);font-size:14px}
 .spin{display:inline-block;animation:spin 1s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
+/* Triage-specific */
+.triage-toolbar{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+.triage-toolbar .modes{margin-right:auto}
+.bulk-bar{display:flex;align-items:center;gap:8px;padding:8px 12px;background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.3);border-radius:var(--r);margin-bottom:12px;font-size:13px;flex-wrap:wrap}
+.bulk-bar .count{color:var(--blue);font-weight:600;margin-right:4px}
+.triage-table th:first-child,.triage-table td:first-child{width:32px;text-align:center}
+.action-badge{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:600}
+.ab-queue{background:rgba(234,179,8,.15);color:var(--yellow)}
+.ab-auto{background:rgba(107,114,128,.15);color:var(--dim)}
+.ab-notify{background:rgba(59,130,246,.15);color:var(--blue)}
+.ab-other{background:rgba(255,255,255,.08);color:var(--text)}
+.urg-critical{color:var(--red);font-weight:600}
+.urg-high{color:var(--yellow)}
+.urg-medium,.urg-low{color:var(--dim)}
+input[type=checkbox]{accent-color:var(--blue);width:14px;height:14px;cursor:pointer}
+/* AI stub */
+.stub-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:32px;text-align:center;margin-top:12px}
+.stub-title{font-size:18px;font-weight:600;margin-bottom:8px}
+.stub-desc{color:var(--dim);font-size:14px;max-width:500px;margin:0 auto 12px}
+.stub-tag{display:inline-block;padding:3px 12px;background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.3);color:var(--blue);border-radius:12px;font-size:12px;font-weight:600}
 </style>
 </head>
 <body>
 <div class="dash" id="app"></div>
 <script>
-// Derive base from the page's own path so API calls route through our proxy
 const WM_BASE = window.location.pathname.replace(/\/+$/, '');
-const WM_PATH = '/api/w/imladris/jobs/run_wait_result/p/f/devops/status_check';
-let state = { data: null, loading: false, mode: 'quick', auto: false, error: null, collapsed: {} };
+const WM_PATH = '/api/w/imladris/jobs/run_wait_result/p/f/imladris/status_check';
+
+let state = {
+  tab: 'status',
+  // status tab
+  data: null, loading: false, mode: 'quick', auto: false, error: null, collapsed: {},
+  // triage tab
+  triageItems: [], triageTotal: 0, triageLoading: false, triageError: null,
+  triageFilter: 'all', triageSelected: new Set(), triageBulking: false,
+};
 let autoTimer = null;
 
 function h(tag, attrs, ...children) {
   const el = document.createElement(tag);
   if (attrs) Object.entries(attrs).forEach(([k, v]) => {
     if (k === 'onclick') el.onclick = v;
+    else if (k === 'onchange') el.onchange = v;
     else if (k === 'className') el.className = v;
-    else el.setAttribute(k, v);
+    else if (v != null) el.setAttribute(k, v);
   });
   children.flat().forEach(c => {
     if (c == null) return;
@@ -78,6 +111,8 @@ function badge(ok, label) {
   return h('span', { className: `badge ${ok ? 'b-ok' : 'b-fail'}` }, `${ok ? '\u2713' : '\u2717'} ${label}`);
 }
 
+// ── Status tab logic ──
+
 async function runCheck(m) {
   const mode = m || state.mode;
   state.loading = true; state.error = null; render();
@@ -89,26 +124,69 @@ async function runCheck(m) {
     });
     if (!resp.ok) throw new Error(`API error: ${resp.status}`);
     state.data = await resp.json();
-  } catch (e) {
-    state.error = e.message;
-  }
+  } catch (e) { state.error = e.message; }
   state.loading = false; render();
 }
 
-function toggleSection(key) {
-  state.collapsed[key] = !state.collapsed[key]; render();
-}
-
-function setMode(m) {
-  state.mode = m; runCheck(m);
-}
-
+function toggleSection(key) { state.collapsed[key] = !state.collapsed[key]; render(); }
+function setMode(m) { state.mode = m; runCheck(m); }
 function toggleAuto() {
   state.auto = !state.auto;
   if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
   if (state.auto) autoTimer = setInterval(() => runCheck(), 30000);
   render();
 }
+
+// ── Triage tab logic ──
+
+async function loadTriage() {
+  state.triageLoading = true; state.triageError = null; render();
+  try {
+    const url = `/triage/queue?action=${state.triageFilter}&limit=50&offset=0`;
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`Triage API error: ${resp.status}`);
+    const data = await resp.json();
+    state.triageItems = data.items || [];
+    state.triageTotal = data.total || 0;
+  } catch (e) { state.triageError = e.message; }
+  state.triageSelected = new Set();
+  state.triageLoading = false;
+  render();
+}
+
+async function bulkAction(action) {
+  const ids = Array.from(state.triageSelected);
+  if (!ids.length) return;
+  state.triageBulking = true; render();
+  try {
+    const resp = await fetch('/triage/bulk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids, bulk_action: action }),
+    });
+    if (!resp.ok) throw new Error(`Bulk action error: ${resp.status}`);
+  } catch (e) { state.triageError = e.message; }
+  state.triageBulking = false;
+  await loadTriage();
+}
+
+function setTriageFilter(f) {
+  state.triageFilter = f;
+  loadTriage();
+}
+
+function toggleSelectAll(checked) {
+  if (checked) { state.triageItems.forEach(item => state.triageSelected.add(item.id)); }
+  else { state.triageSelected.clear(); }
+  render();
+}
+
+function toggleSelectItem(id, checked) {
+  if (checked) state.triageSelected.add(id); else state.triageSelected.delete(id);
+  render();
+}
+
+// ── Render helpers ──
 
 function section(key, title, content) {
   const col = state.collapsed[key];
@@ -165,13 +243,18 @@ function renderWindmill(w) {
   return h('div', null, cards, tbl);
 }
 
+function scheduleShortName(path) {
+  // Strip leading f/<folder>/ and trailing _schedule
+  return path.replace(/^f\/[^/]+\//, '').replace(/_schedule$/, '');
+}
+
 function renderSchedules(sched) {
   if (!Array.isArray(sched)) return h('pre', null, JSON.stringify(sched, null, 2));
   return h('table', null,
     h('thead', null, h('tr', null, h('th', null, 'Schedule'), h('th', null, 'Cron'), h('th', null, 'Last Run'), h('th', null, 'Status'))),
     h('tbody', null, ...sched.map(s =>
       h('tr', null,
-        h('td', { className: 'mono' }, s.path.replace('f/devops/', '').replace('_schedule', '')),
+        h('td', { className: 'mono' }, scheduleShortName(s.path)),
         h('td', { className: 'mono' }, s.schedule),
         h('td', null, s.last_run?.started_at ? new Date(s.last_run.started_at).toLocaleString() : '\u2014'),
         h('td', null, badge(s.last_run?.success === true, s.last_run?.success ? 'ok' : 'fail'))
@@ -226,23 +309,35 @@ function dsCard(name, d) {
   );
 }
 
-function render() {
-  const app = document.getElementById('app');
-  const d = state.data;
-  const nodes = [];
+function actionBadgeClass(action) {
+  if (action === 'QUEUE') return 'ab-queue';
+  if (action === 'AUTO') return 'ab-auto';
+  if (action === 'NOTIFY') return 'ab-notify';
+  return 'ab-other';
+}
 
-  // Header
-  nodes.push(h('header', null,
-    h('h1', null, 'Imladris Status'),
-    h('div', { className: 'ctrl' },
-      h('div', { className: 'modes' },
-        ...['quick', 'full', 'datasources'].map(m =>
-          h('button', { className: `btn ${state.mode === m ? 'on' : ''}`, onclick: () => setMode(m), disabled: state.loading ? 'disabled' : null }, m)
-        )
-      ),
-      h('button', { className: `btn ${state.auto ? 'on' : ''}`, onclick: toggleAuto }, state.auto ? '\u23f8 Auto' : '\u25b6 Auto'),
-      h('button', { className: 'btn', onclick: () => runCheck(), disabled: state.loading ? 'disabled' : null }, state.loading ? '\u21bb ...' : '\u21bb Refresh')
-    )
+function ageLabel(classifiedAt) {
+  if (!classifiedAt) return '—';
+  const secs = Math.floor(Date.now() / 1000) - classifiedAt;
+  if (secs < 3600) return `${Math.round(secs/60)}m`;
+  if (secs < 86400) return `${Math.round(secs/3600)}h`;
+  return `${Math.round(secs/86400)}d`;
+}
+
+// ── Tab rendering ──
+
+function renderStatusTab(nodes) {
+  const d = state.data;
+
+  // Controls
+  nodes.push(h('div', { className: 'ctrl' },
+    h('div', { className: 'modes' },
+      ...['quick', 'full', 'datasources'].map(m =>
+        h('button', { className: `btn ${state.mode === m ? 'on' : ''}`, onclick: () => setMode(m), disabled: state.loading ? 'disabled' : null }, m)
+      )
+    ),
+    h('button', { className: `btn ${state.auto ? 'on' : ''}`, onclick: toggleAuto }, state.auto ? '\u23f8 Auto' : '\u25b6 Auto'),
+    h('button', { className: 'btn', onclick: () => runCheck(), disabled: state.loading ? 'disabled' : null }, state.loading ? '\u21bb ...' : '\u21bb Refresh')
   ));
 
   if (state.error) nodes.push(h('div', { className: 'err' }, state.error));
@@ -275,6 +370,107 @@ function render() {
   } else if (!state.loading && !state.error) {
     nodes.push(h('div', { className: 'empty' }, 'Loading status...'));
   }
+}
+
+function renderTriageTab(nodes) {
+  const sel = state.triageSelected;
+  const selCount = sel.size;
+  const allChecked = state.triageItems.length > 0 && state.triageItems.every(i => sel.has(i.id));
+
+  // Toolbar: filter buttons + refresh
+  nodes.push(h('div', { className: 'triage-toolbar' },
+    h('div', { className: 'modes' },
+      ...['all', 'QUEUE', 'AUTO', 'NOTIFY'].map(f =>
+        h('button', { className: `btn ${state.triageFilter === f ? 'on' : ''}`, onclick: () => setTriageFilter(f) }, f === 'all' ? 'All' : f)
+      )
+    ),
+    h('span', { className: 'td' }, state.triageTotal > 0 ? `${state.triageTotal} items` : ''),
+    h('button', { className: 'btn', onclick: loadTriage, disabled: state.triageLoading ? 'disabled' : null },
+      state.triageLoading ? '\u21bb ...' : '\u21bb Refresh')
+  ));
+
+  // Bulk action bar (visible when items selected)
+  if (selCount > 0) {
+    nodes.push(h('div', { className: 'bulk-bar' },
+      h('span', { className: 'count' }, `${selCount} selected`),
+      h('button', { className: 'btn', onclick: () => bulkAction('dismiss'), disabled: state.triageBulking ? 'disabled' : null }, 'Dismiss'),
+      h('button', { className: 'btn', onclick: () => bulkAction('escalate'), disabled: state.triageBulking ? 'disabled' : null }, 'Escalate'),
+      h('button', { className: 'btn', onclick: () => bulkAction('investigate'), disabled: state.triageBulking ? 'disabled' : null }, 'Investigate'),
+      h('button', { className: 'btn', onclick: () => bulkAction('ticket'), disabled: state.triageBulking ? 'disabled' : null }, 'Create Ticket'),
+      state.triageBulking ? h('span', { className: 'td' }, 'Working...') : null
+    ));
+  }
+
+  if (state.triageError) nodes.push(h('div', { className: 'err' }, state.triageError));
+
+  if (state.triageItems.length === 0 && !state.triageLoading) {
+    nodes.push(h('div', { className: 'empty' }, 'No unread triage items'));
+    return;
+  }
+
+  const tbl = h('div', { className: 'sec' },
+    h('div', { className: 'sec-b' },
+      h('table', { className: 'triage-table' },
+        h('thead', null, h('tr', null,
+          h('th', null, h('input', { type: 'checkbox', checked: allChecked ? 'checked' : null, onchange: e => toggleSelectAll(e.target.checked) })),
+          h('th', null, 'Source'),
+          h('th', null, 'Subject'),
+          h('th', null, 'Sender'),
+          h('th', null, 'Action'),
+          h('th', null, 'Urgency'),
+          h('th', null, 'Age'),
+        )),
+        h('tbody', null, ...state.triageItems.map(item =>
+          h('tr', null,
+            h('td', null, h('input', { type: 'checkbox', checked: sel.has(item.id) ? 'checked' : null, onchange: e => toggleSelectItem(item.id, e.target.checked) })),
+            h('td', { className: 'td' }, item.source || '—'),
+            h('td', null, item.subject || '(no subject)'),
+            h('td', { className: 'td' }, item.sender || '—'),
+            h('td', null, h('span', { className: `action-badge ${actionBadgeClass(item.action)}` }, item.action)),
+            h('td', { className: `urg-${item.urgency}` }, item.urgency),
+            h('td', { className: 'td' }, ageLabel(item.classified_at)),
+          )
+        ))
+      )
+    )
+  );
+  nodes.push(tbl);
+}
+
+function renderAiTab(nodes) {
+  nodes.push(h('div', { className: 'stub-card' },
+    h('div', { className: 'stub-title' }, 'AI Execution Visibility'),
+    h('div', { className: 'stub-desc' },
+      'Shows hooks fired, algorithm phases, guardrails triggered, and reasoning flow for each PAI session — so you can verify the algorithm is being followed.'
+    ),
+    h('div', { className: 'stub-desc' },
+      'Requires structured session log storage in Postgres (Apache AGE + pgvector). Currently logs are ephemeral.'
+    ),
+    h('span', { className: 'stub-tag' }, 'Phase 2a — Postgres backend required')
+  ));
+}
+
+// ── Main render ──
+
+function render() {
+  const app = document.getElementById('app');
+  const nodes = [];
+
+  // Header
+  nodes.push(h('header', null,
+    h('h1', null, 'Imladris'),
+  ));
+
+  // Tab nav
+  nodes.push(h('div', { className: 'tabs' },
+    h('button', { className: `tab ${state.tab === 'status' ? 'active' : ''}`, onclick: () => { state.tab = 'status'; render(); } }, 'Status'),
+    h('button', { className: `tab ${state.tab === 'triage' ? 'active' : ''}`, onclick: () => { if (state.tab !== 'triage') { state.tab = 'triage'; loadTriage(); } else render(); } }, 'Triage'),
+    h('button', { className: `tab ${state.tab === 'ai' ? 'active' : ''}`, onclick: () => { state.tab = 'ai'; render(); } }, 'AI Runs'),
+  ));
+
+  if (state.tab === 'status') renderStatusTab(nodes);
+  else if (state.tab === 'triage') renderTriageTab(nodes);
+  else if (state.tab === 'ai') renderAiTab(nodes);
 
   app.replaceChildren(...nodes.filter(Boolean));
 }
