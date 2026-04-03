@@ -1,0 +1,90 @@
+---
+# =============================================================================
+# PAI Sync Daemon — filesystem-to-Postgres sync for ~/.claude/
+# Watches ~/.claude/ via inotify, pushes to pai_memory Postgres DB.
+# =============================================================================
+
+- name: PAI Sync setup (boot-time only)
+  when: not (ami_bake_phase | default(false))
+  block:
+
+    - name: Install pai-sync dependencies
+      ansible.builtin.shell:
+        cmd: "{{ imladris_home }}/.bun/bin/bun install"
+        chdir: "{{ imladris_repo_dir }}/pai-sync"
+      become: false
+      changed_when: false
+
+    - name: Create pai_memory database
+      ansible.builtin.shell: |
+        docker exec imladris-windmill_db-1 psql -U postgres -tc \
+          "SELECT 1 FROM pg_database WHERE datname='pai_memory'" \
+          | grep -q 1 || docker exec imladris-windmill_db-1 psql -U postgres \
+          -c "CREATE DATABASE pai_memory"
+      become: false
+      changed_when: false
+      failed_when: false
+
+    - name: Apply pai_memory schema
+      ansible.builtin.shell: |
+        docker exec -i imladris-windmill_db-1 psql -U postgres -d pai_memory \
+          < "{{ imladris_repo_dir }}/pai-sync/schema.sql"
+      become: false
+      changed_when: false
+
+    - name: Set inotify watch limit
+      ansible.posix.sysctl:
+        name: fs.inotify.max_user_watches
+        value: '524288'
+        sysctl_set: true
+        state: present
+        reload: true
+      become: true
+
+    - name: Ensure systemd user directory exists
+      ansible.builtin.file:
+        path: "{{ imladris_home }}/.config/systemd/user"
+        state: directory
+        owner: "{{ imladris_user }}"
+        group: "{{ imladris_user }}"
+        mode: "0755"
+
+    - name: Write pai-sync systemd unit file
+      ansible.builtin.copy:
+        dest: "{{ imladris_home }}/.config/systemd/user/pai-sync.service"
+        owner: "{{ imladris_user }}"
+        group: "{{ imladris_user }}"
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=PAI Memory Sync Daemon
+          After=network-online.target
+
+          [Service]
+          Type=simple
+          ExecStart={{ imladris_home }}/.bun/bin/bun run {{ imladris_repo_dir }}/pai-sync/daemon.ts
+          Restart=on-failure
+          RestartSec=10
+          StartLimitIntervalSec=60
+          StartLimitBurst=3
+          EnvironmentFile={{ imladris_repo_dir }}/.env
+          Environment=HOME={{ imladris_home }}
+
+          [Install]
+          WantedBy=default.target
+
+    - name: Reload systemd user daemon
+      ansible.builtin.shell: systemctl --user daemon-reload
+      become: false
+      changed_when: false
+
+    - name: Enable pai-sync service
+      ansible.builtin.shell: systemctl --user enable pai-sync
+      become: false
+      changed_when: false
+
+    - name: Start pai-sync service
+      ansible.builtin.shell: systemctl --user start pai-sync
+      become: false
+      changed_when: false
+      failed_when: false

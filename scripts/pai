@@ -440,6 +440,12 @@ switch (command) {
     cmdCleanup();
     break;
 
+  case 'sync': {
+    const { handleSyncCommand } = await import(new URL('../pai-sync/cli.ts', import.meta.url).pathname);
+    await handleSyncCommand(args.slice(1));
+    break;
+  }
+
   default:
     printUsage();
     break;

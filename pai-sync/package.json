@@ -1,0 +1,16 @@
+{
+  "name": "pai-sync",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "daemon": "bun run daemon.ts",
+    "cli": "bun run cli.ts"
+  },
+  "dependencies": {
+    "chokidar": "^3.6.0",
+    "pg": "^8.13.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.0"
+  }
+}
