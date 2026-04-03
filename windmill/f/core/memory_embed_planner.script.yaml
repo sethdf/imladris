@@ -1,0 +1,19 @@
+summary: 'PAI Memory Embed Planner'
+description: >-
+  Queries memory_objects for unembedded or stale objects, splits into N batches
+  for parallel embed workers. Returns { total, batches, dry_run }.
+lock: '!inline f/core/memory_embed_planner.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    num_workers:
+      type: number
+      description: 'Number of batches to split work into'
+      default: 4
+    dry_run:
+      type: boolean
+      description: 'If true, return plan but do not embed'
+      default: false
+  required: []

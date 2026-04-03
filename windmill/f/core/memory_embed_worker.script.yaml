@@ -1,0 +1,26 @@
+summary: 'PAI Memory Embed Worker'
+description: >-
+  Embeds a batch of memory object keys using a single persistent PG connection.
+  Model loads once (~6s) then processes all objects at ~100ms each.
+  Not intended to be run directly — called by memory_embed_flow.
+lock: '!inline f/core/memory_embed_worker.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    keys:
+      type: array
+      description: 'Array of memory_object keys to embed'
+      items:
+        type: string
+    batch_index:
+      type: number
+      description: 'Worker index (for logging)'
+      default: 0
+    dry_run:
+      type: boolean
+      description: 'If true, skip pgml.embed() calls'
+      default: false
+  required:
+    - keys
