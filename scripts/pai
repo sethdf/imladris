@@ -446,6 +446,12 @@ switch (command) {
     break;
   }
 
+  case 'memory': {
+    const { handleMemoryCommand } = await import(new URL('../pai-sync/memory-cli.ts', import.meta.url).pathname);
+    await handleMemoryCommand(args.slice(1));
+    break;
+  }
+
   default:
     printUsage();
     break;

@@ -83,8 +83,9 @@ services:
       NUM_WORKERS: "1"
 
   windmill_db:
-    image: postgres:16
+    image: imladris/postgres-pgml:pg16
     restart: always
+    command: postgres -c shared_preload_libraries=pgml
     ports:
       - "127.0.0.1:5432:5432"
     volumes:

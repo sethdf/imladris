@@ -1,7 +1,12 @@
 -- =============================================================================
--- PAI Memory Sync — Phase 1 Schema
+-- PAI Memory Sync — Phase 1 + 2a Schema
 -- Idempotent: safe to run multiple times
+-- Phase 2a requires pgvector extension (pgvector/pgvector:pg16 image)
 -- =============================================================================
+
+-- Phase 2a: pgvector + pgml for semantic search (in-DB embeddings)
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS pgml;
 
 -- Current state of every synced file
 CREATE TABLE IF NOT EXISTS memory_objects (
@@ -84,3 +89,25 @@ DROP TRIGGER IF EXISTS trg_archive_version ON memory_objects;
 CREATE TRIGGER trg_archive_version
     BEFORE UPDATE ON memory_objects
     FOR EACH ROW EXECUTE FUNCTION archive_object_version();
+
+-- =============================================================================
+-- Phase 2a: Semantic Search (pgvector + pgml)
+-- pgml intfloat/e5-small-v2 = 384 dimensions
+-- Embeddings generated in-DB via pgml.embed() — no external API calls needed
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS memory_vectors (
+    source_key    TEXT NOT NULL,
+    chunk_index   SMALLINT NOT NULL DEFAULT 0,
+    source_type   TEXT NOT NULL,  -- 'learning', 'failure', 'prd', 'wisdom_frame', 'skill'
+    chunk_text    TEXT NOT NULL,
+    embedding     vector(384),
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (source_key, chunk_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_vectors_embedding ON memory_vectors
+    USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+CREATE INDEX IF NOT EXISTS idx_vectors_type       ON memory_vectors (source_type);
+CREATE INDEX IF NOT EXISTS idx_vectors_updated    ON memory_vectors (updated_at);
