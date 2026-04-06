@@ -1,0 +1,18 @@
+args:
+  delay_ms: 3000
+  dry_run: false
+  max_concurrency: 2
+  max_items: 20
+  max_retry_attempts: 5
+  priority_filter: ""
+  retry_interval_hours: 6
+  skip_investigation: false
+cron_version: v2
+email: admin@windmill.dev
+enabled: true
+is_flow: false
+no_flow_overlap: true
+schedule: 0 */30 * * * *
+script_path: f/core/process_actionable
+timezone: America/New_York
+ws_error_handler_muted: false
