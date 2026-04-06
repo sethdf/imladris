@@ -13,17 +13,46 @@ Extends the [PAI Memory Sync](./memory-sync) spec with three additions:
 
 ## 1. Multi-Schema Design
 
-### One Postgres instance, four schemas
+### Schemas ARE Domains — and schemas are optional
+
+The Postgres schema structure is isomorphic to the Windmill domain structure:
+
+| Windmill directory | Postgres schema | Required? | Install when |
+|-------------------|----------------|-----------|--------------|
+| `f/core/` | `core` | **Yes** — always | Every installation |
+| `f/domains/work/` | `work` | Optional | Work domain deployed |
+| `f/domains/personal/` | `personal` | Optional | Personal domain deployed |
+| `f/shared/` | `shared` | Optional | Cross-domain queries needed |
+
+A minimal installation has only `core`. A full installation has all four. Scripts that query across schemas check for schema existence before joining — a missing schema is not an error, it's an unconfigured domain.
+
+This mirrors the domain principle: **deploy a domain → its schema exists. Don't deploy it → schema doesn't exist, nothing breaks.**
+
+### One Postgres instance, four optional schemas
 
 ```
 PostgreSQL 16+ (single instance per imladris)
-├── schema: core          ← PAI cognitive memory (memory-sync daemon writes here)
-├── schema: work          ← Work domain operational data
-├── schema: personal      ← Personal domain data
-└── schema: shared        ← Cross-domain + cross-instance intelligence
+├── schema: core          ← PAI cognitive memory + core pipeline (REQUIRED)
+├── schema: work          ← Work domain operational data (OPTIONAL)
+├── schema: personal      ← Personal domain data (OPTIONAL)
+└── schema: shared        ← Cross-domain + cross-instance intelligence (OPTIONAL)
 ```
 
 Every table belongs to exactly one schema. Cross-schema queries are just SQL joins. Apache AGE knowledge graph spans all schemas. pgvector embeddings live in `core` but can reference objects in any schema via foreign key.
+
+**Installation order:** `core` first. Then add domains incrementally. Each domain's `sql/schemas/{domain}.sql` is idempotent (`CREATE TABLE IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`) — safe to re-run.
+
+**Cross-schema query safety pattern:**
+```sql
+-- Check if work schema exists before joining
+SELECT EXISTS(
+    SELECT 1 FROM information_schema.schemata WHERE schema_name = 'work'
+) AS work_deployed;
+
+-- Scripts guard cross-schema joins:
+-- IF work schema exists: JOIN work.triage_results ...
+-- ELSE: return core results only
+```
 
 ### `core` schema — PAI memory (written by memory-sync daemon)
 

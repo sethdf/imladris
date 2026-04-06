@@ -567,13 +567,21 @@ Metadata extraction is pure parsing — regex, YAML parser, JSON.parse. No infer
 
 ## Database Schema
 
+All memory-sync tables live in the `core` schema — the only required schema in every installation.
+The `core` schema is the PAI infrastructure layer; `work`, `personal`, and `shared` are optional
+domain schemas added when those domains are deployed. See [postgres-multi-schema](./postgres-multi-schema)
+for the full schema optionality model.
+
 ```sql
 -- ============================================================
 -- Phase 1: Core sync tables (system of record)
+-- All in schema: core
 -- ============================================================
 
+CREATE SCHEMA IF NOT EXISTS core;
+
 -- Current state of every synced file
-CREATE TABLE memory_objects (
+CREATE TABLE core.memory_objects (
     key           TEXT PRIMARY KEY,       -- "MEMORY/WORK/20260305_task/PRD.md"
     content       TEXT,                   -- file contents (possibly gzipped + base64)
     metadata      JSONB,                  -- extracted structured data
@@ -589,13 +597,13 @@ CREATE TABLE memory_objects (
     deleted       BOOLEAN NOT NULL DEFAULT FALSE  -- soft delete: content preserved forever
 );
 
-CREATE INDEX idx_objects_prefix ON memory_objects (key text_pattern_ops);
-CREATE INDEX idx_objects_metadata ON memory_objects USING GIN (metadata);
-CREATE INDEX idx_objects_updated ON memory_objects (updated_at);
-CREATE INDEX idx_objects_machine ON memory_objects (machine_id);
+CREATE INDEX idx_objects_prefix ON core.memory_objects (key text_pattern_ops);
+CREATE INDEX idx_objects_metadata ON core.memory_objects USING GIN (metadata);
+CREATE INDEX idx_objects_updated ON core.memory_objects (updated_at);
+CREATE INDEX idx_objects_machine ON core.memory_objects (machine_id);
 
 -- Full version history — every previous state of every file
-CREATE TABLE memory_object_versions (
+CREATE TABLE core.memory_object_versions (
     key           TEXT NOT NULL,
     version       INTEGER NOT NULL,
     content       TEXT,
@@ -608,14 +616,14 @@ CREATE TABLE memory_object_versions (
     PRIMARY KEY (key, version)
 );
 
-CREATE INDEX idx_versions_key_time ON memory_object_versions (key, created_at DESC);
+CREATE INDEX idx_versions_key_time ON core.memory_object_versions (key, created_at DESC);
 
 -- Trigger: auto-archive previous version before update
-CREATE OR REPLACE FUNCTION archive_object_version()
+CREATE OR REPLACE FUNCTION core.archive_object_version()
 RETURNS TRIGGER AS $$
 BEGIN
     IF OLD.content_hash IS DISTINCT FROM NEW.content_hash THEN
-        INSERT INTO memory_object_versions (key, version, content, metadata, content_hash, compressed, session_id, machine_id)
+        INSERT INTO core.memory_object_versions (key, version, content, metadata, content_hash, compressed, session_id, machine_id)
         VALUES (OLD.key, OLD.version, OLD.content, OLD.metadata, OLD.content_hash, OLD.compressed, OLD.session_id, OLD.machine_id);
         NEW.version := OLD.version + 1;
     END IF;
@@ -624,11 +632,11 @@ END;
 $$ LANGUAGE plpgsql;
 
 CREATE TRIGGER trg_archive_version
-    BEFORE UPDATE ON memory_objects
-    FOR EACH ROW EXECUTE FUNCTION archive_object_version();
+    BEFORE UPDATE ON core.memory_objects
+    FOR EACH ROW EXECUTE FUNCTION core.archive_object_version();
 
 -- Line-level storage for JSONL files (append-only, union across all machines)
-CREATE TABLE memory_lines (
+CREATE TABLE core.memory_lines (
     file_key      TEXT NOT NULL,          -- "MEMORY/LEARNING/SIGNALS/ratings.jsonl"
     line_hash     TEXT NOT NULL,          -- SHA-256 of line content
     content       TEXT NOT NULL,          -- the raw JSON line
@@ -639,10 +647,10 @@ CREATE TABLE memory_lines (
     PRIMARY KEY (file_key, line_hash)     -- dedup: same line from multiple machines = one row
 );
 
-CREATE INDEX idx_lines_file_time ON memory_lines (file_key, created_at);
-CREATE INDEX idx_lines_session ON memory_lines (session_id);
-CREATE INDEX idx_lines_machine ON memory_lines (machine_id);
-CREATE INDEX idx_lines_metadata ON memory_lines USING GIN (metadata);
+CREATE INDEX idx_lines_file_time ON core.memory_lines (file_key, created_at);
+CREATE INDEX idx_lines_session ON core.memory_lines (session_id);
+CREATE INDEX idx_lines_machine ON core.memory_lines (machine_id);
+CREATE INDEX idx_lines_metadata ON core.memory_lines USING GIN (metadata);
 ```
 
 ### Soft deletes — nothing is ever lost
