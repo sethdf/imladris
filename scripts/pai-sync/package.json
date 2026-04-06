@@ -1,0 +1,21 @@
+{
+  "name": "pai-sync",
+  "version": "1.0.0",
+  "description": "PAI Memory Sync daemon and CLI — inotify-based sync from /pai/memory to Postgres",
+  "type": "module",
+  "scripts": {
+    "daemon": "bun run daemon.ts",
+    "cli": "bun run cli.ts",
+    "build:daemon": "bun build daemon.ts --outfile dist/pai-sync-daemon --compile --target bun-linux-arm64",
+    "build:cli": "bun build cli.ts --outfile dist/pai-sync --compile --target bun-linux-arm64",
+    "build": "mkdir -p dist && bun run build:daemon && bun run build:cli"
+  },
+  "dependencies": {
+    "pg": "^8.13.3",
+    "yaml": "^2.6.1"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.10",
+    "bun-types": "latest"
+  }
+}

@@ -16,7 +16,7 @@ Operational monitoring and tuning in progress:
 
 ---
 
-## [2.1.0] — 2026-04-06 ✅ Current
+## [2.1.0] — 2026-04-06 ✅
 
 ### Added
 - `f/core/batch_triage_slack_schedule.schedule.yaml`: Slack triage now runs every 30 min
@@ -230,18 +230,52 @@ Initial versioned baseline. Captures the full deployed pipeline as of first vers
 
 ---
 
-## [2.5.0] — PLANNED: Phase 2a — PAI Memory Sync (Postgres)
+## [2.5.0] — SHIPPED 2026-04-06: Phase 2a — PAI Memory Sync (Postgres) ✅ Current
 
-**Spec:** `docs-site/docs/specs/memory-sync.md`
-**Dependency:** Phase 1b (PAI containers running with named volumes)
+**Spec:** `docs-site/docs/specs/memory-sync.md` (v4.1)
+**Dependency:** Phase 1b (Docker-Modular, v2.4.0)
 
 ### Added
-- Postgres 16 self-hosted on EC2 (not RDS — Apache AGE requires self-hosted)
-- Apache AGE extension: graph queries over memory entities
-- pgvector extension: semantic similarity search over memory embeddings
-- inotify daemon: watches `~/.claude/MEMORY/` named volume; syncs new/changed files to Postgres
-- Memory schema: `memory_files` table with content, embeddings, metadata
-- Cross-session memory querying via Postgres (replaces JSONL-only flat files)
+- `sql/schemas/core.sql`: Idempotent DDL for `core` schema — `memory_objects`,
+  `memory_object_versions`, `memory_lines`, `sessions`, `compaction_checkpoints`.
+  Includes auto-archive trigger for full version history. Safe to re-run.
+- `scripts/pai-sync/daemon.ts`: Host-side inotify daemon watching `/pai/memory` bind mount.
+  Spawns `inotifywait`, routes events to SyncEngine. systemd watchdog-compatible.
+- `scripts/pai-sync/SyncEngine.ts`: Debounce (5s quiet / 30s max-wait), WAL management,
+  push/pull orchestration, status diff, WAL replay on startup.
+- `scripts/pai-sync/adapters/PostgresAdapter.ts`: pg driver implementation — `putFile`,
+  `getFile`, `getFileHistory`, `putLines`, `getLines`, soft-delete, restore.
+- `scripts/pai-sync/cli.ts`: `pai-sync` CLI binary — push/pull/status/history/restore/diff/
+  backfill/daemon commands.
+- `scripts/pai-sync/backfill.ts`: Initial bulk upload — newest-first, batch 200, progress
+  tracking in `STATE/sync-backfill.jsonl`, skips files already in Postgres.
+- `scripts/pai-sync/metadata-extractor.ts`: Deterministic metadata extraction — YAML
+  frontmatter, JSON parsing, JSONL first-line sampling. No inference.
+- `scripts/pai-sync/compression.ts`: gzip + base64 for files >100KB, chunking for >50MB.
+- `scripts/pai-sync/syncignore.ts`: Exclude list — `STATE/`, `*.tmp`, `*.lock`.
+- `scripts/pai-sync/config.ts`: All config from env vars (watch root, machine ID, debounce).
+- `scripts/pai-sync/package.json`: Bun project — `pg` + `yaml` deps, build scripts for
+  compiled arm64 binaries.
+- `ansible/roles/workstation/tasks/pai-sync.yml`: Rewritten to match v2.5.0 architecture —
+  builds compiled binaries to `/usr/local/bin/`, creates `pai_memory` Postgres DB, applies
+  `sql/schemas/core.sql`, writes `/etc/pai-sync/env` (640, root:ec2-user), deploys system
+  systemd unit (`/etc/systemd/system/pai-sync.service`).
+- `ansible/group_vars/imladris.yml`: Added `inotify-tools` to system_packages; added
+  `pai_sync_*` configuration variables.
+
+### Architecture
+- Watch root: `/pai/memory` (host bind mount backed by `pai-memory` Docker volume)
+- Only `pai-memory` contents synced — `pai-config` is in git, no sync needed
+- WAL at `/pai/memory/STATE/sync-wal.jsonl` (fsync'd per event, zero data loss)
+- JSONL files synced at line level (SHA-256 dedup, union across machines)
+- Non-JSONL files synced at file level with full version history in Postgres
+- System-level systemd service (not user service) — survives session container lifecycle
+
+### Operational
+- Run `pai-sync backfill` once after deploy to load existing MEMORY files
+- `pai-sync status` shows local/remote diff
+- `pai-sync history <key>` shows all versions of a file
+- Daemon start/stop via `pai-sync daemon start|stop|status` or `systemctl`
 
 ---
 

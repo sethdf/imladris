@@ -53,7 +53,8 @@ system_packages:
   - unzip
   - tmux
   - cronie
-  - golang   # required for Fabric (go install github.com/danielmiessler/fabric@latest)
+  - golang        # required for Fabric (go install github.com/danielmiessler/fabric@latest)
+  - inotify-tools # required for pai-sync-daemon (inotifywait)
   # mosh requires EPEL — installed separately in packages role
 
 # --- Docker ---
@@ -190,6 +191,14 @@ voice_client_server_url: "http://localhost:8888"
 voice_client_poll_interval: "5000"
 voice_client_scripts_dir: "{{ voice_client_home }}/repos/imladris/scripts"
 voice_client_script: "{{ voice_client_scripts_dir }}/voice-client.ts"
+
+# --- PAI Sync Daemon ---
+pai_sync_source_dir: "{{ imladris_repo_dir }}/scripts/pai-sync"
+pai_sync_env_file: /etc/pai-sync/env
+pai_sync_watch_root: /pai/memory
+pai_sync_machine_id: "{{ ansible_hostname }}"
+# Set via --extra-vars or BWS fetch. Required for daemon to start.
+pai_sync_postgres_url: ""
 
 # --- Settings Template ---
 settings_template_candidates:
