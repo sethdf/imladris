@@ -16,7 +16,32 @@ Operational monitoring and tuning in progress:
 
 ---
 
-## [2.0.2] — 2026-04-03 ✅ Current
+## [2.1.0] — 2026-04-06 ✅ Current
+
+### Added
+- `f/core/batch_triage_slack_schedule.schedule.yaml`: Slack triage now runs every 30 min
+  (script was deployed but never scheduled — no Slack items were reaching triage cache)
+- `f/core/batch_triage_emails_schedule.schedule.yaml`: Email triage now runs every 15 min
+  with `days_back=1` (was never scheduled — triage cache was 111h stale)
+- `f/domains/work/sources/batch_triage_sdp_schedule.schedule.yaml`: SDP triage now runs
+  every 15 min (script was deployed but never scheduled)
+- `windmill/f/imladris/status_check.ts`: Health dashboard script — box health + data source
+  checks in quick/full/datasources modes. Already deployed prior to this release.
+- `status-dashboard/server.ts` + `index.html`: Bun HTTP server on :3100 with triage queue
+  API, bulk actions, Windmill proxy with server-side auth injection. Already deployed.
+- Tailscale Serve: `/status → :3100` and `/` → Windmill on :8000 at
+  `https://imladris-4.dzo-musical.ts.net`
+
+### Fixed
+- Deleted 5 duplicate `f/devops/` schedules that were double-running against `f/core/` scripts
+  (activity_report, batch_triage_telegram, contextual_surface, feed_collector,
+  investigation_accuracy_digest)
+- Deleted broken `f/devops/cross_correlate_schedule` (pointed to non-existent
+  `f/devops/cross_correlate`; correct schedule is `f/core/correlate_triage_schedule`)
+
+---
+
+## [2.0.2] — 2026-04-03 ✅
 
 ### Fixed
 - `sync-credentials.sh`: Replaced `wmill variable create/update` CLI calls (removed in wmill
@@ -99,7 +124,7 @@ Initial versioned baseline. Captures the full deployed pipeline as of first vers
 
 ---
 
-## [2.1.0] — PLANNED: Phase 0a + Slack schedule setup
+## [2.1.0] — SHIPPED 2026-04-06: Phase 0a — Status Dashboard + Triage Schedules
 
 **Spec:** `docs-site/docs/specs/status-dashboard.md`
 **Dependency:** None. Ships from current `f/devops/` landing area.
@@ -293,7 +318,7 @@ Initial versioned baseline. Captures the full deployed pipeline as of first vers
 | 2.0.0 | Baseline | Full triage pipeline, multi-source ingestion, HTML output | ✅ |
 | 2.0.1 | Patch | Windmill flows sync fix (nonDottedPaths) | ✅ |
 | 2.0.2 | Patch | BWS sync REST fix + SDPWorkSync hook | ✅ |
-| 2.1.0 | Minor | Status Dashboard + Slack schedule | Planned |
+| 2.1.0 | Minor | Status Dashboard + all triage schedules wired up | ✅ Current |
 | 2.2.0 | Minor | Investigate-First Pipeline + SDP incidents + doc fixes | Planned |
 | 2.2.1 | Patch | Triage GUI (status dashboard tab) | Planned |
 | 2.3.0 | Minor | Domain-Modular directory reorg | Planned |
