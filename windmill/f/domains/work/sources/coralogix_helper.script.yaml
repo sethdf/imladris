@@ -1,0 +1,8 @@
+summary: 'Coralogix API Helper'
+description: 'Shared helper for Coralogix investigation tools. Tests connectivity to Coralogix API.'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties: {}
+  required: []

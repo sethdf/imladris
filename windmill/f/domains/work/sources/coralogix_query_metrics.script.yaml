@@ -1,0 +1,27 @@
+summary: 'Coralogix Query Metrics'
+description: 'Query metrics via Coralogix Prometheus-compatible API. Returns time series data.'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    metric_name:
+      type: string
+      description: Prometheus metric name to query
+    minutes:
+      type: integer
+      description: Lookback window in minutes
+      default: 60
+    aggregate:
+      type: string
+      description: Aggregation function
+      enum: [avg, sum, min, max, count, rate]
+      default: avg
+    group_by:
+      type: string
+      description: Label to group results by
+    service_name:
+      type: string
+      description: Filter by application name label
+  required:
+    - metric_name

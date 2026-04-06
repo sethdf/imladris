@@ -1,0 +1,84 @@
+# OTel Collector config for MSSQL on EC2 monitoring — Coralogix backend
+# Deploy on the SQL Server host or a nearby collector instance
+# Requires: SQL Server login with VIEW SERVER STATE permission
+#
+# Key MSSQL instances on EC2 (prod account 945243322929):
+#   QAT:  buxqat01-sql  (i4i.4xlarge, 10.10.0.146)
+#   Prod: buxprod01-sql (i4i.8xlarge, 10.10.1.48)
+#   DM:   dmdb01-sql, dmdb04-sql, dmdb05-sql, dmdb07-sql, dmdb09-sql
+#   Dev:  neodevdb01-sql, neostagedb01-sql
+#   Other: transitiondb01-sql, vendordata-sql, bda01-sql
+#
+# Deployment: Install otelcol-contrib binary on the target host
+#   or run remotely with network access to port 1433
+#
+# Coralogix region endpoints:
+#   us1: ingress.us1.coralogix.com:443
+#   us2: ingress.us2.coralogix.com:443
+#   eu1: ingress.eu1.coralogix.com:443
+#   eu2: ingress.eu2.coralogix.com:443
+#   ap1: ingress.ap1.coralogix.com:443
+#   ap2: ingress.ap2.coralogix.com:443
+#   ap3: ingress.ap3.coralogix.com:443
+
+receivers:
+  sqlserver:
+    # Connect to QAT SQL Server (start here for POC)
+    server: 10.10.0.146
+    port: 1433
+    username: "${MSSQL_USERNAME}"
+    password: "${MSSQL_PASSWORD}"
+    collection_interval: 30s
+
+    # Metrics collected automatically:
+    #   - sqlserver.batch.request.rate
+    #   - sqlserver.batch.sql_compilation.rate
+    #   - sqlserver.batch.sql_recompilation.rate
+    #   - sqlserver.page.buffer_cache.hit_ratio
+    #   - sqlserver.user.connection.count
+    #   - sqlserver.lock.wait.rate
+    #   - sqlserver.lock.wait_time.avg
+    #   - sqlserver.processes.blocked
+    #   - sqlserver.page.life_expectancy
+    #   - sqlserver.page.split.rate
+    #   - sqlserver.page.operation.rate (read/write)
+    #   - sqlserver.transaction.rate
+    #   - sqlserver.transaction.log.growth.count
+    #   - sqlserver.transaction.log.shrink.count
+    #   - sqlserver.transaction.log.usage
+    #   - sqlserver.database.io.read_latency
+    #   - sqlserver.database.io.write_latency
+
+processors:
+  batch:
+    send_batch_size: 100
+    timeout: 10s
+  resource:
+    attributes:
+      # cx.application.name and cx.subsystem.name route data in Coralogix UI
+      - key: cx.application.name
+        value: imladris
+        action: upsert
+      - key: cx.subsystem.name
+        value: mssql-monitor
+        action: upsert
+      - key: db.system
+        value: mssql
+        action: upsert
+      - key: host.name
+        value: buxqat01-sql
+        action: upsert
+
+exporters:
+  otlp:
+    # Replace <region> with your Coralogix region: us1, us2, eu1, eu2, ap1, ap2, ap3
+    endpoint: ingress.us1.coralogix.com:443
+    headers:
+      Authorization: "Bearer ${CORALOGIX_PRIVATE_KEY}"
+
+service:
+  pipelines:
+    metrics:
+      receivers: [sqlserver]
+      processors: [resource, batch]
+      exporters: [otlp]

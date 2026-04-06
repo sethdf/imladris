@@ -1,97 +1,74 @@
-summary: 'PAI Memory Embed — Nightly Backfill'
-description: >-
-  Embeds new and updated memory objects into memory_vectors using pgml.embed()
-  (intfloat/e5-small-v2, 384 dims, in-DB inference).
-  Step 1 queries the delta (unembedded or stale). Step 2 runs N parallel workers,
-  each holding a persistent PG connection so the model loads once per worker (~6s)
-  then processes all its objects at ~100ms/call.
-  Typical nightly delta: seconds. Initial backfill (~10,859 objects): ~5 min.
+summary: PAI Memory Embed — Nightly Backfill
+description: 'Embeds new and updated memory objects into memory_vectors using
+  pgml.embed() (intfloat/e5-small-v2, 384 dims, in-DB inference). Step 1 queries
+  the delta (unembedded or stale). Step 2 runs N parallel workers, each holding
+  a persistent PG connection so the model loads once per worker (~6s) then
+  processes all its objects at ~100ms/call. Typical nightly delta: seconds.
+  Initial backfill (~10,859 objects): ~5 min.'
 value:
   modules:
-
-    # ── Step 1: Plan — find delta, split into batches ────────────────────────
     - id: planner
-      summary: 'Query unembedded/stale objects, split into worker batches'
+      summary: Query unembedded/stale objects, split into worker batches
       value:
         type: script
-        path: f/core/memory_embed_planner
         input_transforms:
-          num_workers:
-            type: javascript
-            expr: flow_input.num_workers
           dry_run:
             type: javascript
             expr: flow_input.dry_run
-
-    # ── Step 2: Parallel workers — each embeds its batch ─────────────────────
+          num_workers:
+            type: javascript
+            expr: flow_input.num_workers
+        path: f/core/memory_embed_planner
     - id: embed_workers
-      summary: 'Embed batches in parallel (one persistent connection per worker)'
+      summary: Embed batches in parallel (one persistent connection per worker)
       value:
         type: forloopflow
-        iterator:
-          type: javascript
-          expr: results.planner.batches
-        parallel: true
-        parallelism: 4
         modules:
           - id: worker
-            summary: 'Embed one batch'
+            summary: Embed one batch
             value:
               type: script
-              path: f/core/memory_embed_worker
               input_transforms:
-                keys:
-                  type: javascript
-                  expr: flow_input.iter.value
                 batch_index:
                   type: javascript
                   expr: flow_input.iter.index
                 dry_run:
                   type: javascript
                   expr: results.planner.dry_run
-
-    # ── Step 3: Summary ───────────────────────────────────────────────────────
+                keys:
+                  type: javascript
+                  expr: flow_input.iter.value
+              path: f/core/memory_embed_worker
+        iterator:
+          type: javascript
+          expr: results.planner.batches
+        parallel: true
+        parallelism:
+          type: static
+          value: 4
+        skip_failures: true
     - id: summary
-      summary: 'Aggregate results and log'
+      summary: Aggregate results and log
       value:
         type: rawscript
-        language: bun
-        content: |
-          export async function main(worker_results: any[], total_planned: number, dry_run: boolean) {
-            const embedded = worker_results.reduce((s, r) => s + (r?.embedded ?? 0), 0);
-            const failed   = worker_results.reduce((s, r) => s + (r?.failed ?? 0), 0);
-            const chunks   = worker_results.reduce((s, r) => s + (r?.chunks_total ?? 0), 0);
-            const allErrors = worker_results.flatMap(r => r?.errors ?? []);
-
-            console.log('━━━ PAI Memory Embed Complete ━━━');
-            console.log(`  Planned:  ${total_planned}`);
-            console.log(`  Embedded: ${embedded} (${chunks} chunks)`);
-            console.log(`  Failed:   ${failed}`);
-            if (dry_run) console.log('  (DRY RUN)');
-            if (allErrors.length > 0) {
-              console.log(`  Errors (first ${allErrors.length}):`);
-              allErrors.forEach(e => console.log(`    ${e}`));
-            }
-
-            return { embedded, failed, chunks, total_planned, dry_run, errors: allErrors };
-          }
+        content: '!inline aggregate_results_and_log.inline_script.ts'
         input_transforms:
-          worker_results:
-            type: javascript
-            expr: results.embed_workers
-          total_planned:
-            type: javascript
-            expr: results.planner.total
           dry_run:
             type: javascript
             expr: results.planner.dry_run
-
+          total_planned:
+            type: javascript
+            expr: results.planner.total
+          worker_results:
+            type: javascript
+            expr: results.embed_workers
+        lock: '!inline aggregate_results_and_log.inline_script.lock'
+        language: bun
   failure_module:
     id: failure
-    summary: 'Log embed flow failure'
+    summary: Log embed flow failure
     value:
       type: rawscript
-      language: bun
       content: |
         export async function main(error_message: string, failed_step: string) {
           console.error(`memory_embed_flow FAILED at step: ${failed_step}`);
@@ -101,21 +78,27 @@ value:
       input_transforms:
         error_message:
           type: javascript
-          expr: "error.message || 'Unknown error'"
+          expr: error.message || 'Unknown error'
         failed_step:
           type: javascript
-          expr: "error.step_id || 'unknown'"
-
+          expr: error.step_id || 'unknown'
+      lock: |-
+        {
+          "dependencies": {}
+        }
+        //bun.lock
+        <empty>
+      language: bun
 schema:
-  $schema: 'https://json-schema.org/draft/2020-12/schema'
+  $schema: https://json-schema.org/draft/2020-12/schema
   type: object
   properties:
-    num_workers:
-      type: number
-      description: 'Number of parallel embed workers (1-8)'
-      default: 4
     dry_run:
       type: boolean
-      description: 'Plan only — do not call pgml.embed()'
+      description: Plan only — do not call pgml.embed()
       default: false
+    num_workers:
+      type: number
+      description: Number of parallel embed workers (1-8)
+      default: 4
   required: []

@@ -1,0 +1,26 @@
+summary: 'Coralogix Query Logs'
+description: 'Search logs via Coralogix DataPrime API. Filters by body text, severity, and service name.'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    query:
+      type: string
+      description: Text to search in log body
+      default: ''
+    minutes:
+      type: integer
+      description: Lookback window in minutes
+      default: 60
+    limit:
+      type: integer
+      description: Maximum number of log entries to return
+      default: 100
+    severity_text:
+      type: string
+      description: Filter by severity (e.g. error, warn, info)
+    service_name:
+      type: string
+      description: Filter by application or subsystem name
+  required: []

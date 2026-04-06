@@ -87,23 +87,33 @@ echo "$SECRETS" | jq -c '.[]' | while read -r secret; do
     continue
   fi
 
-  # Check if variable already exists in Windmill
-  if wmill variable get "$WMILL_PATH" &>/dev/null 2>&1; then
-    # Update existing
-    if wmill variable update "$WMILL_PATH" --value "$VALUE" &>/dev/null 2>&1; then
-      info "Updated: $KEY → $WMILL_PATH"
-      SYNCED=$((SYNCED + 1))
-    else
-      error "Failed to update: $KEY → $WMILL_PATH"
-      ERRORS=$((ERRORS + 1))
-    fi
+  # Use REST API directly — wmill variable create/update subcommands removed in v1.645.0+
+  WMILL_TOKEN_VAL=$(python3 -c "import json; d=[json.loads(l) for l in open(\"$HOME/.config/windmill/remotes.ndjson\") if l.strip()]; print(d[0]['token'])" 2>/dev/null)
+  WMILL_BASE="http://127.0.0.1:8000/api/w/imladris"
+  VALUE_JSON=$(python3 -c "import json,sys; print(json.dumps(sys.argv[1]))" "$VALUE")
+
+  # Try update first (works whether secret or not)
+  HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" -X POST \
+    "$WMILL_BASE/variables/update/$WMILL_PATH" \
+    -H "Authorization: Bearer $WMILL_TOKEN_VAL" \
+    -H "Content-Type: application/json" \
+    -d "{\"value\":$VALUE_JSON}" 2>/dev/null)
+
+  if [[ "$HTTP_CODE" == "200" ]]; then
+    info "Updated: $KEY → $WMILL_PATH"
+    SYNCED=$((SYNCED + 1))
   else
     # Create new (as secret variable)
-    if wmill variable create "$WMILL_PATH" --value "$VALUE" --is-secret &>/dev/null 2>&1; then
+    HTTP_CODE2=$(curl -sf -o /dev/null -w "%{http_code}" -X POST \
+      "$WMILL_BASE/variables/create" \
+      -H "Authorization: Bearer $WMILL_TOKEN_VAL" \
+      -H "Content-Type: application/json" \
+      -d "{\"path\":\"$WMILL_PATH\",\"value\":$VALUE_JSON,\"is_secret\":true,\"description\":\"From BWS: $KEY\"}" 2>/dev/null)
+    if [[ "$HTTP_CODE2" == "200" ]]; then
       info "Created: $KEY → $WMILL_PATH"
       SYNCED=$((SYNCED + 1))
     else
-      error "Failed to create: $KEY → $WMILL_PATH"
+      error "Failed ($HTTP_CODE2): $KEY → $WMILL_PATH"
       ERRORS=$((ERRORS + 1))
     fi
   fi

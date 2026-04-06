@@ -1,20 +1,26 @@
-summary: 'Triage bulk update — investigate or create tickets for selected items'
-description: 'Triggers investigation pipeline or SDP ticket creation for bulk-selected triage items from the status dashboard GUI'
+summary: Triage bulk update — investigate or create tickets for selected items
+description: Triggers investigation pipeline or SDP ticket creation for
+  bulk-selected triage items from the status dashboard GUI
+lock: '!inline f/imladris/triage_bulk_update.script.lock'
 kind: script
 schema:
   $schema: https://json-schema.org/draft/2020-12/schema
   type: object
   properties:
-    ids:
-      type: array
-      items:
-        type: integer
-      description: Triage item IDs to process
     bulk_action:
       type: string
-      enum: [investigate, ticket]
       description: Action to perform
+      enum:
+        - investigate
+        - ticket
+    ids:
+      type: array
+      description: Triage item IDs to process
+      items:
+        type: integer
     notes:
       type: string
       description: Optional notes to attach
-  required: [ids, bulk_action]
+  required:
+    - ids
+    - bulk_action

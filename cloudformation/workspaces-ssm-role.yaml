@@ -11,16 +11,26 @@ Resources:
     Type: AWS::IAM::Role
     Properties:
       RoleName: WorkspacesSSMInstanceRole
-      Description: Allows WorkSpaces EC2 instances to register with SSM Fleet Manager
+      Description: Allows WorkSpaces instances to register with SSM via hybrid activation
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
           - Effect: Allow
             Principal:
-              Service: ec2.amazonaws.com
+              Service:
+                - ec2.amazonaws.com
+                - ssm.amazonaws.com
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: WorkspacesS3Bootstrap
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: arn:aws:s3:::b6-8f-fc-09-0f-db-50-3f-buxtonco.com-code/tmp/*
       Tags:
         - Key: ManagedBy
           Value: CloudFormation
@@ -39,7 +49,7 @@ Resources:
 Outputs:
 
   RoleArn:
-    Description: ARN to set as InstanceIamRoleArn on the WorkSpaces directory
+    Description: ARN for SSM hybrid activation and WorkSpaces directory
     Value: !GetAtt WorkspacesSSMInstanceRole.Arn
     Export:
       Name: WorkspacesSSMInstanceRoleArn

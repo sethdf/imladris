@@ -1,5 +1,7 @@
-summary: 'PAI config integrity check'
-description: 'Verifies Imladris-managed PAI hooks are correctly symlinked into ~/.claude/hooks/'
+summary: PAI config integrity check
+description: Verifies Imladris-managed PAI hooks are correctly symlinked into
+  ~/.claude/hooks/
+lock: '!inline f/imladris/pai_config_check.script.lock'
 kind: script
 schema:
   $schema: https://json-schema.org/draft/2020-12/schema

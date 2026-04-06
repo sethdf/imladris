@@ -1,0 +1,12 @@
+summary: 'Coralogix Get Alerts'
+description: 'Retrieve alert rules and their state from Coralogix.'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    status:
+      type: string
+      description: Filter by alert state (firing, inactive, disabled)
+      enum: ['', 'firing', 'inactive', 'disabled']
+  required: []
