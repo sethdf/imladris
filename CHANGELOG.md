@@ -195,22 +195,38 @@ Initial versioned baseline. Captures the full deployed pipeline as of first vers
 
 ---
 
-## [2.4.0] — PLANNED: Phase 1b — Docker-Modular (PAI Containerization)
+## [2.4.0] — SHIPPED 2026-04-06: Phase 1b — Docker-Modular (PAI Containerization)
 
 **Spec:** `docs-site/docs/specs/docker-modular.md`
 **Dependency:** Phase 1a complete (clean box architecture before adding moving parts)
 
 ### Added
-- PAI Docker container image: Claude Code running in named container with named volumes for
-  `~/.claude/MEMORY` and `~/.config/`
-- `pai` session manager CLI: start/stop/attach/logs for PAI container session management
-- Named Docker volumes: `pai-memory`, `pai-config` (persistent across container restarts)
-- `~/.claude/` migrated from host filesystem into named volumes
+- `docker/pai/Dockerfile`: PAI container image — node:20-slim + tmux + bun + claude-code +
+  inotify-tools + rsync. Built to `ghcr.io/sethdf/imladris/pai:latest` via GitHub Actions.
+- `docker/pai/entrypoint.sh`: tmux session entrypoint (attach existing or new-session)
+- `.github/workflows/build-pai-image.yml`: CI builds and pushes on `docker/pai/**` changes
+- `scripts/pai-session`: Docker session manager shell script — start/attach/list/stop/destroy
+  commands. BWS secrets fetched at start time, injected via env-file, cleaned up after run.
+- `scripts/setup-pai-volumes.sh`: One-time volume initialization — creates `pai-config` and
+  `pai-memory` volumes, populates from current `~/.claude/` on host.
+- Named Docker volumes: `pai-config` (ro in containers), `pai-memory` (rw), `pai-session-{name}`
+  (exclusive per-session workspace). All persist across container stop/reboot.
+- `ansible/roles/workstation/tasks/pai-docker.yml`: Ansible tasks — symlink `pai-session` and
+  `setup-pai-volumes` to PATH, deploy `pai-session-resume.service` systemd unit, deploy
+  `/etc/cron.d/pai-prune` orphan cleanup cron.
+- `pai-session-resume.service`: systemd unit auto-starts all stopped pai-* containers on boot.
+- `/etc/cron.d/pai-prune`: daily 4am prune of exited PAI containers older than 24h.
 
 ### Changed
-- Ansible: Collapsed from 16 roles to 4-5 after PAI containerization (host no longer needs
-  Node/Bun/Claude Code install roles — all in container)
-- Clear rollback path documented: stop container, run `claude` on host directly
+- `docker-compose.yml`: `~/.claude` mount changed from `:rw` to `:ro` in Windmill worker
+  containers (Phase 0 security fix — closes prompt injection write vector).
+- Rollback path: `docker stop pai-default` + run `claude` on host directly. No Ansible rollback
+  needed — host Claude Code install untouched.
+
+### Not changed (deferred to later phase)
+- Ansible role collapse (16 → 5 roles): deferred until container path stable through host reboot
+- MCP servers and voice-server containerization: Phase 2
+- Inbox/outbox filesystem queue: Phase 2
 
 ---
 
@@ -318,11 +334,11 @@ Initial versioned baseline. Captures the full deployed pipeline as of first vers
 | 2.0.0 | Baseline | Full triage pipeline, multi-source ingestion, HTML output | ✅ |
 | 2.0.1 | Patch | Windmill flows sync fix (nonDottedPaths) | ✅ |
 | 2.0.2 | Patch | BWS sync REST fix + SDPWorkSync hook | ✅ |
-| 2.1.0 | Minor | Status Dashboard + all triage schedules wired up + process_actionable schedule | ✅ Current |
+| 2.1.0 | Minor | Status Dashboard + all triage schedules wired up + process_actionable schedule | ✅ |
 | 2.2.0 | Minor | Investigate-First Pipeline (already shipped pre-v2.1.0) | ✅ |
-| 2.2.1 | Patch | Triage GUI (status dashboard tab) | Planned |
-| 2.3.0 | Minor | Domain-Modular directory reorg | Planned |
-| 2.4.0 | Minor | Docker-Modular / PAI containerization | Planned |
+| 2.2.1 | Patch | Triage GUI (status dashboard tab) | ✅ |
+| 2.3.0 | Minor | Domain-Modular directory reorg | ✅ |
+| 2.4.0 | Minor | Docker-Modular / PAI containerization | ✅ Current |
 | 2.5.0 | Minor | PAI Memory Sync / Postgres + AGE + pgvector | Planned |
 | 2.6.0 | Minor | Multi-Schema Postgres + Hive Collective | Planned |
 | 2.6.1 | Patch | PAI Session Log Viewer | Planned |

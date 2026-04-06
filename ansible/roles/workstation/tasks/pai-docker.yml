@@ -1,0 +1,84 @@
+---
+# =============================================================================
+# PAI Docker Session Manager (v2.4.0)
+# =============================================================================
+# Installs pai-session CLI, systemd auto-resume unit, and orphan prune cron.
+# Prerequisite: Docker role must be applied first.
+# See: docs-site/docs/specs/docker-modular.md
+
+# --- pai-session CLI (Docker session manager) ---
+
+- name: Check if pai-session script exists
+  ansible.builtin.stat:
+    path: "{{ imladris_repo_dir }}/scripts/pai-session"
+  register: pai_session_script_stat
+
+- name: Symlink pai-session to PATH
+  ansible.builtin.file:
+    src: "{{ imladris_repo_dir }}/scripts/pai-session"
+    dest: "{{ imladris_home }}/.local/bin/pai-session"
+    state: link
+    force: true
+    owner: "{{ imladris_user }}"
+    group: "{{ imladris_user }}"
+  when: pai_session_script_stat.stat.exists | default(false)
+
+- name: Check if setup-pai-volumes script exists
+  ansible.builtin.stat:
+    path: "{{ imladris_repo_dir }}/scripts/setup-pai-volumes.sh"
+  register: setup_pai_volumes_stat
+
+- name: Symlink setup-pai-volumes to PATH
+  ansible.builtin.file:
+    src: "{{ imladris_repo_dir }}/scripts/setup-pai-volumes.sh"
+    dest: "{{ imladris_home }}/.local/bin/setup-pai-volumes"
+    state: link
+    force: true
+    owner: "{{ imladris_user }}"
+    group: "{{ imladris_user }}"
+  when: setup_pai_volumes_stat.stat.exists | default(false)
+
+# --- PAI session auto-resume on boot (systemd) ---
+
+- name: Install pai-session-resume systemd unit
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/pai-session-resume.service
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Resume PAI sessions on boot
+      After=docker.service
+      Requires=docker.service
+
+      [Service]
+      Type=oneshot
+      ExecStart=/bin/bash -c 'docker ps -a --filter label=pai-session=true --filter status=exited --format "{{ "{{" }}.Names{{ "}}" }}" | xargs -r docker start'
+      RemainAfterExit=yes
+      StandardOutput=journal
+      StandardError=journal
+
+      [Install]
+      WantedBy=multi-user.target
+  become: true
+
+- name: Enable pai-session-resume service
+  ansible.builtin.systemd:
+    name: pai-session-resume
+    enabled: true
+    daemon_reload: true
+  become: true
+
+# --- Orphan prune cron ---
+
+- name: Install PAI container prune cron
+  ansible.builtin.copy:
+    dest: /etc/cron.d/pai-prune
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Prune exited PAI session containers older than 24 hours (daily at 4am)
+      0 4 * * * root docker container prune --filter label=pai-session=true --filter until=24h --force --volumes 2>/dev/null | logger -t pai-prune
+  become: true

@@ -12,4 +12,5 @@
 - ansible.builtin.include_tasks: mcp-tools.yml
 - ansible.builtin.include_tasks: fabric.yml
 - ansible.builtin.include_tasks: pai-sync.yml
+- ansible.builtin.include_tasks: pai-docker.yml
 - ansible.builtin.include_tasks: ai-failover.yml
