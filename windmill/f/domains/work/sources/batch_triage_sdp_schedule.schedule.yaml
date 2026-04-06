@@ -1,0 +1,13 @@
+args:
+  dry_run: false
+  max_requests: 100
+  max_tasks: 100
+cron_version: v2
+email: admin@windmill.dev
+enabled: true
+is_flow: false
+no_flow_overlap: true
+schedule: 0 */15 * * * *
+script_path: f/domains/work/sources/batch_triage_sdp
+timezone: America/New_York
+ws_error_handler_muted: false
