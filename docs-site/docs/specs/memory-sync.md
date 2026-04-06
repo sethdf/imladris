@@ -3,9 +3,9 @@ sidebar_position: 3
 ---
 
 
-**Version:** 4.0
-**Date:** 2026-03-13
-**Status:** Draft
+**Version:** 4.1
+**Date:** 2026-04-06
+**Status:** Draft — corrected for v2.4.0 Docker-Modular architecture
 
 ---
 
@@ -17,20 +17,22 @@ Fully additive to PAI — existing hooks, tools, and file-based workflows are un
 
 ### Hosting Decision: Self-Hosted PostgreSQL on EC2
 
-The spec requires three extensions — **Apache AGE** (graph queries), **pgml** (in-database ML/embeddings), and **pg_net** (outbound HTTP from triggers) — that are **not available on any managed AWS PostgreSQL service** (neither Aurora nor RDS). This is the deciding factor.
+The spec requires two extensions — **Apache AGE** (graph queries) and **pg_net** (outbound HTTP
+from triggers) — that are **not available on any managed AWS PostgreSQL service** (neither Aurora
+nor RDS). This is the deciding factor. (pgml was originally a third blocker but has been replaced
+by Bedrock Titan Embeddings generated in the sync daemon — see Phase 2c.)
 
-| Extension | Aurora | RDS | Self-Hosted |
-|-----------|:------:|:---:|:-----------:|
-| pgvector | Yes | Yes | Yes |
-| Apache AGE | **No** | **No** | Yes |
-| pgml | **No** | **No** | Yes |
-| pg_cron | Yes | Yes | Yes |
-| pg_trgm | Yes | Yes | Yes |
-| ltree | Yes | Yes | Yes |
-| pgcrypto | Yes | Yes | Yes |
-| pg_net | **No** | **No** | Yes |
-| plv8 | Yes | Yes | Yes |
-| plpython3u | **No** | **No** | Yes |
+| Extension | Aurora | RDS | Self-Hosted | Notes |
+|-----------|:------:|:---:|:-----------:|-------|
+| pgvector | Yes | Yes | Yes | Phase 2a |
+| Apache AGE | **No** | **No** | Yes | Phase 2b — key blocker for managed hosting |
+| pg_cron | Yes | Yes | Yes | Phase 1+ |
+| pg_trgm | Yes | Yes | Yes | Phase 1b |
+| ltree | Yes | Yes | Yes | Phase 1b |
+| pgcrypto | Yes | Yes | Yes | Phase 3e |
+| pg_net | **No** | **No** | Yes | Phase 3d |
+| pgml | ~~No~~ | ~~No~~ | ~~Yes~~ | **Removed** — replaced by Bedrock Titan in daemon |
+| plv8 | ~~Yes~~ | ~~Yes~~ | ~~Yes~~ | **Removed** — frontmatter parsing in daemon instead |
 
 **Deployment:** PostgreSQL 16+ on EC2 (imladris or dedicated instance), with pgBackRest continuous WAL archiving to S3 for point-in-time recovery. The sync daemon connects via direct libpq/pg connections (simpler than the RDS Data API, which is HTTP-based and Aurora-only).
 
@@ -247,7 +249,7 @@ The WAL guarantees zero data loss across daemon restarts, crashes, and power fai
 5. On daemon restart, replay any uncommitted WAL entries
 ```
 
-**WAL location:** `~/.claude/MEMORY/STATE/sync-wal.jsonl` (in STATE/, does not sync — avoids recursion)
+**WAL location:** `/pai/memory/STATE/sync-wal.jsonl` (in STATE/, does not sync — avoids recursion)
 
 **Data loss scenarios:**
 | Scenario | Data lost? | Why |
@@ -258,12 +260,46 @@ The WAL guarantees zero data loss across daemon restarts, crashes, and power fai
 | Disk failure | No | **Postgres is the system of record.** `pai sync pull` on new disk restores everything. Only data written between last successful push and disk failure is lost (worst case: 30 seconds). |
 | Machine stolen/destroyed | No | Postgres has everything. `pai sync pull` on new machine. |
 
+### Daemon Placement (Docker-Modular Architecture)
+
+In v2.4.0+, PAI runs inside named Docker containers. `~/.claude/` no longer exists on the host
+as a plain directory — it is the `pai-config` (ro) and `pai-memory` (rw) named volumes mounted
+inside each session container. The sync daemon runs on the **host** and watches the memory via a
+stable bind mount.
+
+**Solution:** Add `/pai/memory` as a host bind mount backed by the `pai-memory` volume. This
+follows the same pattern as `/pai/inbox` and `/pai/outbox` defined in the docker-modular spec.
+
+```yaml
+# docker-compose.yml addition — services that write to pai-memory
+volumes:
+  - type: volume
+    source: pai-memory
+    target: /home/node/.claude/MEMORY       # inside pai-* containers
+  - type: bind
+    source: /pai/memory                     # host-side stable path
+    target: /pai/memory                     # used by host-side sync daemon
+```
+
+The host bind mount `/pai/memory` is the **same backing data** as the `pai-memory` volume.
+The daemon watches `/pai/memory`, not `~/.claude/MEMORY/`. The sync ignore file and WAL path
+are adjusted accordingly:
+- Watch root: `/pai/memory/`
+- WAL location: `/pai/memory/STATE/sync-wal.jsonl` (consistent with STATE/ exclusion rule)
+- Sync log: `/pai/memory/STATE/sync-log.jsonl`
+
+**Why host daemon (not container daemon):**
+- The daemon's lifetime should exceed any individual session container
+- A host daemon survives `pai-session stop/start` cycles without missing writes
+- systemd manages restart on host reboot; no container lifecycle coupling needed
+- Single daemon instance handles all concurrent session containers writing to `pai-memory`
+
 ### systemd Service
 
 ```ini
 [Unit]
 Description=PAI Memory Sync Daemon
-After=network-online.target
+After=docker.service network-online.target
 Wants=network-online.target
 
 [Service]
@@ -272,59 +308,67 @@ ExecStart=/usr/local/bin/pai-sync-daemon
 Restart=always
 RestartSec=5
 WatchdogSec=60
-Environment=PAI_SYNC_POSTGRES_URL=postgresql://pai_sync@localhost:5432/pai_memory
+# POSTGRES_URL set by Ansible from BWS — never hardcoded
+EnvironmentFile=/etc/pai-sync/env
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target
 ```
+
+**Secrets:** The Postgres connection URL is fetched from BWS by Ansible and written to
+`/etc/pai-sync/env` (mode 640, owned root:ec2-user). Never hardcoded in the unit file.
+Never stored in `~/.claude/MEMORY/STATE/sync-config.json`. The Ansible workstation role
+handles the BWS fetch and file creation.
 
 ### inotify Configuration
 
-- **Watch path:** `~/.claude/` (recursive)
+- **Watch path:** `/pai/memory/` (recursive) — host bind mount backed by `pai-memory` Docker volume
 - **Events:** `IN_CLOSE_WRITE`, `IN_MOVED_TO`, `IN_CREATE`, `IN_DELETE`
-- **Exclude:** Paths matching `.syncignore` rules (STATE/, PAI/, projects/, *.tmp, *.lock)
+- **Exclude:** Paths matching `.syncignore` rules (STATE/, *.tmp, *.lock)
 - **Resource cost:** Kernel-level, no polling, effectively zero CPU
+
+Note: The watch root is `/pai/memory/`, not `~/.claude/`. The `pai-config` volume (skills, hooks,
+settings, CLAUDE.md) is read-only and does not need sync — it is already versioned in git via the
+imladris repo. Only `pai-memory` (MEMORY/ contents) needs the sync daemon.
 
 ---
 
 ## Sync Scope
 
-**Sync root:** `~/.claude/`
+**Sync root:** `/pai/memory/` (the `pai-memory` Docker volume, host bind-mounted)
 
 **Strategy:** Sync everything EXCEPT an exclude list. New files/directories are synced by default — safe direction to fail.
+
+**Scope note:** The daemon only watches `pai-memory` (MEMORY/ contents). The `pai-config` volume
+(skills, hooks, settings, CLAUDE.md, PAI/) is already version-controlled in git and does not need
+sync. This simplifies scope dramatically — no need to exclude `PAI/`, `projects/`, or settings files.
 
 ### Exclude list (.syncignore)
 
 ```
-PAI/                    # Source code — lives in git
-projects/               # Claude-managed session transcripts (30-day, large)
-MEMORY/STATE/           # Ephemeral runtime data — rebuilt per session
+STATE/                  # Ephemeral runtime data — rebuilt per session
 *.tmp
 *.lock
 ```
 
 ### What gets synced
 
-| Path | Why |
-|------|-----|
-| `MEMORY/WORK/` | PRDs — the core durable record of all work |
-| `MEMORY/LEARNING/` | Learnings, signals, failures, synthesis, reflections |
-| `MEMORY/RESEARCH/` | Agent output captures |
-| `MEMORY/SECURITY/` | Security audit trail |
-| `MEMORY/PAISYSTEMUPDATES/` | Architecture change history |
-| `MEMORY/WISDOM/` | Wisdom Frames — domain knowledge graph |
-| `settings.json` | Claude Code configuration |
-| `keybindings.json` | Key bindings |
-| Hook config files | Hook settings (not hook source code — that's in PAI/ which is in git) |
+| Path (within pai-memory) | Why |
+|--------------------------|-----|
+| `WORK/` | PRDs — the core durable record of all work |
+| `LEARNING/` | Learnings, signals, failures, synthesis, reflections |
+| `RESEARCH/` | Agent output captures |
+| `SECURITY/` | Security audit trail |
+| `PAISYSTEMUPDATES/` | Architecture change history |
+| `WISDOM/` | Wisdom Frames — domain knowledge graph |
 
 ### What does NOT sync
 
 | Path | Why |
 |------|-----|
-| `PAI/` | In git. Not our problem. |
-| `projects/` | Claude-managed, 30-day retention, very large. Not our problem. |
-| `MEMORY/STATE/` | Ephemeral by design. Doc says "can be rebuilt." |
+| `STATE/` | Ephemeral by design — WAL, sync log, session state. |
 | `*.tmp`, `*.lock` | Transient files. |
+| `pai-config` volume | In git (imladris + PAI repos). Not watched by daemon. |
 
 ---
 
@@ -616,39 +660,47 @@ CREATE INDEX idx_lines_metadata ON memory_lines USING GIN (metadata);
 The Postgres adapter connects via standard libpq connection string:
 - **Local (same machine):** Unix domain socket or `localhost` — no password needed with `peer` auth
 - **Remote:** Connection string with password, or SSL client certificate authentication
-- **Secrets management:** Connection credentials stored in `~/.claude/MEMORY/STATE/sync-config.json` (in STATE/, does not sync) or environment variables
+- **Secrets management:** `POSTGRES_URL` environment variable, set by Ansible from BWS. Written to
+  `/etc/pai-sync/env` (mode 640, owned root:ec2-user) and loaded by the systemd unit via
+  `EnvironmentFile=`. Never stored in `~/.claude/MEMORY/`, never hardcoded.
 
 The adapter config contains:
-- Postgres connection string (or host/port/dbname)
-- SSL certificate path (if remote)
+- Postgres connection string (or host/port/dbname) — from `POSTGRES_URL` env var
+- SSL certificate path (if remote) — from `PAI_SYNC_SSL_CERT` env var
 
 ---
 
 ## File Structure
 
 ```
-/usr/local/bin/pai-sync-daemon     -- the daemon binary
-/etc/systemd/user/pai-sync.service -- systemd unit file
+/usr/local/bin/pai-sync-daemon     -- daemon binary (installed by Ansible workstation role)
+/usr/local/bin/pai-sync            -- CLI binary (installed by Ansible workstation role)
+/etc/systemd/system/pai-sync.service -- systemd unit file (installed by Ansible)
 
-~/.claude/PAI/Sync/                -- source code (in git with PAI)
+imladris/scripts/pai-sync/         -- source code (in git with imladris, NOT PAI)
   SyncEngine.ts          -- debounce logic, WAL management, push/pull orchestration
   StorageAdapter.ts      -- interface definition
   adapters/
     PostgresAdapter.ts   -- libpq/pg connection implementation
   daemon.ts              -- inotify watcher, WAL writer, systemd watchdog
-  config.ts              -- cluster ARN, database name, region
+  config.ts              -- watch path, database name, connection env var
   syncignore.ts          -- exclude list logic
   metadata-extractor.ts  -- deterministic metadata parsing (YAML frontmatter, JSON)
   compression.ts         -- gzip/chunking for large files
-  cli.ts                 -- `pai sync push`, `pai sync pull`, `pai sync status`, etc.
+  cli.ts                 -- `pai-sync push`, `pai-sync pull`, `pai-sync status`, etc.
   backfill.ts            -- initial bulk upload logic
 ```
+
+**Why imladris, not PAI:** The PAI repo is read-only in session containers (`pai-config` volume is
+mounted `:readonly`). Shipping source code into `~/.claude/PAI/` would violate the additive-only
+principle. The sync daemon is imladris infrastructure — it belongs in the imladris repo alongside
+other host-side operational scripts (`scripts/pai-session`, `scripts/setup-pai-volumes.sh`).
 
 ---
 
 ## Sync Log
 
-Every push and pull writes a log entry to `~/.claude/MEMORY/STATE/sync-log.jsonl`:
+Every push and pull writes a log entry to `/pai/memory/STATE/sync-log.jsonl`:
 
 ```json
 {"timestamp":"2026-03-05T10:00:00Z","direction":"push","files_pushed":3,"files_skipped":12,"lines_pushed":5,"versions_archived":1,"duration_ms":340,"errors":[]}
@@ -660,24 +712,27 @@ This file is in STATE/ so it does NOT sync (it's machine-local operational data)
 
 ## CLI Commands
 
+The CLI binary is `pai-sync` (not `pai sync`). This avoids collision with the existing `pai`
+workstream CLI and the `pai-session` Docker session manager.
+
 ```bash
 # Core sync operations
-pai sync push              # Push all dirty files now (bypass debounce)
-pai sync pull              # Restore/update local filesystem from Postgres
-pai sync status            # Show diff: local-only, remote-only, modified
-pai sync status --verbose  # Include file hashes, versions, and timestamps
+pai-sync push              # Push all dirty files now (bypass debounce)
+pai-sync pull              # Restore/update local filesystem from Postgres
+pai-sync status            # Show diff: local-only, remote-only, modified
+pai-sync status --verbose  # Include file hashes, versions, and timestamps
 
 # Recovery and history (Postgres as system of record)
-pai sync history <key>            # Show all versions of a file
-pai sync restore <key>            # Restore a soft-deleted file
-pai sync restore <key> --version N  # Restore a specific historical version
-pai sync diff <key> [v1] [v2]    # Diff two versions of a file
+pai-sync history <key>            # Show all versions of a file
+pai-sync restore <key>            # Restore a soft-deleted file
+pai-sync restore <key> --version N  # Restore a specific historical version
+pai-sync diff <key> [v1] [v2]    # Diff two versions of a file
 
 # Bootstrap and daemon management
-pai sync backfill          # Run initial bulk upload (background)
-pai sync daemon start      # Start the sync daemon
-pai sync daemon stop       # Stop the sync daemon
-pai sync daemon status     # Check daemon health
+pai-sync backfill          # Run initial bulk upload (background)
+pai-sync daemon start      # Start the sync daemon
+pai-sync daemon stop       # Stop the sync daemon
+pai-sync daemon status     # Check daemon health
 ```
 
 ---
@@ -832,42 +887,44 @@ $$) as (learning_a agtype, learning_b agtype, date_a agtype, date_b agtype);
 
 **Additive to PAI:** Reads Wisdom Frame files that WisdomFrameUpdater already creates. Builds the graph from the Postgres system of record. WisdomCrossFrameSynthesizer continues doing its file-based cross-frame analysis independently. The graph adds queryable causal structure that file-based analysis can't provide.
 
-### 2c. In-Database ML (pgml)
+### 2c. Embedding Generation (Bedrock Titan, in Daemon)
 
-Run models directly in Postgres — no external service round-trips, no API costs for embeddings.
+Embeddings are generated **in the sync daemon** using AWS Bedrock Titan Embeddings before the
+vector is inserted into Postgres. This replaces the original `pgml` in-database approach.
 
-```sql
--- Generate embeddings at insert time — no external API call
-CREATE OR REPLACE FUNCTION embed_on_insert()
-RETURNS TRIGGER AS $$
-BEGIN
-    INSERT INTO memory_vectors (source_key, source_type, chunk_text, embedding)
-    VALUES (
-        NEW.key,
-        CASE WHEN NEW.key LIKE '%LEARNING%' THEN 'learning'
-             WHEN NEW.key LIKE '%FAILURE%' THEN 'failure'
-             WHEN NEW.key LIKE '%WISDOM%' THEN 'wisdom_frame'
-             WHEN NEW.key LIKE '%WORK%' THEN 'prd'
-             ELSE 'other' END,
-        NEW.content,
-        pgml.embed('intfloat/e5-small-v2', NEW.content)
-    );
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
+**Why Bedrock, not pgml:**
+- Bedrock is already running and proven in the imladris triage pipeline (Haiku/Sonnet/Opus)
+- `pgml` requires a C extension + Python runtime + model download inside Postgres — significant
+  installation complexity for self-hosted Postgres
+- `pgml` is not available on any managed Postgres service, limiting future portability
+- Bedrock Titan Embeddings (1536-dim) integrates directly with the existing AWS IAM/credentials
+  already configured on the host
 
-CREATE TRIGGER trg_embed_on_insert
-    AFTER INSERT OR UPDATE ON memory_objects
-    FOR EACH ROW EXECUTE FUNCTION embed_on_insert();
+**Implementation in daemon:**
+
+```typescript
+// In SyncEngine.ts — embed on push, before Postgres insert
+async function generateEmbedding(content: string): Promise<number[]> {
+  const bedrock = new BedrockRuntimeClient({ region: "us-east-1" });
+  const response = await bedrock.send(new InvokeModelCommand({
+    modelId: "amazon.titan-embed-text-v2:0",
+    body: JSON.stringify({ inputText: content.slice(0, 8192) }),
+    contentType: "application/json",
+  }));
+  return JSON.parse(new TextDecoder().decode(response.body)).embedding;
+}
 ```
 
-**Capabilities:**
-- Embedding generation at insert time (no external API cost, no network latency)
-- Classification (is this learning still relevant? what domain?) — feeds graph edge creation
-- Sentiment analysis on failure transcripts (detect frustration patterns → flag for learning extraction)
-- Summarization of failure clusters
+Embeddings are generated asynchronously during the push cycle (not in the inotify handler).
+Files that fail embedding get inserted into `memory_objects` without a vector; a background
+retry job attempts embedding on the next push cycle.
 
-**Additive to PAI:** Runs entirely inside Postgres. PAI tools never see it. Enriches the system of record automatically as new data arrives.
+**Capabilities:**
+- Semantic similarity search via pgvector (Phase 2a) with 1536-dim vectors
+- Classification still done via metadata extraction in the daemon (deterministic, no model needed)
+- Failure clustering and predictive prevention use stored vectors (Phase 2d, 2e)
+
+**Additive to PAI:** Embedding happens in the daemon, outside PAI. PAI tools never see it.
 
 ### 2d. Automated Failure Clustering
 
@@ -972,7 +1029,10 @@ This is what makes PAI agentic. Phases 1-3 build the knowledge backbone (store, 
 
 These PAI tools operate on `~/.claude/` files and can be scheduled immediately — before the sync daemon or Postgres schema are deployed.
 
-**New Windmill folder:** `f/pai/` alongside existing `f/devops/` and `f/investigate/`.
+**Windmill folder:** `f/core/` — these are domain-agnostic pipeline scripts that belong alongside
+the existing core scripts. No new `f/pai/` top-level namespace. The current canonical structure
+is `f/core/` (domain-agnostic), `f/domains/work/` (work domain), `f/domains/personal/` (personal).
+Autonomous PAI memory workflows fit in `f/core/` because they are infrastructure, not domain-specific.
 
 | Workflow | PAI Tool | Schedule | What It Does |
 |----------|----------|----------|-------------|
@@ -985,7 +1045,7 @@ These PAI tools operate on `~/.claude/` files and can be scheduled immediately �
 **Implementation pattern:** Each Windmill script is a thin wrapper that shells out to the existing PAI tool via `bun run`:
 
 ```typescript
-// f/pai/session_harvester.ts (Windmill script, native worker group)
+// f/core/session_harvester.ts (Windmill script, native worker group)
 export async function main() {
   const result = await Bun.spawn([
     "bun", "run", `${Bun.env.HOME}/.claude/PAI/Tools/SessionHarvester.ts`,
@@ -1015,11 +1075,11 @@ Once the sync daemon is pushing to Postgres and Phase 2 capabilities are live, t
 **Implementation pattern:** These scripts query Postgres directly using Windmill's native Postgres resource:
 
 ```typescript
-// f/pai/failure_clustering.ts (Windmill script)
+// f/core/failure_clustering.ts (Windmill script)
 import * as wmill from "windmill-client";
 
 export async function main() {
-  const db = await wmill.getResource("f/devops/pai_memory_db");
+  const db = await wmill.getResource("f/core/pai_memory_db");
 
   // Find clusters of similar failures
   const clusters = await sql(db, `
@@ -1501,37 +1561,20 @@ $$ LANGUAGE plpgsql;
 
 **Why this matters:** The database doesn't just store and query — it **acts**. Postgres can call any HTTP endpoint when data changes. No middleware, no Lambda, no message queue. Trigger → HTTP call → done.
 
-### Extension: plv8 / plpython3u (JavaScript and Python in Postgres)
+### Extension: plv8 / plpython3u — NOT USED
 
-Run JavaScript or Python code directly inside Postgres stored procedures and triggers.
+~~plv8 (JavaScript in Postgres) was originally considered for YAML frontmatter parsing.~~ Removed.
 
-**What this enables:**
+**Why removed:** Metadata extraction (frontmatter parsing, JSON field extraction) happens in
+the sync daemon's `metadata-extractor.ts` before data is inserted into Postgres. The daemon
+already reads the file — doing the parsing there in TypeScript is simpler, more testable, and
+removes an extension dependency. There is no benefit to doing parsing inside the database.
 
-```sql
--- plv8: parse PAI's YAML frontmatter in JavaScript
-CREATE OR REPLACE FUNCTION parse_frontmatter(content text)
-RETURNS jsonb AS $$
-    const match = content.match(/^---\n([\s\S]*?)\n---/);
-    if (!match) return {};
-    const lines = match[1].split('\n');
-    const result = {};
-    for (const line of lines) {
-        const [key, ...val] = line.split(':');
-        if (key && val.length) result[key.trim()] = val.join(':').trim();
-    }
-    return result;
-$$ LANGUAGE plv8;
+Similarly, `plpython3u` for AI API calls is removed — the daemon uses Bedrock directly (see
+Phase 2c). Enrichment via triggers adds latency and complexity; the daemon handles enrichment
+in the push cycle where it can be retried cleanly.
 
--- plpython3u: call external AI APIs for enrichment
-CREATE OR REPLACE FUNCTION summarize_failure(content text)
-RETURNS text AS $$
-    import requests
-    response = requests.post('https://api.anthropic.com/v1/messages', ...)
-    return response.json()['content'][0]['text']
-$$ LANGUAGE plpython3u;
-```
-
-**Why this matters:** Complex metadata extraction, data transformation, and even AI API calls can run inside the database on triggers. The enrichment pipeline lives entirely in Postgres — no external services to deploy or manage.
+**Extensions actually used:** pgvector, Apache AGE, pg_cron, pg_trgm, ltree, pgcrypto, pg_net, PostgREST
 
 ### The External Access Pattern
 
@@ -1575,7 +1618,7 @@ Layer 5: External Access
   LISTEN/NOTIFY (pub/sub), logical replication (CDC/streaming), pg_net (outbound HTTP)
 
 Layer 4: Intelligence
-  pgml (in-database ML), pgvector (embeddings + similarity), Apache AGE (graph/Cypher)
+  pgvector (embeddings + similarity), Apache AGE (graph/Cypher), Bedrock Titan (embeddings generated in daemon)
 
 Layer 3: Analysis
   Window functions (trends), materialized views (dashboards), pg_cron (scheduled jobs),
@@ -1594,9 +1637,12 @@ Layer 0: Security
   IAM authentication, audit logging
 ```
 
-**Total Postgres extensions used:** pgvector, Apache AGE, pgml, pg_cron, pg_trgm, ltree, pgcrypto, pg_net, plv8, PostgREST
-**Total external services:** 1 (the sync daemon)
+**Total Postgres extensions used:** pgvector, Apache AGE, pg_cron, pg_trgm, ltree, pgcrypto, pg_net, PostgREST
+**Total external services:** 1 (the sync daemon; uses Bedrock for embeddings — already running)
 **Total lines of application backend code for the API layer:** 0 (PostgREST generates it from the schema)
+
+**Extensions removed vs. original spec:** `pgml` (replaced by Bedrock Titan Embeddings in daemon),
+`plv8` (frontmatter parsing moved to daemon TypeScript), `plpython3u` (not needed).
 
 ---
 
@@ -1609,7 +1655,7 @@ Layer 0: Security
 | **1c** | Analytics + dashboard views | Window functions, materialized views, pg_cron | New `pai analyze trends` command |
 | **2a** | Hybrid semantic search | pgvector + temporal metadata | New `pai memory search` (semantic) command |
 | **2b** | Knowledge graph + causal retrieval | Apache AGE (Cypher in Postgres) | New `pai knowledge` commands |
-| **2c** | In-database embeddings + classification | pgml | Automatic enrichment on insert |
+| **2c** | Embeddings + classification | Bedrock Titan in daemon → pgvector | Automatic enrichment during push cycle |
 | **2d** | Failure pattern clustering | pgvector + pg_cron | New `pai failures analyze` command |
 | **2e** | Predictive failure prevention | pgvector + AGE hybrid | New `pai predict` command |
 | **2f** | Config A/B analysis | Temporal queries on version history | New `pai analyze config` command |
