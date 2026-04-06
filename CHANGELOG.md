@@ -140,7 +140,7 @@ Initial versioned baseline. Captures the full deployed pipeline as of first vers
 
 ---
 
-## [2.2.0] — PLANNED: Phase 0b — Investigate-First Pipeline
+## [2.2.0] — SHIPPED (pre-2.1.0): Phase 0b — Investigate-First Pipeline
 
 **Spec:** `docs-site/docs/specs/investigate-first-pipeline.md`
 **Dependency:** None. Lands in current `f/devops/` (path rename to `f/core/` in v2.3.0).
@@ -318,8 +318,8 @@ Initial versioned baseline. Captures the full deployed pipeline as of first vers
 | 2.0.0 | Baseline | Full triage pipeline, multi-source ingestion, HTML output | ✅ |
 | 2.0.1 | Patch | Windmill flows sync fix (nonDottedPaths) | ✅ |
 | 2.0.2 | Patch | BWS sync REST fix + SDPWorkSync hook | ✅ |
-| 2.1.0 | Minor | Status Dashboard + all triage schedules wired up | ✅ Current |
-| 2.2.0 | Minor | Investigate-First Pipeline + SDP incidents + doc fixes | Planned |
+| 2.1.0 | Minor | Status Dashboard + all triage schedules wired up + process_actionable schedule | ✅ Current |
+| 2.2.0 | Minor | Investigate-First Pipeline (already shipped pre-v2.1.0) | ✅ |
 | 2.2.1 | Patch | Triage GUI (status dashboard tab) | Planned |
 | 2.3.0 | Minor | Domain-Modular directory reorg | Planned |
 | 2.4.0 | Minor | Docker-Modular / PAI containerization | Planned |
