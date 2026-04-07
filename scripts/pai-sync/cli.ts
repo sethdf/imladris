@@ -234,14 +234,14 @@ async function handleSearch(query: string, typeFilter?: string): Promise<void> {
       SELECT
         mv.source_key,
         mv.source_type,
-        1 - (mv.embedding <=> $1::vector(384)) AS similarity,
+        1 - (mv.embedding <=> $1::vector(1024)) AS similarity,
         LEFT(mo.content, 200) AS preview,
         mo.updated_at
       FROM core.memory_vectors mv
       JOIN core.memory_objects mo ON mv.source_key = mo.key
       WHERE NOT mo.deleted
         ${typeClause}
-      ORDER BY mv.embedding <=> $1::vector(384)
+      ORDER BY mv.embedding <=> $1::vector(1024)
       LIMIT 10
     `, params);
 

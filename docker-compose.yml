@@ -96,6 +96,7 @@ services:
     environment:
       - POSTGRES_DB=windmill
       - POSTGRES_PASSWORD=${WINDMILL_DB_PASSWORD}
+    mem_limit: 4g
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s

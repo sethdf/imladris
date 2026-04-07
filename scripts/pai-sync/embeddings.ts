@@ -1,6 +1,6 @@
 // ============================================================
 // embeddings.ts — Local embedding generation via pgml
-// Uses intfloat/e5-small-v2 (384-dim) running inside Postgres.
+// Uses intfloat/e5-large-v2 (384-dim) running inside Postgres.
 // Zero external dependencies — no API calls, no network.
 //
 // Called by daemon on a schedule (every 60s) and by CLI on demand.
@@ -8,8 +8,8 @@
 
 import pg from "pg";
 
-const EMBEDDING_MODEL = "intfloat/e5-small-v2";
-const EMBEDDING_DIMENSIONS = 384;
+const EMBEDDING_MODEL = "intfloat/e5-large-v2";
+const EMBEDDING_DIMENSIONS = 1024;
 const BATCH_SIZE = 20;
 
 // Content types that should be embedded — match any key prefix
@@ -81,7 +81,7 @@ export async function processUnembedded(pool: pg.Pool): Promise<{
         INSERT INTO core.memory_vectors (source_key, source_type, embedding, chunk_text, model)
         VALUES (
           $1, $2,
-          pgml.embed($3, $4)::vector(384),
+          pgml.embed($3, $4)::vector(1024),
           $5, $3
         )
         ON CONFLICT (source_key) DO UPDATE SET
@@ -119,7 +119,7 @@ function buildEmbeddingText(key: string, content: string, metadata: any): string
 // Export for CLI search command
 export async function generateQueryEmbedding(pool: pg.Pool, text: string): Promise<string> {
   const { rows } = await pool.query(
-    `SELECT pgml.embed($1, $2)::vector(384)::text as vec`,
+    `SELECT pgml.embed($1, $2)::vector(1024)::text as vec`,
     [EMBEDDING_MODEL, text.slice(0, 8000)]
   );
   return rows[0].vec;
