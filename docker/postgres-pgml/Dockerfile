@@ -1,15 +1,21 @@
 # =============================================================================
-# postgres-pgml:pg16
+# imladris/postgres:pg16
 #
-# PostgreSQL 16 + pgvector + pgml (PostgresML) extension
+# PostgreSQL 16 + pgvector + pgml + Apache AGE + pg_cron
 # Built for linux/arm64 (EC2 Graviton) — pgml official image is PG15 only.
 #
 # Base:    pgvector/pgvector:pg16  (Debian bookworm, PG16, pgvector pre-installed)
 # Adds:    pgml extension compiled from source (v2.10.0, pgrx=0.12.9)
+#          Apache AGE v1.6.0 (graph queries via Cypher)
+#          pg_cron v1.6.7 (scheduled jobs inside Postgres)
 #          Python 3 + sentence-transformers for in-DB embedding models
+#
+# Databases created on first run (via init script):
+#   windmill  — Windmill automation backend
+#   pai       — PAI memory sync (core/work/personal/shared schemas)
 # =============================================================================
 
-# ── Stage 1: Compile pgml extension ─────────────────────────────────────────
+# ── Stage 1: Compile pgml + AGE + pg_cron ───────────────────────────────────
 FROM pgvector/pgvector:pg16 AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -32,6 +38,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gfortran \
     libomp-dev \
     libstdc++-12-dev \
+    flex \
+    bison \
+    libreadline-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Rust (stable)
@@ -55,6 +64,20 @@ WORKDIR /tmp/pgml/pgml-extension
 
 # Build pgml for PG16 (release mode)
 RUN cargo pgrx package --features pg16 --pg-config $(which pg_config)
+
+# ── Compile Apache AGE v1.6.0 ──────────────────────────────────────────────
+WORKDIR /tmp
+RUN git clone --depth 1 --branch PG16/v1.6.0-rc0 \
+    https://github.com/apache/age.git /tmp/age
+WORKDIR /tmp/age
+RUN make PG_CONFIG=$(which pg_config) install
+
+# ── Compile pg_cron v1.6.7 ─────────────────────────────────────────────────
+WORKDIR /tmp
+RUN git clone --depth 1 --branch v1.6.7 \
+    https://github.com/citusdata/pg_cron.git /tmp/pg_cron
+WORKDIR /tmp/pg_cron
+RUN make PG_CONFIG=$(which pg_config) && make install PG_CONFIG=$(which pg_config)
 
 # ── Stage 2: Runtime image ────────────────────────────────────────────────────
 FROM pgvector/pgvector:pg16
@@ -100,6 +123,27 @@ COPY --from=builder \
     /tmp/pgml/pgml-extension/target/release/pgml-pg16/usr/share/postgresql/16/extension/ \
     /usr/share/postgresql/16/extension/
 
+# Copy compiled Apache AGE extension from builder
+COPY --from=builder \
+    /usr/lib/postgresql/16/lib/age.so \
+    /usr/lib/postgresql/16/lib/age.so
+COPY --from=builder \
+    /usr/share/postgresql/16/extension/age* \
+    /usr/share/postgresql/16/extension/
+
+# Copy compiled pg_cron extension from builder
+COPY --from=builder \
+    /usr/lib/postgresql/16/lib/pg_cron.so \
+    /usr/lib/postgresql/16/lib/pg_cron.so
+COPY --from=builder \
+    /usr/share/postgresql/16/extension/pg_cron* \
+    /usr/share/postgresql/16/extension/
+
 # pgml model cache — models downloaded here on first use
 ENV PGML_VENV=/var/lib/pgml/venv
 RUN mkdir -p /var/lib/pgml && chown postgres:postgres /var/lib/pgml
+
+# Copy init scripts — run on first container start (alphabetical order)
+# 01: create pai database + core schema
+# 02: create extensions in pai database
+COPY docker-entrypoint-initdb.d/ /docker-entrypoint-initdb.d/

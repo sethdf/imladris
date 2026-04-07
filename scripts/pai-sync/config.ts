@@ -4,8 +4,9 @@
 // ============================================================
 
 export const config = {
-  // Watch root: /pai/memory — host bind mount backed by pai-memory Docker volume
-  watchRoot: process.env.PAI_SYNC_WATCH_ROOT ?? "/pai/memory",
+  // Watch root: ~/.claude/MEMORY on host (pre-Docker-Modular)
+  // Changes to /pai/memory after Docker-Modular ships (v2.4.0+)
+  watchRoot: process.env.PAI_SYNC_WATCH_ROOT ?? `${process.env.HOME ?? "/home/ec2-user"}/.claude/MEMORY`,
 
   // Postgres connection URL — set by Ansible from BWS, written to /etc/pai-sync/env
   postgresUrl: process.env.POSTGRES_URL ?? "",
@@ -26,10 +27,12 @@ export const config = {
   chunkSizeBytes: parseInt(process.env.PAI_SYNC_CHUNK_SIZE ?? "52428800"),
 
   // WAL location — inside STATE/ which is excluded from sync (avoids recursion)
-  walPath: process.env.PAI_SYNC_WAL_PATH ?? "/pai/memory/STATE/sync-wal.jsonl",
+  walPath: process.env.PAI_SYNC_WAL_PATH ??
+    `${process.env.HOME ?? "/home/ec2-user"}/.claude/MEMORY/STATE/sync-wal.jsonl`,
 
   // Sync log location — machine-local operational data, excluded from sync
-  syncLogPath: process.env.PAI_SYNC_LOG_PATH ?? "/pai/memory/STATE/sync-log.jsonl",
+  syncLogPath: process.env.PAI_SYNC_LOG_PATH ??
+    `${process.env.HOME ?? "/home/ec2-user"}/.claude/MEMORY/STATE/sync-log.jsonl`,
 
   // systemd watchdog timeout (seconds) — daemon pings sd_notify
   watchdogSec: parseInt(process.env.WATCHDOG_USEC ?? "0") / 1_000_000 || 60,
