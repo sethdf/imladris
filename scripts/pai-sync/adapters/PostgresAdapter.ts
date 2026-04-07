@@ -248,6 +248,14 @@ export class PostgresAdapter {
     }));
   }
 
+  /** List distinct file_key values in memory_lines (JSONL files that have been synced) */
+  async listJsonlKeys(): Promise<Set<string>> {
+    const res = await this.pool.query(
+      "SELECT DISTINCT file_key FROM core.memory_lines"
+    );
+    return new Set(res.rows.map((r) => r.file_key as string));
+  }
+
   /** Check if Postgres is reachable */
   async ping(): Promise<boolean> {
     try {

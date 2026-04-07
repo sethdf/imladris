@@ -288,27 +288,42 @@ export class SyncEngine {
   // Status — show diff between local and remote
   // ============================================================
 
-  async status(): Promise<{ localOnly: string[]; remoteOnly: string[]; modified: string[] }> {
-    const local = new Map<string, string>(); // key → hash
+  async status(): Promise<{ localOnly: string[]; remoteOnly: string[]; modified: string[]; jsonlInSync: number }> {
+    const localFiles = new Map<string, string>(); // key → hash (non-jsonl)
+    const localJsonl = new Set<string>();          // keys for jsonl files
+
     for (const f of walkDir(config.watchRoot)) {
       if (shouldExclude(f)) continue;
       const key = toFileKey(f);
       const content = fs.readFileSync(f, "utf8");
-      local.set(key, sha256(content));
+      if (key.endsWith(".jsonl")) {
+        localJsonl.add(key);
+      } else {
+        localFiles.set(key, sha256(content));
+      }
     }
 
-    const remote = new Map<string, string>(); // key → hash
+    const remote = new Map<string, string>(); // key → hash (memory_objects)
     for (const f of await this.db.listFiles()) {
       remote.set(f.key, f.contentHash);
     }
 
-    const localOnly = [...local.keys()].filter((k) => !remote.has(k));
-    const remoteOnly = [...remote.keys()].filter((k) => !local.has(k));
-    const modified = [...local.keys()].filter(
-      (k) => remote.has(k) && local.get(k) !== remote.get(k)
+    // JSONL files live in memory_lines, not memory_objects — query separately
+    const remoteJsonl = await this.db.listJsonlKeys().catch(() => new Set<string>());
+
+    const localOnly = [...localFiles.keys()].filter((k) => !remote.has(k));
+    const remoteOnly = [...remote.keys()].filter((k) => !localFiles.has(k));
+    const modified = [...localFiles.keys()].filter(
+      (k) => remote.has(k) && localFiles.get(k) !== remote.get(k)
     );
 
-    return { localOnly, remoteOnly, modified };
+    // JSONL: count those on disk and in Postgres (don't flag as localOnly)
+    const jsonlInSync = [...localJsonl].filter((k) => remoteJsonl.has(k)).length;
+    // JSONL only on disk (no lines pushed yet — e.g. empty file)
+    const jsonlLocalOnly = [...localJsonl].filter((k) => !remoteJsonl.has(k));
+    localOnly.push(...jsonlLocalOnly);
+
+    return { localOnly, remoteOnly, modified, jsonlInSync };
   }
 
   // ============================================================

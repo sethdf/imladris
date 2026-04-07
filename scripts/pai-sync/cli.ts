@@ -104,8 +104,11 @@ async function handleStatus(verbose: boolean): Promise<void> {
   const total = diff.localOnly.length + diff.remoteOnly.length + diff.modified.length;
 
   if (total === 0) {
-    console.log("✓ Local and remote are in sync");
+    console.log(`✓ Local and remote are in sync  (${diff.jsonlInSync} JSONL files synced via memory_lines)`);
     return;
+  }
+  if (diff.jsonlInSync > 0) {
+    console.log(`  ${diff.jsonlInSync} JSONL files synced via memory_lines`);
   }
 
   if (diff.localOnly.length > 0) {
