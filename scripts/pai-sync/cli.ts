@@ -17,7 +17,7 @@
 import { config, validateConfig } from "./config.ts";
 import { SyncEngine } from "./SyncEngine.ts";
 import { runBackfill } from "./backfill.ts";
-import { generateEmbedding, processUnembedded } from "./embeddings.ts";
+import { generateQueryEmbedding, processUnembedded } from "./embeddings.ts";
 import pg from "pg";
 
 const args = process.argv.slice(2);
@@ -221,28 +221,27 @@ async function handleSearch(query: string, typeFilter?: string): Promise<void> {
 
   console.log(`Searching: "${cleanQuery}"${typeFilter ? ` (type: ${typeFilter})` : ""}...`);
 
-  // Generate embedding for the query
-  const queryEmbedding = await generateEmbedding(cleanQuery);
-  const pgVector = `[${queryEmbedding.join(",")}]`;
-
   const pool = new pg.Pool({ connectionString: config.postgresUrl, max: 2 });
   try {
+    // Generate query embedding locally via pgml — no external API
+    const queryVec = await generateQueryEmbedding(pool, cleanQuery);
+
     const typeClause = typeFilter ? `AND mv.source_type = $2` : "";
-    const params: any[] = [pgVector];
+    const params: any[] = [queryVec];
     if (typeFilter) params.push(typeFilter);
 
     const { rows } = await pool.query(`
       SELECT
         mv.source_key,
         mv.source_type,
-        1 - (mv.embedding <=> $1::vector) AS similarity,
+        1 - (mv.embedding <=> $1::vector(384)) AS similarity,
         LEFT(mo.content, 200) AS preview,
         mo.updated_at
       FROM core.memory_vectors mv
       JOIN core.memory_objects mo ON mv.source_key = mo.key
       WHERE NOT mo.deleted
         ${typeClause}
-      ORDER BY mv.embedding <=> $1::vector
+      ORDER BY mv.embedding <=> $1::vector(384)
       LIMIT 10
     `, params);
 
