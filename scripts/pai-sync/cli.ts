@@ -17,6 +17,8 @@
 import { config, validateConfig } from "./config.ts";
 import { SyncEngine } from "./SyncEngine.ts";
 import { runBackfill } from "./backfill.ts";
+import { generateEmbedding, processUnembedded } from "./embeddings.ts";
+import pg from "pg";
 
 const args = process.argv.slice(2);
 const cmd = args[0];
@@ -60,6 +62,15 @@ try {
       break;
     case "diff":
       await handleDiff(args[1], args[2] ? parseInt(args[2]) : undefined, args[3] ? parseInt(args[3]) : undefined);
+      break;
+    case "search":
+      await handleSearch(args.slice(1).join(" "), args.includes("--type") ? args[args.indexOf("--type") + 1] : undefined);
+      break;
+    case "embed":
+      await handleEmbed();
+      break;
+    case "embed-status":
+      await handleEmbedStatus();
       break;
     default:
       console.error(`Unknown command: ${cmd}`);
@@ -195,6 +206,112 @@ async function handleDiff(key: string, v1?: number, v2?: number): Promise<void> 
   console.log("\nNote: pai-sync diff shows metadata only. Use 'pai-sync restore <key> --version N && pai-sync pull' to view content.");
 }
 
+async function handleSearch(query: string, typeFilter?: string): Promise<void> {
+  if (!query || query === "--type") {
+    console.error("Usage: pai-sync search <query> [--type learning|failure|wisdom|prd]");
+    process.exit(1);
+  }
+
+  // Strip --type and its arg from the query string
+  const cleanQuery = query.replace(/--type\s+\S+/, "").trim();
+  if (!cleanQuery) {
+    console.error("Search query cannot be empty");
+    process.exit(1);
+  }
+
+  console.log(`Searching: "${cleanQuery}"${typeFilter ? ` (type: ${typeFilter})` : ""}...`);
+
+  // Generate embedding for the query
+  const queryEmbedding = await generateEmbedding(cleanQuery);
+  const pgVector = `[${queryEmbedding.join(",")}]`;
+
+  const pool = new pg.Pool({ connectionString: config.postgresUrl, max: 2 });
+  try {
+    const typeClause = typeFilter ? `AND mv.source_type = $2` : "";
+    const params: any[] = [pgVector];
+    if (typeFilter) params.push(typeFilter);
+
+    const { rows } = await pool.query(`
+      SELECT
+        mv.source_key,
+        mv.source_type,
+        1 - (mv.embedding <=> $1::vector) AS similarity,
+        LEFT(mo.content, 200) AS preview,
+        mo.updated_at
+      FROM core.memory_vectors mv
+      JOIN core.memory_objects mo ON mv.source_key = mo.key
+      WHERE NOT mo.deleted
+        ${typeClause}
+      ORDER BY mv.embedding <=> $1::vector
+      LIMIT 10
+    `, params);
+
+    if (rows.length === 0) {
+      console.log("No results found. Run 'pai-sync embed' to generate embeddings first.");
+      return;
+    }
+
+    console.log(`\nTop ${rows.length} results:\n`);
+    for (const row of rows) {
+      const sim = (row.similarity * 100).toFixed(1);
+      const date = new Date(row.updated_at).toISOString().slice(0, 10);
+      const preview = row.preview?.replace(/\n/g, " ").trim() || "(no content)";
+      console.log(`  ${sim}%  [${row.source_type}]  ${row.source_key}`);
+      console.log(`        ${date}  ${preview.slice(0, 120)}${preview.length > 120 ? "..." : ""}`);
+      console.log();
+    }
+  } finally {
+    await pool.end();
+  }
+}
+
+async function handleEmbed(): Promise<void> {
+  console.log("Processing unembedded memory objects...");
+  const pool = new pg.Pool({ connectionString: config.postgresUrl, max: 2 });
+  try {
+    let total = { processed: 0, skipped: 0, errors: 0 };
+    let batch;
+    do {
+      batch = await processUnembedded(pool);
+      total.processed += batch.processed;
+      total.skipped += batch.skipped;
+      total.errors += batch.errors;
+      if (batch.processed > 0) {
+        console.log(`  batch: ${batch.processed} embedded, ${batch.skipped} skipped, ${batch.errors} errors (total: ${total.processed})`);
+      }
+    } while (batch.processed > 0);
+
+    console.log(`Done: ${total.processed} embedded, ${total.skipped} skipped, ${total.errors} errors`);
+  } finally {
+    await pool.end();
+  }
+}
+
+async function handleEmbedStatus(): Promise<void> {
+  const pool = new pg.Pool({ connectionString: config.postgresUrl, max: 2 });
+  try {
+    const { rows: counts } = await pool.query(`
+      SELECT
+        (SELECT count(*) FROM core.memory_objects WHERE NOT deleted AND content IS NOT NULL AND length(content) > 50) AS total_embeddable,
+        (SELECT count(*) FROM core.memory_vectors) AS embedded,
+        (SELECT count(DISTINCT source_type) FROM core.memory_vectors) AS types
+    `);
+    const { rows: byType } = await pool.query(`
+      SELECT source_type, count(*) as cnt FROM core.memory_vectors GROUP BY source_type ORDER BY cnt DESC
+    `);
+
+    const c = counts[0];
+    const pct = c.total_embeddable > 0 ? ((c.embedded / c.total_embeddable) * 100).toFixed(1) : "0";
+    console.log(`Embedding status: ${c.embedded}/${c.total_embeddable} objects embedded (${pct}%)`);
+    console.log(`Types: ${c.types}`);
+    for (const t of byType) {
+      console.log(`  ${t.source_type}: ${t.cnt}`);
+    }
+  } finally {
+    await pool.end();
+  }
+}
+
 async function handleDaemon(subArgs: string[]): Promise<void> {
   const sub = subArgs[0];
   switch (sub) {
@@ -235,6 +352,11 @@ Usage:
   pai-sync pull              Restore filesystem from Postgres
   pai-sync status            Show diff: local-only, remote-only, modified
   pai-sync status --verbose  Include all file paths
+
+  pai-sync search <query>          Semantic search across all memory (pgvector)
+  pai-sync search <query> --type learning  Filter by type (learning|failure|wisdom|prd)
+  pai-sync embed                   Generate embeddings for all unembedded objects
+  pai-sync embed-status            Show embedding coverage stats
 
   pai-sync history <key>           Show all versions of a file
   pai-sync restore <key>           Restore a soft-deleted file

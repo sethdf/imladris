@@ -7,6 +7,8 @@
 
 import { config, validateConfig } from "./config.ts";
 import { SyncEngine } from "./SyncEngine.ts";
+import { processUnembedded } from "./embeddings.ts";
+import pg from "pg";
 
 // Validate config before starting
 try {
@@ -22,6 +24,29 @@ const engine = new SyncEngine(process.env.PAI_SESSION_ID);
 await engine.replayWal();
 
 console.log(`[pai-sync-daemon] watching ${config.watchRoot}`);
+
+// Embedding worker — processes unembedded memory_objects every 60s
+const embeddingPool = new pg.Pool({ connectionString: config.postgresUrl, max: 2 });
+const EMBEDDING_INTERVAL_MS = 60_000;
+let embeddingTimer: ReturnType<typeof setInterval> | null = null;
+
+async function runEmbeddingCycle() {
+  try {
+    const result = await processUnembedded(embeddingPool);
+    if (result.processed > 0 || result.errors > 0) {
+      console.log(`[embeddings] processed=${result.processed} skipped=${result.skipped} errors=${result.errors}`);
+    }
+  } catch (err) {
+    console.error(`[embeddings] cycle error: ${err}`);
+  }
+}
+
+// Start embedding worker after a 30s delay (let initial sync settle)
+setTimeout(() => {
+  runEmbeddingCycle(); // first run
+  embeddingTimer = setInterval(runEmbeddingCycle, EMBEDDING_INTERVAL_MS);
+  console.log(`[embeddings] worker started (every ${EMBEDDING_INTERVAL_MS / 1000}s)`);
+}, 30_000);
 
 // systemd watchdog ping
 let watchdogInterval: ReturnType<typeof setInterval> | null = null;
@@ -39,11 +64,15 @@ if (process.env.WATCHDOG_USEC) {
 process.on("SIGTERM", async () => {
   console.log("[pai-sync-daemon] SIGTERM received, flushing...");
   if (watchdogInterval) clearInterval(watchdogInterval);
+  if (embeddingTimer) clearInterval(embeddingTimer);
+  await embeddingPool.end();
   await engine.close();
   process.exit(0);
 });
 process.on("SIGINT", async () => {
   if (watchdogInterval) clearInterval(watchdogInterval);
+  if (embeddingTimer) clearInterval(embeddingTimer);
+  await embeddingPool.end();
   await engine.close();
   process.exit(0);
 });
