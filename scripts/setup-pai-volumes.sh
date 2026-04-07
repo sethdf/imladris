@@ -1,15 +1,22 @@
 #!/bin/bash
-# setup-pai-volumes.sh — Initialize PAI named Docker volumes
+# setup-pai-volumes.sh — Initialize PAI Docker volumes and host bind mounts
 #
-# Creates pai-config and pai-memory volumes and populates them
-# from the current ~/.claude directory on the host.
+# Creates pai-config named volume and /pai/memory host directory,
+# and populates them from the current ~/.claude directory on the host.
 #
 # Run ONCE on initial setup, or to re-sync config into volumes.
-# Safe to re-run: existing volumes are not destroyed.
+# Safe to re-run: existing volumes and directories are not destroyed.
 #
-# Volume layout:
-#   pai-config  (read-only in containers) — all of ~/.claude except MEMORY/
-#   pai-memory  (read-write in containers) — ~/.claude/MEMORY/ only
+# Layout:
+#   pai-config   (Docker named volume, read-only in containers)
+#                 — all of ~/.claude except MEMORY/
+#   /pai/memory  (host bind mount, read-write in containers)
+#                 — ~/.claude/MEMORY/ — on EBS root volume (persistent across stop/start)
+#
+# Why /pai/memory is a bind mount (not named volume):
+#   Docker named volumes are stored in docker data-root (/local/docker on NVMe —
+#   ephemeral instance store). MEMORY files must survive instance stop/start on EBS.
+#   The host daemon (pai-sync-daemon) also needs a stable host path to watch.
 #
 # After running this script, start a session with:
 #   scripts/pai-session start default
@@ -17,21 +24,51 @@
 set -euo pipefail
 
 CLAUDE_DIR="${HOME}/.claude"
+PAI_MEMORY_DIR="/pai/memory"
 HELPER_IMAGE="alpine:latest"
 
 echo "=== PAI Volume Setup ==="
 echo ""
 
-# ── Create volumes ──────────────────────────────────────────────────────────
+# ── Create pai-config named volume ─────────────────────────────────────────
 
-for vol in pai-config pai-memory; do
-    if docker volume inspect "${vol}" &>/dev/null; then
-        echo "✓ Volume '${vol}' already exists"
+if docker volume inspect pai-config &>/dev/null; then
+    echo "✓ Volume 'pai-config' already exists"
+else
+    docker volume create pai-config
+    echo "✓ Created volume 'pai-config'"
+fi
+
+echo ""
+
+# ── Create /pai/memory host directory (EBS-backed, persistent) ─────────────
+
+if [[ -d "${PAI_MEMORY_DIR}" ]]; then
+    echo "✓ Host directory ${PAI_MEMORY_DIR} already exists"
+else
+    echo "Creating ${PAI_MEMORY_DIR}..."
+    sudo mkdir -p "${PAI_MEMORY_DIR}"
+    sudo chown "${USER}:${USER}" "${PAI_MEMORY_DIR}"
+    echo "✓ Created ${PAI_MEMORY_DIR} (owned by ${USER})"
+fi
+
+# ── Migrate from pai-memory named volume if it exists ──────────────────────
+
+if docker volume inspect pai-memory &>/dev/null; then
+    # Check if /pai/memory is already populated
+    if [[ -z "$(ls -A "${PAI_MEMORY_DIR}" 2>/dev/null)" ]]; then
+        echo "Migrating pai-memory Docker volume → ${PAI_MEMORY_DIR}..."
+        docker run --rm \
+            --mount "type=volume,src=pai-memory,dst=/src,readonly" \
+            --mount "type=bind,src=${PAI_MEMORY_DIR},dst=/dst" \
+            "${HELPER_IMAGE}" \
+            sh -c "cp -r /src/. /dst/ && echo 'Migration done' && ls /dst/ | head -20"
+        echo "✓ Migrated pai-memory → ${PAI_MEMORY_DIR}"
+        echo "  (pai-memory Docker volume still exists — remove with: docker volume rm pai-memory)"
     else
-        docker volume create "${vol}"
-        echo "✓ Created volume '${vol}'"
+        echo "⚠ ${PAI_MEMORY_DIR} is not empty — skipping migration from pai-memory volume"
     fi
-done
+fi
 
 echo ""
 
@@ -43,7 +80,6 @@ docker run --rm \
     --mount "type=volume,src=pai-config,dst=/dst" \
     "${HELPER_IMAGE}" \
     sh -c "
-        # Copy everything except MEMORY/
         cd /src
         find . -mindepth 1 -maxdepth 1 ! -name 'MEMORY' | while read item; do
             cp -r \"\$item\" /dst/
@@ -53,7 +89,7 @@ docker run --rm \
     "
 echo "✓ pai-config populated"
 
-# Create MEMORY mountpoint dir in pai-config (required for nested volume overlay at runtime)
+# Create MEMORY mountpoint dir in pai-config (required for bind mount overlay)
 docker run --rm \
     --mount "type=volume,src=pai-config,dst=/dst" \
     "${HELPER_IMAGE}" \
@@ -61,28 +97,22 @@ docker run --rm \
 echo "✓ MEMORY mountpoint created in pai-config"
 echo ""
 
-# ── Populate pai-memory (only ~/.claude/MEMORY/) ────────────────────────────
+# ── Populate /pai/memory from ~/.claude/MEMORY/ (if empty) ─────────────────
 
-if [[ -d "${CLAUDE_DIR}/MEMORY" ]]; then
-    echo "Populating pai-memory from ${CLAUDE_DIR}/MEMORY/..."
-    docker run --rm \
-        --mount "type=bind,src=${CLAUDE_DIR}/MEMORY,dst=/src,readonly" \
-        --mount "type=volume,src=pai-memory,dst=/dst" \
-        "${HELPER_IMAGE}" \
-        sh -c "
-            cp -r /src/. /dst/
-            echo 'Done copying MEMORY files'
-            ls /dst/ | head -20
-        "
-    # Fix ownership — alpine copies as root; node user (uid 1000) needs write access
-    docker run --rm \
-        --mount "type=volume,src=pai-memory,dst=/dst" \
-        "${HELPER_IMAGE}" \
-        sh -c "chown -R 1000:1000 /dst && echo 'Ownership set to uid 1000'"
-    echo "✓ pai-memory populated"
+if [[ -z "$(ls -A "${PAI_MEMORY_DIR}" 2>/dev/null)" ]]; then
+    if [[ -d "${CLAUDE_DIR}/MEMORY" ]]; then
+        echo "Populating ${PAI_MEMORY_DIR} from ${CLAUDE_DIR}/MEMORY/..."
+        cp -r "${CLAUDE_DIR}/MEMORY/." "${PAI_MEMORY_DIR}/"
+        echo "✓ ${PAI_MEMORY_DIR} populated"
+    else
+        echo "⚠ ${CLAUDE_DIR}/MEMORY not found — ${PAI_MEMORY_DIR} will be empty (ok for fresh install)"
+    fi
 else
-    echo "⚠ ${CLAUDE_DIR}/MEMORY not found — pai-memory will be empty (ok for fresh install)"
+    echo "✓ ${PAI_MEMORY_DIR} already has content — skipping initial population"
 fi
+
+# Ensure node user (uid 1000) can write — relevant when containers write back
+# Host daemon runs as ec2-user so no ownership change needed for daemon reads
 
 echo ""
 echo "=== Setup complete ==="
@@ -92,5 +122,5 @@ echo "  1. Pull the PAI image:  docker pull ghcr.io/sethdf/imladris/pai:latest"
 echo "  2. Start a session:     scripts/pai-session start default"
 echo "  3. Attach:              scripts/pai-session attach default"
 echo ""
-echo "To update config volume after ~/.claude changes:"
-echo "  docker run --rm -v ~/.claude:/src:ro -v pai-config:/dst alpine sh -c 'cp -r /src/. /dst/ --exclude=MEMORY'"
+echo "  pai-sync-daemon watches: ${PAI_MEMORY_DIR}"
+echo "  To start sync daemon:    systemctl start pai-sync"

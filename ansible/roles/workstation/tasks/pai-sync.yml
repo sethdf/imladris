@@ -11,6 +11,56 @@
   block:
 
     # ------------------------------------------------------------------
+    # 0. Create /pai/memory host directory (EBS-backed, persistent)
+    #    This replaces the pai-memory Docker named volume (which was on
+    #    NVMe instance store — ephemeral across instance stop/start).
+    #    The daemon watches this path; containers bind-mount it.
+    # ------------------------------------------------------------------
+
+    - name: Create /pai/memory host directory (EBS-backed)
+      ansible.builtin.file:
+        path: "{{ pai_sync_watch_root }}"
+        state: directory
+        owner: "{{ imladris_user }}"
+        group: "{{ imladris_user }}"
+        mode: "0755"
+      become: true
+
+    - name: Migrate pai-memory Docker volume to /pai/memory if volume exists and dir is empty
+      ansible.builtin.shell: |
+        # Check if migration is needed
+        volume_exists=$(docker volume inspect pai-memory &>/dev/null && echo yes || echo no)
+        dir_empty=$([ -z "$(ls -A {{ pai_sync_watch_root }} 2>/dev/null)" ] && echo yes || echo no)
+
+        if [[ "$volume_exists" == "yes" && "$dir_empty" == "yes" ]]; then
+          echo "Migrating pai-memory volume → {{ pai_sync_watch_root }}"
+          docker run --rm \
+            --mount "type=volume,src=pai-memory,dst=/src,readonly" \
+            --mount "type=bind,src={{ pai_sync_watch_root }},dst=/dst" \
+            alpine:latest \
+            sh -c "cp -r /src/. /dst/ && chown -R {{ imladris_user }}:{{ imladris_user }} /dst/ 2>/dev/null || true"
+          echo "Migration complete"
+        elif [[ "$dir_empty" == "no" ]]; then
+          echo "{{ pai_sync_watch_root }} already has content — skipping migration"
+        else
+          echo "No pai-memory volume to migrate — starting fresh"
+        fi
+      become: false
+      changed_when: false
+
+    - name: Populate /pai/memory from ~/.claude/MEMORY if still empty
+      ansible.builtin.shell: |
+        if [ -z "$(ls -A {{ pai_sync_watch_root }} 2>/dev/null)" ] && \
+           [ -d "{{ claude_dir }}/MEMORY" ]; then
+          cp -r "{{ claude_dir }}/MEMORY/." "{{ pai_sync_watch_root }}/"
+          echo "Populated {{ pai_sync_watch_root }} from {{ claude_dir }}/MEMORY/"
+        else
+          echo "{{ pai_sync_watch_root }} already populated or no source — skipping"
+        fi
+      become: false
+      changed_when: false
+
+    # ------------------------------------------------------------------
     # 1. Install node dependencies and build compiled binaries
     # ------------------------------------------------------------------
 

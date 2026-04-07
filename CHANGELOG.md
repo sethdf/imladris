@@ -230,7 +230,23 @@ Initial versioned baseline. Captures the full deployed pipeline as of first vers
 
 ---
 
-## [2.5.0] — SHIPPED 2026-04-06: Phase 2a — PAI Memory Sync (Postgres) ✅ Current
+## [2.5.1] — SHIPPED 2026-04-07: Fix pai-memory volume on NVMe (wrong persistence tier) ✅ Current
+
+### Fixed
+- `scripts/pai-session`: `pai-memory` Docker named volume (on NVMe instance store — ephemeral)
+  replaced with host bind mount at `/pai/memory` (EBS root volume — survives stop/start).
+  Previously, MEMORY files would be lost on every instance stop/start because Docker's
+  data-root is at `/local/docker` (NVMe). This is the correct persistence tier for MEMORY.
+- `scripts/setup-pai-volumes.sh`: Creates `/pai/memory` host directory instead of `pai-memory`
+  Docker volume. Includes auto-migration from existing `pai-memory` volume if present and
+  `/pai/memory` is empty. Falls back to populating from `~/.claude/MEMORY/`.
+- `ansible/roles/workstation/tasks/pai-sync.yml`: Added `/pai/memory` directory creation,
+  volume migration step, and initial population from `~/.claude/MEMORY/` as prerequisite
+  tasks (runs before daemon build/deploy steps).
+
+---
+
+## [2.5.0] — SHIPPED 2026-04-06: Phase 2a — PAI Memory Sync (Postgres)
 
 **Spec:** `docs-site/docs/specs/memory-sync.md` (v4.1)
 **Dependency:** Phase 1b (Docker-Modular, v2.4.0)
@@ -264,7 +280,7 @@ Initial versioned baseline. Captures the full deployed pipeline as of first vers
   `pai_sync_*` configuration variables.
 
 ### Architecture
-- Watch root: `/pai/memory` (host bind mount backed by `pai-memory` Docker volume)
+- Watch root: `/pai/memory` (host directory on EBS, bind-mounted into containers)
 - Only `pai-memory` contents synced — `pai-config` is in git, no sync needed
 - WAL at `/pai/memory/STATE/sync-wal.jsonl` (fsync'd per event, zero data loss)
 - JSONL files synced at line level (SHA-256 dedup, union across machines)

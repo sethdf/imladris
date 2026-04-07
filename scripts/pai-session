@@ -21,6 +21,7 @@ set -euo pipefail
 
 IMAGE="${PAI_IMAGE:-ghcr.io/sethdf/imladris/pai:latest}"
 NETWORK="${PAI_NETWORK:-imladris_net}"
+PAI_MEMORY_DIR="${PAI_MEMORY_DIR:-/pai/memory}"
 SESSION_NAME="${2:-default}"
 CONTAINER_NAME="pai-${SESSION_NAME}"
 
@@ -69,13 +70,13 @@ _cleanup_secrets() {
 # ── Commands ───────────────────────────────────────────────────────────────
 
 cmd_start() {
-    # Verify required volumes exist
+    # Verify required volumes and directories exist
     if ! docker volume inspect pai-config &>/dev/null; then
         echo "ERROR: pai-config volume not found. Run: scripts/setup-pai-volumes.sh" >&2
         exit 1
     fi
-    if ! docker volume inspect pai-memory &>/dev/null; then
-        echo "ERROR: pai-memory volume not found. Run: scripts/setup-pai-volumes.sh" >&2
+    if [[ ! -d "${PAI_MEMORY_DIR}" ]]; then
+        echo "ERROR: ${PAI_MEMORY_DIR} not found. Run: scripts/setup-pai-volumes.sh" >&2
         exit 1
     fi
 
@@ -108,7 +109,7 @@ cmd_start() {
         --env WINDMILL_BASE=http://windmill_server:8000 \
         --add-host=host.docker.internal:host-gateway \
         --mount type=volume,src=pai-config,dst=/home/node/.claude,readonly \
-        --mount type=volume,src=pai-memory,dst=/home/node/.claude/MEMORY \
+        --mount "type=bind,src=${PAI_MEMORY_DIR},dst=/home/node/.claude/MEMORY" \
         --mount "type=volume,src=pai-session-${SESSION_NAME},dst=/home/node/work" \
         --cap-drop=ALL \
         --security-opt=no-new-privileges \
