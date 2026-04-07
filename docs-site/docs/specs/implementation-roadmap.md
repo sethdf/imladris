@@ -21,10 +21,14 @@ This principle drives all sequencing decisions below: do the foundational things
 | 0c | Fix cognitive-arch doc terminology | Docs | Docs | Trivial | Nothing |
 | 1a | [Domain-Modular Architecture](./modularization) | Directory reorg | Platform | Design done | Personal domain, new user onboarding |
 | 1b | [Docker-Modular Architecture](./docker-modular) | Infrastructure | Infra | Ready | Memory-sync (PAI containerization first) |
-| 2a | [PAI Memory Sync](./memory-sync) | PAI / Postgres | Platform | Draft | Entity extraction automation, trend storage |
-| 2b | Personal Domain Pack (stub) | Personal | Domain | Needs spec | Modularization reorg |
-| 3a | Entity extraction + feedback loop | Intelligence | Platform | Gap/Phase 5+ | Contextual surfacing |
-| 3b | Contextual surfacing (full) | Intelligence | Platform | Gap/Phase 5+ | Entity extraction |
+| 2a | [Postgres + Sync Daemon](./memory-sync) | PAI / Postgres | Platform | Draft | Docker-Modular (1b) |
+| 2b | [Semantic Search + Knowledge Graph](./memory-sync) | PAI / Intelligence | Platform | Draft | Postgres running (2a) |
+| 2c | [Palantír MCP Gateway](./memory-sync) | PAI / MCP | Platform | Draft | Knowledge layer (2b) |
+| 2d | [Multi-Schema + Hive](./postgres-multi-schema) | PAI / Domains | Platform | Draft | Postgres (2a) + Gateway (2c) |
+| 2e | [Operational Data Consolidation](./memory-sync) | Windmill / Postgres | Platform | Draft | Schemas (2d) |
+| 2f | Personal Domain Pack (initial) | Personal | Domain | Needs spec | Personal schema (2d) |
+| 3a | Entity extraction + feedback loop | Intelligence | Platform | Gap/Phase 5+ | Postgres (2a), operational data (2e) |
+| 3b | Contextual surfacing (full) | Intelligence | Platform | Gap/Phase 5+ | Entity extraction (3a) |
 
 ## Phase 0 — Ship Now (no architecture changes, both already scoped)
 
@@ -74,23 +78,42 @@ These establish the structural and infrastructure foundation everything else bui
 
 With structural and infra foundations stable, expand PAI's intelligence capabilities and add the personal domain.
 
-### 2a: PAI Memory Sync (Postgres)
-- **Why here:** Requires PAI session containers (Phase 1b) to be stable. Memory in named volumes → Postgres sync creates the substrate for cross-session querying, entity extraction, and trend storage.
-- **Scope:** Per the [spec](./memory-sync): inotify daemon syncing `~/.claude/` to Postgres 16+. Apache AGE for graph queries, pgvector for semantic search.
-- **Risk:** Medium-high. Self-hosted Postgres (not RDS/Aurora — Apache AGE requires self-hosted). Requires PAI containers to be running.
-- **Dependency:** Phase 1b (PAI containerization), Docker-Modular infra stable
+### 2a: Postgres Setup + Sync Daemon
+- **Why first:** Foundation layer. Self-hosted PostgreSQL 16+ on EC2, pgBackRest WAL archiving to S3, inotify daemon syncing `/pai/memory/` to Postgres. Windmill DB consolidated onto same instance.
+- **Scope:** Provision Postgres, create `core` schema + `windmill` database, deploy `pai-sync` systemd daemon, write-race conflict resolution, migration tooling. Per the [spec](./memory-sync) Phase 1.
+- **Sprint-1 prerequisites (Council Decision 2026-04-07):** Write-race resolution mechanism, schema DDL with role grants, protected invariant set definition, stale pgml audit.
+- **Risk:** Medium-high. Self-hosted Postgres ops (not RDS/Aurora — Apache AGE requires self-hosted). Daemon must handle concurrent PAI session writes safely.
+- **Dependency:** Phase 1b (PAI containerization — daemon watches `/pai/memory/` host bind mount)
 
-### 2b: Multi-Schema Postgres + Hive Collective
-- **Why here:** Extends the base memory-sync with domain partitioning and cross-instance sharing. Requires Postgres to be running (2a) before schemas can be created.
-- **Scope:** Per the [spec](./postgres-multi-schema): four schemas (core/work/personal/shared), SQLite→Postgres triage sync, hive logical replication between instances, PreCompact direct Postgres write for zero-loss compaction protection.
-- **Risk:** Low-medium. Additive to memory-sync. Logical replication over Tailscale is well-supported. The `shared` schema graduation mechanism requires discipline (explicit, not automatic).
-- **Dependency:** Phase 2a (Postgres running with base schema)
+### 2b: Semantic Search + Knowledge Graph
+- **Why here:** Requires Postgres running (2a) with data synced. pgvector for semantic search across learnings/failures. Apache AGE for causal chain queries.
+- **Scope:** Per the [spec](./memory-sync) Phases 2a-2b: Bedrock Titan embedding generation in daemon, `memory_vectors` table, `assemble_context()` with hybrid retrieval, AGE graph nodes/edges, Cypher query support.
+- **Risk:** Medium. Embedding quality depends on Bedrock Titan model. AGE extension installation on self-hosted Postgres.
+- **Dependency:** Phase 2a (Postgres + sync daemon running with data)
 
-### 2c: Personal Domain Pack (initial)
-- **Why here:** Directory structure exists (Phase 1a), Postgres ready (Phase 2a enables richer queries for personal data)
-- **Scope:** Telegram-first. Ingest personal Telegram messages into cache (scoped — explicit connections only, no ambient expansion). Surface patterns via existing pipeline. No new action targets in initial slice.
+### 2c: Palantír MCP Gateway
+- **Why here:** Requires Postgres knowledge layer (2b) for `assemble_context()` to be meaningful. The gateway proxies Windmill tools + serves PAI knowledge + enforces session state gating.
+- **Scope:** Per the [spec](./memory-sync) Phase 3c: MCP server (~1,200-1,800 LOC), session enforcement, declarative hook rules from `pai_system`, GitHub→Postgres methodology sync, `record_learning()` with provenance tracking.
+- **Risk:** Medium. Largest new codebase. Must not become a god-object — all logic stays in SQL functions and Windmill scripts, gateway does routing/serialization/session gating only.
+- **Dependency:** Phase 2b (knowledge layer operational), Windmill MCP server (existing, proxied)
+
+### 2d: Multi-Schema + Domain Separation + Hive Collective
+- **Why here:** Extends base sync with schema-per-domain partitioning and cross-instance sharing. Requires Postgres stable (2a) + gateway operational (2c).
+- **Scope:** Per the [postgres-multi-schema spec](./postgres-multi-schema): add `work`, `personal`, `shared` schemas with locked `search_path` per role. SQLite→Postgres triage sync. Hive logical replication between instances over Tailscale. PreCompact direct Postgres write for zero-loss compaction protection. Graduation is forward-only with soft-delete rollback; graduation authority independent of content producer (Council Decision).
+- **Risk:** Low-medium. Additive to existing schemas. Logical replication over Tailscale is well-supported.
+- **Dependency:** Phase 2a (Postgres running), Phase 2c (gateway serves domain-aware context)
+
+### 2e: Operational Data Consolidation
+- **Why here:** Moves SQLite triage/investigation data to Postgres `ops` schema for cross-system correlation. Requires Postgres (2a) + schemas (2d).
+- **Scope:** Per the [spec](./memory-sync) operational data section: `ops.triage_results`, `ops.investigation_jobs`, `ops.entity_index`, `ops.resource_inventory`, `ops.capability_gaps`. `cache_lib.ts` adapter swaps better-sqlite3 for pg connection pool.
+- **Risk:** Low-medium. `cache_lib.ts` is the only file that changes. All 50+ Windmill scripts call cache_lib functions — adapter pattern means zero script changes.
+- **Dependency:** Phase 2a (Postgres), Phase 2d (schema structure)
+
+### 2f: Personal Domain Pack (initial)
+- **Why here:** Directory structure exists (Phase 1a), Postgres + schemas ready (Phase 2d enables richer queries for personal data)
+- **Scope:** Telegram-first. Ingest personal Telegram messages into `personal` schema (scoped — explicit connections only, no ambient expansion). Surface patterns via existing pipeline. No new action targets in initial slice.
 - **Risk:** Low-medium. Telegram integration already exists in `shared/telegram_*.ts`. Scope discipline is the risk — define the ingestion boundary explicitly and don't expand it.
-- **Dependency:** Phase 1a (personal domain has a home), Phase 2a optional but preferred (richer querying)
+- **Dependency:** Phase 1a (personal domain has a home), Phase 2d (personal schema exists)
 
 ---
 
@@ -114,20 +137,18 @@ These close the gaps identified in cognitive-architecture.md Part XI. They requi
 ## Sequencing Diagram
 
 ```
-NOW ─────────────────────────────────────────────────────────────────► TIME
+NOW ─────────────────────────────────────────────────────────────────────► TIME
 
-Phase 0          Phase 1              Phase 2           Phase 3
-─────────        ────────────────     ─────────────     ─────────────────
-Status           Reorg               Memory Sync        Entity Extract +
-Dashboard  ────► (1a, 1 session) ──► (2a)         ─┐   Feedback Loop
-                                                    ├──► (3a)
-Investigate      Docker-Modular       Personal       │
-First       ────► Infra (1b)    ──►  Domain (2b)   └──► Contextual
-Pipeline                                                 Surfacing (3b)
+Phase 0          Phase 1              Phase 2                    Phase 3
+─────────        ────────────────     ──────────────────────     ────────────
+Status ✅        Reorg               Postgres + Daemon (2a)      Entity Extract
+Dashboard  ────► (1a) ──────────┬──► Semantic + Graph  (2b) ──► + Feedback (3a)
+                                │    Palantír Gateway  (2c) ──►
+Investigate ✅   Docker-Modular │    Multi-Schema      (2d) ──► Contextual
+First       ────► Infra (1b) ──┘    Ops Data Consol   (2e)     Surfacing (3b)
+Pipeline                             Personal Domain   (2f)
 
-Doc fixes
-(trivial,
-do inline)
+Doc fixes ✅
 ```
 
 ## Quick Wins (Can Ship Without Blocking Infra Work)

@@ -178,7 +178,42 @@ When a file is updated in `memory_objects`, the old version is copied to `memory
 6. **Swappable backend** — the storage layer is behind an adapter interface; self-hosted Postgres today, managed service tomorrow
 7. **PAI-transparent** — existing hooks and tools are unchanged; they keep writing to the filesystem as they do today
 8. **Full portability** — `pai sync pull` on a fresh machine bootstraps complete PAI memory
-9. **Postgres as platform** — PostgreSQL 16+ is the foundation for AI-powered capabilities via pgvector, Apache AGE, pgml, and native Postgres features
+9. **Postgres as platform** — PostgreSQL 16+ is the foundation for AI-powered capabilities via pgvector, Apache AGE, and native Postgres features
+
+### Protected Invariant Set (Council Decision 2026-04-07)
+
+> "Additive" is not a constraint without an enumerated invariant set. These are the PAI components that MUST NOT change as a result of implementing this spec. Any modification to these requires explicit approval and is NOT considered additive.
+
+| Invariant | What it means |
+|-----------|---------------|
+| Algorithm execution (v3.5.0+) | The 7-phase execution loop is unchanged. No new phases, no removed phases, no modified phase transitions. |
+| CLAUDE.md routing | CLAUDE.md continues to be loaded natively by Claude Code. It may reference the MCP gateway but must not depend on it. |
+| Voice notifications | ElevenLabs TTS hooks continue firing on the same lifecycle events. |
+| Hook lifecycle (21+ hooks) | SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Stop, SessionEnd hooks are unchanged. No hook is removed or modified. |
+| Existing file formats | MEMORY/ file layouts, JSONL schemas, PRD frontmatter — all unchanged. |
+| Existing tool behavior | SessionHarvester, FailureCapture, OpinionTracker, Wisdom Frames — all continue writing to `~/.claude/` exactly as they do today. |
+| Grep-based retrieval | PAI's file-based grep retrieval continues working. Postgres is additive, not a replacement. |
+
+**CI enforcement:** Schema migrations that drop columns, tighten constraints, or rename tables must be flagged by a CI gate. Destructive DDL is rejected unless explicitly exempted in the migration file with a justification comment.
+
+### Logic Placement Matrix (Council Decision 2026-04-07)
+
+Every capability is mapped to exactly one execution location. No ambiguity about where logic lives.
+
+| Capability | Location | NOT here | Why |
+|-----------|----------|----------|-----|
+| Context assembly (`assemble_context`) | Postgres function | NOT in MCP server | SQL joins across tables are the logic; MCP server is a thin caller |
+| Semantic search | Postgres (pgvector) | NOT in MCP server | Vector similarity is a SQL operator |
+| Knowledge graph traversal | Postgres (Apache AGE) | NOT in MCP server | Cypher queries execute in Postgres |
+| Session state enforcement | MCP server (Palantír) | NOT in Postgres | Session state is per-connection, ephemeral |
+| Tool proxying to Windmill | MCP server (Palantír) | NOT in Postgres | MCP protocol translation |
+| Declarative hook evaluation | MCP server reads rules from Postgres | Logic NOT in either — rules are data, evaluation is routing | Rules stored as JSONB in `pai_system`, MCP server evaluates conditions |
+| Methodology sync (GitHub → Postgres) | GitHub Action + PostgREST | NOT in MCP server | Stateless HTTP push, no persistent process needed |
+| Embedding generation | Sync daemon (Bedrock Titan API) | NOT in Postgres (no pgml) | External API call, async, triggered by new rows |
+| File sync (filesystem → Postgres) | Sync daemon (inotify + WAL) | NOT in MCP server, NOT in hooks | Standalone systemd service, no Claude dependency |
+| Learning/failure write-back | Postgres function via MCP tool | NOT in daemon, NOT in hooks | MCP server calls SQL function, provenance tracked |
+| Triage pipeline execution | Windmill scripts | NOT in Postgres, NOT in MCP server | Windmill owns compute, credentials, scheduling |
+| Algorithm enforcement | CLAUDE.md / Gem / Custom GPT instructions | NOT in MCP server (MCP serves, doesn't enforce) | Enforcement is orchestrator's responsibility |
 
 ---
 
@@ -213,7 +248,7 @@ When a file is updated in `memory_objects`, the old version is copied to `memory
 |  - memory_object_versions (full history)           |
 |  - memory_vectors (pgvector, Phase 2a)             |
 |  - knowledge graph (Apache AGE, Phase 2b)          |
-|  - in-database ML (pgml, Phase 2c)                 |
+|  - embeddings via Bedrock Titan (Phase 2a)          |
 |  - pgBackRest to S3, PITR                          |
 +---------------------------------------------------+
            ^
@@ -1799,7 +1834,7 @@ PAI's design assumes Claude Code is the only consumer of its memory. The Algorit
 Phase 3c (PAI Knowledge MCP Server). Depends on:
 - Phase 1a (data in Postgres)
 - Phase 2a (pgvector embeddings for semantic matching)
-- Phase 2c (pgml for embedding generation in the function)
+- Phase 2a (Bedrock Titan embedding generation via sync daemon)
 
 The SQL functions live in schema migrations. The PAI Knowledge MCP Server (see below) exposes them as tools any model can discover and call. PostgREST (Phase 3b) provides HTTP access for non-model clients.
 
@@ -1847,7 +1882,7 @@ RETURNS TABLE(pattern_name TEXT, relevance FLOAT, content TEXT) AS $$
 DECLARE
     task_embedding vector(1536);
 BEGIN
-    task_embedding := pgml.embed('intfloat/e5-small-v2', task_description);
+    task_embedding := get_embedding(task_description)  -- Bedrock Titan via sync daemon (NOT pgml);
 
     RETURN QUERY
     SELECT
@@ -1932,48 +1967,54 @@ CREATE OR REPLACE FUNCTION record_learning(
     domain TEXT,              -- 'SYSTEM', 'ALGORITHM', 'INFRASTRUCTURE', etc.
     source_model TEXT,        -- 'bedrock-opus', 'claude-code', 'gemini', etc.
     source_context TEXT,      -- what task produced this learning
-    confidence TEXT DEFAULT 'medium'  -- 'low', 'medium', 'high'
+    confidence TEXT DEFAULT 'medium',  -- 'low', 'medium', 'high'
+    conversation_id TEXT DEFAULT NULL,  -- originating session/conversation ID
+    provenance_chain JSONB DEFAULT '[]' -- array of {source, timestamp, action} entries
 ) RETURNS TEXT AS $$
 DECLARE
     learning_key TEXT;
-    learning_embedding vector(1536);
 BEGIN
     learning_key := 'learning/' || domain || '/' || NOW()::DATE || '/' || gen_random_uuid();
 
-    -- Generate embedding for semantic dedup and retrieval
-    learning_embedding := pgml.embed('intfloat/e5-small-v2', learning_content);
-
-    -- Check for semantic duplicates (>0.92 similarity = likely duplicate)
+    -- Semantic dedup check happens via pre-computed embeddings (Phase 2a).
+    -- Embeddings generated async by sync daemon using Bedrock Titan (NOT pgml).
+    -- At Phase 1, dedup is exact-match only on content hash.
     IF EXISTS (
-        SELECT 1 FROM memory_vectors mv
-        JOIN memory_objects mo ON mv.source_key = mo.key
-        WHERE mv.source_type = 'learning'
+        SELECT 1 FROM memory_objects mo
+        WHERE mo.metadata->>'origin' = 'model_writeback'
           AND NOT mo.deleted
-          AND 1 - (mv.embedding <=> learning_embedding) > 0.92
+          AND mo.content_hash = encode(sha256(learning_content::bytea), 'hex')
     ) THEN
         RETURN 'duplicate_detected';
     END IF;
 
-    -- Insert the learning
-    INSERT INTO memory_objects (key, content, metadata, source, created_at, updated_at)
+    -- Insert the learning with full provenance tracking
+    -- Council Decision (2026-04-07): provenance fields are mandatory for write-back.
+    -- Every learning must know where it came from, how it got here, and what
+    -- authority it carries. This enables confidence-weighted merge for contradictions.
+    INSERT INTO memory_objects (key, content, content_hash, metadata, source, created_at, updated_at)
     VALUES (
         learning_key,
         learning_content,
+        encode(sha256(learning_content::bytea), 'hex'),
         jsonb_build_object(
             'domain', domain,
             'confidence', confidence,
             'source_model', source_model,
             'source_context', source_context,
+            'conversation_id', conversation_id,
+            'provenance_chain', provenance_chain,
             'status', 'active',
-            'origin', 'model_writeback'
+            'origin', 'model_writeback',
+            'recorded_at', NOW()
         ),
         source_model,
         NOW(), NOW()
     );
 
-    -- Store embedding
-    INSERT INTO memory_vectors (source_key, source_type, embedding)
-    VALUES (learning_key, 'learning', learning_embedding);
+    -- Embedding generated async by sync daemon (Bedrock Titan Embeddings).
+    -- Daemon watches memory_objects for new rows with origin='model_writeback',
+    -- generates embedding, inserts into memory_vectors.
 
     RETURN learning_key;
 END;
@@ -2008,7 +2049,7 @@ BEGIN
     );
 
     INSERT INTO memory_vectors (source_key, source_type, embedding)
-    VALUES (failure_key, 'failure', pgml.embed('intfloat/e5-small-v2', failure_summary || ' ' || failure_context));
+    VALUES (failure_key, 'failure', get_embedding(failure_summary || ' ' || failure_context)  -- Bedrock Titan (NOT pgml));
 
     RETURN failure_key;
 END;
@@ -2475,7 +2516,7 @@ $$);
 
 ### Embedding generation on sync
 
-When a system component lands in `pai_system`, it needs an embedding in `memory_vectors` so `assemble_context()` can find it via semantic search. This uses the same Phase 2c pgml pipeline:
+When a system component lands in `pai_system`, it needs an embedding in `memory_vectors` so `assemble_context()` can find it via semantic search. The sync daemon generates embeddings via Bedrock Titan on insert:
 
 ```sql
 -- Trigger: generate embedding when pai_system content changes
@@ -2491,7 +2532,7 @@ BEGIN
         VALUES (
             NEW.key,
             'system',
-            pgml.embed('intfloat/e5-small-v2', LEFT(NEW.content, 8000))
+            get_embedding(LEFT(NEW.content, 8000))  -- Bedrock Titan (NOT pgml)
         );
     END IF;
     RETURN NEW;
@@ -2516,7 +2557,7 @@ DECLARE
     result JSONB;
     task_embedding vector(1536);
 BEGIN
-    task_embedding := pgml.embed('intfloat/e5-small-v2', task_description);
+    task_embedding := get_embedding(task_description)  -- Bedrock Titan via sync daemon (NOT pgml);
 
     result := jsonb_build_object(
         -- TIER 1 METHODOLOGY: from pai_system (GitHub-sourced)
@@ -3309,7 +3350,7 @@ This section directly addresses the question: are we overcomplicating this? Shou
 | Cron scheduler | `pg_cron` | Jobs run inside the database. No external scheduler. |
 | Full-text search | `tsvector` / `tsquery` | Built into Postgres. No Elasticsearch. |
 | Fuzzy matching | `pg_trgm` | Extension, not external service. |
-| Embedding generation | `pgml` | Models run inside Postgres. No external embedding API. |
+| Embedding generation | Bedrock Titan via sync daemon | Embeddings generated on write, stored in pgvector. |
 | Graph database | Apache AGE | Cypher queries inside Postgres. No Neo4j. |
 | HTTP outbound | `pg_net` | HTTP calls from triggers. No middleware Lambda. |
 
@@ -3326,7 +3367,7 @@ See the [Capability Stack Summary](#capability-stack-summary) in the Postgres Ca
 | Elasticsearch for search | Another database to manage. Full-text search in Postgres (tsvector) handles our corpus size. pgvector handles semantic. | Postgres FTS + pgvector — both in the same database. |
 | Neo4j for graph | Another database to deploy, backup, manage. AGE gives us Cypher queries inside Postgres. | Apache AGE extension. Same Postgres instance, same backups. |
 | Custom REST API | PostgREST generates one from the schema. Zero lines of API code. | PostgREST. |
-| Lambda functions for enrichment | External compute, cold starts, deployment pipeline. | `pgml` for embeddings, `plv8`/`plpython3u` for enrichment — all inside Postgres. |
+| Lambda functions for enrichment | External compute, cold starts, deployment pipeline. | Bedrock Titan for embeddings (via daemon), `plpython3u` for enrichment — in Postgres. |
 | Custom scheduler | Another service. | `pg_cron` — cron jobs inside the database. |
 | Custom gateway server | Adds a stateful caching layer between GitHub and models. | Postgres IS the gateway. GitHub Action → `pai_system` table → MCP server reads directly. |
 
@@ -3353,7 +3394,7 @@ No containers to orchestrate. No microservices to manage. No message queues, no 
                    │                 │
                    │ pai_system      │ methodology (GitHub-sourced)
                    │ memory_objects  │ knowledge (filesystem-sourced)
-                   │ memory_vectors  │ embeddings (pgml-generated)
+                   │ memory_vectors  │ embeddings (Bedrock Titan)
                    │ AGE graph       │ relationships (trigger-populated)
                    │ enforcement     │ rules (JSONB in pai_system)
                    └─────────────────┘
@@ -4240,83 +4281,77 @@ Update the Algorithm in one place (push to GitHub → GitHub Action syncs to Pos
 
 The PAI Knowledge MCP Server is designed for one user on one machine. This section defines how it extends — first to separate home and work contexts for one user, then to multiple users within an organization. Each layer is additive: domain separation adds a column and a filter; multi-user adds identity, row-level security, and scope.
 
-### Domain Separation (single user): Separate Databases
+### Domain Separation (single user): Schema Isolation
+
+> **Council Decision (2026-04-07, Opus v2 debate):** Schemas within a single database, not separate databases. Marcus's decisive argument: "If Palantír holds all the connection strings, separate databases just move the blast radius from Postgres to the application layer — you haven't reduced it." Rook conceded schemas are acceptable with `search_path` locked per role and cross-schema grants explicit. This aligns with the [postgres-multi-schema spec](./postgres-multi-schema) which defines four schemas (core/work/personal/shared).
 
 A single user operates across domains — personal projects at home, professional work at the office. Some knowledge is universal (the Algorithm, founding principles, Wisdom Frames), some is domain-specific (work PRDs don't belong in personal context, home automation learnings don't belong in work context).
 
-**The right boundary is the database, not a column.** Personal and work data have different ownership, retention, backup, and legal exposure profiles. A `domain` column with row-level filtering keeps everything in one database — which means one set of backup policies, one admin surface, one subpoena scope. If the work database is subject to employer retention policies, corporate audits, or legal holds, personal data in the same database is caught in the same net.
+**The right boundary is the schema, not a separate database.** Schema isolation with locked `search_path` and explicit role grants achieves authentication-level isolation within a single database. This gives:
 
-Separate databases on the same Postgres instance give clean isolation with minimal overhead:
+- One `pg_dump`, one backup policy, one failure domain
+- One connection string for the MCP server (schema selected by role, not connection)
+- Cross-schema queries via explicit SQL joins when needed (e.g., `shared.insights`)
+- No distributed transaction failures, no connection pool multiplication
 
 ```
-PostgreSQL instance
-├── pai_personal   ← personal domain, personal backups, personal retention
-├── pai_work       ← work domain, company policies apply
-└── windmill       ← unchanged
+PostgreSQL instance (single database: pai)
+├── schema: core       ← PAI cognitive memory (REQUIRED, always)
+├── schema: work       ← work domain operational data (OPTIONAL)
+├── schema: personal   ← personal domain data (OPTIONAL)
+├── schema: shared     ← cross-domain + cross-instance intelligence (OPTIONAL)
+└── windmill database  ← separate database (Windmill internal state, unchanged)
 ```
 
-**Each database is a complete, independent PAI memory store** — its own `memory_objects`, `memory_vectors`, `pai_system`, knowledge graph. Same schema, same Postgres functions, same `assemble_context()`. The only difference is connection string.
+This is isomorphic to the [postgres-multi-schema spec](./postgres-multi-schema) — schemas ARE domains.
 
-**Shared methodology (the Algorithm, principles, Wisdom Frames)** lives in both databases — synced from the same GitHub repo via the same GitHub Action, writing to `pai_system` in each. Update the Algorithm once, both databases get it. The methodology is identical; the accumulated knowledge is separate.
+**Role-based isolation (Rook's security requirements):**
 
-**MCP server configuration:** two approaches, both valid:
+```sql
+-- Application role: locked to its own schema, read-only on PAI operational schema
+CREATE ROLE pai_app LOGIN;
+ALTER ROLE pai_app SET search_path TO work, shared;
+GRANT USAGE ON SCHEMA work TO pai_app;
+GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA work TO pai_app;
+GRANT USAGE ON SCHEMA shared TO pai_app;
+GRANT SELECT ON ALL TABLES IN SCHEMA shared TO pai_app;
+-- pai_app CANNOT access core or personal schemas
 
-*Option A — one MCP server, two connection strings:*
+-- PAI sync daemon role: writes to core only
+CREATE ROLE pai_sync LOGIN;
+ALTER ROLE pai_sync SET search_path TO core;
+GRANT USAGE ON SCHEMA core TO pai_sync;
+GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA core TO pai_sync;
+-- pai_sync CANNOT access work or personal schemas
+```
+
+**Shared methodology (the Algorithm, principles, Wisdom Frames)** lives in `core.pai_system` — synced from GitHub. All schemas can read `core` via explicit cross-schema joins. The methodology is shared; the accumulated knowledge is separated by schema.
+
+**MCP server configuration:** one server, schema selected by context:
 
 ```
 get_context({ task: "deploy feature", domain: "work" })
-  → MCP server connects to pai_work, assembles context from work knowledge
+  → MCP server queries work + core schemas
 
-get_context({ task: "fix home assistant", domain: "home" })
-  → MCP server connects to pai_personal, assembles context from personal knowledge
+get_context({ task: "fix home assistant", domain: "personal" })
+  → MCP server queries personal + core schemas
 ```
 
-The `domain` parameter selects which database to query. The MCP server maintains two connection pools. Simple routing, one process.
-
-*Option B — two MCP server instances:*
-
-```json
-{
-  "pai-knowledge-work": {
-    "command": "node",
-    "args": ["/home/seth/.claude/mcp/pai-knowledge-mcp/dist/index.js"],
-    "env": { "POSTGRES_URL": "postgresql://pai_mcp@localhost:5432/pai_work" }
-  },
-  "pai-knowledge-personal": {
-    "command": "node",
-    "args": ["/home/seth/.claude/mcp/pai-knowledge-mcp/dist/index.js"],
-    "env": { "POSTGRES_URL": "postgresql://pai_mcp@localhost:5432/pai_personal" }
-  }
-}
-```
-
-Complete process isolation. CLAUDE.md or project-level `.claude/CLAUDE.md` specifies which server to use:
-
-```
-# In ~/work/ projects:
-Use pai-knowledge-work for all get_context and record_learning calls.
-
-# In ~/personal/ projects:
-Use pai-knowledge-personal for all get_context and record_learning calls.
-```
-
-**Recommended default: Option B (two instances).** For a single user, Option B is simpler — no routing logic, no domain parameter, complete process isolation. Option A adds complexity (two connection pools, domain validation, routing bugs) that only pays off if you need cross-domain queries in a single MCP call, which is an uncommon use case. Start with Option B; collapse to Option A only if managing two processes becomes a burden.
-
-**Write-back isolation:** learnings recorded during work go to `pai_work`. Learnings recorded during personal projects go to `pai_personal`. No cross-contamination. If you discover something at work that's genuinely universal, you manually promote it — push to the shared GitHub methodology repo, and both databases pick it up on the next sync.
+**Write-back isolation:** learnings recorded during work go to `work` schema. Personal learnings go to `personal` schema. Cross-domain promotion is explicit — via `shared.insights` graduation (see [postgres-multi-schema spec](./postgres-multi-schema), hive collective section).
 
 **What this gives you:**
-- Work data stays under work governance — backups, retention, audit, legal holds
-- Personal data stays personal — your backup schedule, your retention, your control
-- Either database can be deleted, migrated, or handed over independently
-- No RLS complexity — isolation is physical, not logical
-- The Algorithm and methodology stay shared via GitHub, not database-level sharing
+- Work data isolated by Postgres role grants — no accidental cross-contamination
+- Personal data in its own schema — PAI app role cannot query it
+- The Algorithm and methodology shared via `core` schema
+- Single database operations: one backup, one restore, one connection
+- Compatible with hive collective (cross-instance replication on `shared` schema)
 
 **What stays the same:**
-- One Postgres instance (two databases is a config-level separation, not infrastructure)
-- Same MCP server code — connection string is the only difference
-- Same Postgres functions, same schema, same `assemble_context()`
-- GitHub sync writes methodology to both databases
-- The enforcement model — CLAUDE.md directs which server/database to use
+- One Postgres instance, one database (plus Windmill's separate database)
+- Same MCP server code — schema is selected by domain parameter + role
+- Same Postgres functions, same `assemble_context()` (takes domain parameter)
+- GitHub sync writes methodology to `core.pai_system`
+- The enforcement model — CLAUDE.md / Gem / GPT directs domain selection
 
 **What lives where:**
 
@@ -4448,19 +4483,17 @@ list_org_learnings()                              -- org-scope only
 ┌─────────────────────────────────────────────────────────────────┐
 │                        PostgreSQL                          │
 │                                                                  │
-│  pai_personal database (single-user, Seth only)                  │
-│  ├── memory_objects, memory_vectors, knowledge graph             │
-│  ├── pai_system (methodology via GitHub sync)                    │
-│  └── No RLS needed — one user                                   │
+│  pai database (schemas provide domain isolation)                 │
+│  ├── core schema (always, PAI memory + methodology)              │
+│  │   └── memory_objects, memory_vectors, pai_system, knowledge   │
+│  ├── work schema (optional, work domain operational data)        │
+│  │   └── triage_results, entities, RLS when multi-user           │
+│  ├── personal schema (optional, personal domain, single-user)    │
+│  │   └── personal triage, telegram context, calendar             │
+│  └── shared schema (optional, cross-domain graduated insights)   │
+│      └── insights, global entities, hive replication             │
 │                                                                  │
-│  pai_work database (multi-user when team joins)                  │
-│  ├── memory_objects (RLS: user_id, scope, team_id)               │
-│  ├── memory_vectors (RLS inherits from memory_objects)           │
-│  ├── pai_system (methodology via GitHub sync)                    │
-│  ├── pai_users / pai_teams                                       │
-│  └── knowledge graph (AGE, RLS on edges/nodes)                  │
-│                                                                  │
-│  windmill database (unchanged)                                   │
+│  windmill database (separate database, unchanged)                │
 └────────────┬────────────────────────────┬────────────────────────┘
              │ SQL                        │ SQL (with RLS context)
              ▼                            ▼
@@ -4489,11 +4522,11 @@ list_org_learnings()                              -- org-scope only
 
 #### The progression
 
-1. **Today:** One user, one database. Everything is Seth's.
-2. **Domain separation:** Separate databases (`pai_personal`, `pai_work`). Physical isolation — different backup policies, different retention, different legal exposure. Shared methodology via GitHub sync to both. No auth changes, no RLS, no filtering logic.
-3. **Multi-user (within a domain):** Identity layer, RLS, scope column *within* `pai_work`. Coworkers join the work domain. Personal database stays single-user. Same Postgres instance, same MCP server code, same Postgres functions.
+1. **Today:** One user, one database, `core` schema only. Everything is Seth's.
+2. **Domain separation:** Add `work` and `personal` schemas within the same database. Role-based isolation — locked `search_path` per role, explicit cross-schema grants. Shared methodology in `core.pai_system`. No RLS needed — schemas + roles provide isolation.
+3. **Multi-user (within a domain):** Identity layer, RLS, scope column within the `work` schema. Coworkers join the work domain. Personal schema stays single-user. Same Postgres instance, same MCP server code, same Postgres functions.
 
-Each layer builds on the previous without rearchitecting. Domain separation is infrastructure-level (separate databases). Multi-tenancy is database-level (RLS within a shared database). The MCP server stays thin — connection string picks the domain, RLS picks the user.
+Each layer builds on the previous without rearchitecting. Domain separation is schema-level (Postgres roles enforce boundaries). Multi-tenancy is row-level (RLS within a shared schema). The MCP server stays thin — domain parameter picks the schema, RLS picks the user.
 
 ---
 
@@ -4519,15 +4552,15 @@ Windmill continues working identically. Credential vault, MCP tool execution, cr
 
 ### Schema isolation
 
-PAI memory and Windmill use separate databases on the same Postgres instance:
+PAI memory lives in the `pai` database (schemas: core, work, personal, shared). Windmill uses a separate `windmill` database on the same Postgres instance:
 
 ```
 PostgreSQL instance
-├── pai_memory     ← sync daemon, memory_objects, memory_vectors, knowledge graph
-└── windmill       ← Windmill's internal schema (job queue, scripts, schedules, audit)
+├── pai database   ← core/work/personal/shared schemas (PAI memory + domains)
+└── windmill database ← Windmill's internal schema (job queue, scripts, schedules, audit)
 ```
 
-Separate databases means separate connection strings, separate permissions, no table collisions. Postgres handles both workloads — PAI memory is write-light/read-heavy, Windmill is write-moderate with short-lived job records. No contention.
+Separate databases for PAI vs Windmill means separate connection strings, separate permissions, no table collisions. Within the PAI database, domain isolation is schema-level (see Domain Separation section above). Postgres handles both workloads — PAI memory is write-light/read-heavy, Windmill is write-moderate with short-lived job records. No contention.
 
 ### What this enables (not required, but free)
 
