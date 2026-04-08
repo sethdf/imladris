@@ -20,8 +20,10 @@
 set -euo pipefail
 
 IMAGE="${PAI_IMAGE:-ghcr.io/sethdf/imladris/pai:latest}"
-NETWORK="${PAI_NETWORK:-imladris_net}"
+NETWORK="${PAI_NETWORK:-imladris_default}"
 PAI_MEMORY_DIR="${PAI_MEMORY_DIR:-/pai/memory}"
+PAI_INBOX_DIR="${PAI_INBOX_DIR:-/pai/inbox}"
+PAI_OUTBOX_DIR="${PAI_OUTBOX_DIR:-/pai/outbox}"
 SESSION_NAME="${2:-default}"
 CONTAINER_NAME="pai-${SESSION_NAME}"
 
@@ -80,6 +82,18 @@ cmd_start() {
         exit 1
     fi
 
+    # Ensure inbox/outbox directories exist (created by setup-pai-volumes.sh but verify)
+    for dir in "${PAI_INBOX_DIR}" "${PAI_OUTBOX_DIR}"; do
+        if [[ ! -d "${dir}" ]]; then
+            echo "Creating ${dir}..."
+            sudo mkdir -p "${dir}"
+            sudo chown "${USER}:${USER}" "${dir}"
+            chmod 770 "${dir}"
+        fi
+    done
+    # Create processed subdirectory for inbox (holds completed job files)
+    [[ -d "${PAI_INBOX_DIR}/processed" ]] || mkdir -p "${PAI_INBOX_DIR}/processed"
+
     # If container already exists (stopped), just start it
     if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
         echo "Resuming existing session: ${CONTAINER_NAME}"
@@ -94,9 +108,9 @@ cmd_start() {
     env_file="$(_inject_secrets)"
 
     # Optional: bind-mount the imladris repo for testing (set PAI_BIND_REPO=/path/to/repo)
-    local bind_mount_flag=""
+    local extra_mounts=()
     if [[ -n "${PAI_BIND_REPO:-}" ]]; then
-        bind_mount_flag="--mount type=bind,src=${PAI_BIND_REPO},dst=${PAI_BIND_REPO},readonly"
+        extra_mounts+=(--mount "type=bind,src=${PAI_BIND_REPO},dst=${PAI_BIND_REPO},readonly")
     fi
 
     docker run -dit \
@@ -107,15 +121,18 @@ cmd_start() {
         --env-file "${env_file}" \
         --env PAI_DIR=/home/node/.claude \
         --env WINDMILL_BASE=http://windmill_server:8000 \
+        --env PAI_SESSION_NAME="${SESSION_NAME}" \
         --add-host=host.docker.internal:host-gateway \
         --mount type=volume,src=pai-config,dst=/home/node/.claude,readonly \
         --mount "type=bind,src=${PAI_MEMORY_DIR},dst=/home/node/.claude/MEMORY" \
         --mount "type=volume,src=pai-session-${SESSION_NAME},dst=/home/node/work" \
+        --mount "type=bind,src=${PAI_INBOX_DIR},dst=/pai/inbox,readonly" \
+        --mount "type=bind,src=${PAI_OUTBOX_DIR},dst=/pai/outbox" \
         --cap-drop=ALL \
         --security-opt=no-new-privileges \
         --memory=4g \
         --cpus=2 \
-        ${bind_mount_flag} \
+        "${extra_mounts[@]}" \
         "${IMAGE}"
 
     # Clean secrets after container starts (secrets injected via env-file at run time)

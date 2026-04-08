@@ -25,6 +25,8 @@ set -euo pipefail
 
 CLAUDE_DIR="${HOME}/.claude"
 PAI_MEMORY_DIR="/pai/memory"
+PAI_INBOX_DIR="/pai/inbox"
+PAI_OUTBOX_DIR="/pai/outbox"
 HELPER_IMAGE="alpine:latest"
 
 echo "=== PAI Volume Setup ==="
@@ -114,6 +116,27 @@ fi
 # Ensure node user (uid 1000) can write — relevant when containers write back
 # Host daemon runs as ec2-user so no ownership change needed for daemon reads
 
+# ── Create inbox/outbox directories (Windmill<->PAI filesystem queue) ─────
+
+echo ""
+echo "--- Inbox/Outbox Setup ---"
+
+for dir in "${PAI_INBOX_DIR}" "${PAI_OUTBOX_DIR}"; do
+    if [[ -d "${dir}" ]]; then
+        echo "  Host directory ${dir} already exists"
+    else
+        echo "Creating ${dir}..."
+        sudo mkdir -p "${dir}"
+        sudo chown "${USER}:${USER}" "${dir}"
+        chmod 770 "${dir}"
+        echo "  Created ${dir} (owned by ${USER}, mode 770)"
+    fi
+done
+
+# Processed subdirectory: inbox jobs move here after PAI reads them
+[[ -d "${PAI_INBOX_DIR}/processed" ]] || mkdir -p "${PAI_INBOX_DIR}/processed"
+echo "  ${PAI_INBOX_DIR}/processed/ ready"
+
 echo ""
 echo "=== Setup complete ==="
 echo ""
@@ -121,6 +144,12 @@ echo "Next steps:"
 echo "  1. Pull the PAI image:  docker pull ghcr.io/sethdf/imladris/pai:latest"
 echo "  2. Start a session:     scripts/pai-session start default"
 echo "  3. Attach:              scripts/pai-session attach default"
+echo ""
+echo "Directories:"
+echo "  pai-config volume  : Claude config (ro in containers)"
+echo "  ${PAI_MEMORY_DIR}  : MEMORY files (rw, EBS-backed)"
+echo "  ${PAI_INBOX_DIR}   : Windmill -> PAI job requests"
+echo "  ${PAI_OUTBOX_DIR}  : PAI -> Windmill job results"
 echo ""
 echo "  pai-sync-daemon watches: ${PAI_MEMORY_DIR}"
 echo "  To start sync daemon:    systemctl start pai-sync"

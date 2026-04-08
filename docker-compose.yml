@@ -35,6 +35,10 @@ x-worker: &worker-base
     - /home/ec2-user/.claude.json:/home/ec2-user/.claude.json:ro
     - ./scripts/native-worker-entrypoint.sh:/scripts/native-worker-entrypoint.sh:ro
     - ./knowledge:/home/ec2-user/repos/imladris/knowledge:ro
+    # Windmill<->PAI filesystem queue (Phase 1b: Docker-Modular)
+    # Workers write job requests to inbox, read results from outbox
+    - /pai/inbox:/pai/inbox
+    - /pai/outbox:/pai/outbox:ro
   depends_on:
     windmill_db:
       condition: service_healthy

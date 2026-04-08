@@ -1,0 +1,17 @@
+[Unit]
+Description=Resume PAI session containers on boot
+Documentation=file:///home/ec2-user/repos/imladris/docs-site/docs/specs/docker-modular.md
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+# Restart all PAI session containers that were running before shutdown/reboot.
+# Containers use named volumes so all state (config, memory, workspace) survives.
+ExecStart=/bin/bash -c 'docker ps -a --filter label=pai-session=true --filter status=exited --format "{{.Names}}" | xargs -r docker start'
+RemainAfterExit=yes
+# Give Docker up to 90s to start containers (pulling layers if needed)
+TimeoutStartSec=90
+
+[Install]
+WantedBy=multi-user.target

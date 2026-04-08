@@ -1,0 +1,4 @@
+# PAI container orphan reaper — prunes exited session containers older than 24h
+# Install: sudo cp pai-prune.cron /etc/cron.d/pai-prune
+# See: docs-site/docs/specs/docker-modular.md (Section 4)
+0 4 * * * root docker container prune --filter label=pai-session=true --filter until=24h --force 2>&1 | logger -t pai-prune
