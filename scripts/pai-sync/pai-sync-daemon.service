@@ -15,7 +15,7 @@ ExecStart=/home/ec2-user/.bun/bin/bun run daemon.ts
 
 Restart=always
 RestartSec=5
-WatchdogSec=60
+WatchdogSec=300
 
 # Postgres connection URL — set by Ansible from BWS, never hardcoded
 EnvironmentFile=/etc/pai-sync/env

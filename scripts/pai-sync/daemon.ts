@@ -27,7 +27,7 @@ console.log(`[pai-sync-daemon] watching ${config.watchRoot}`);
 
 // Embedding worker — processes unembedded memory_objects every 60s
 const embeddingPool = new pg.Pool({ connectionString: config.postgresUrl, max: 2 });
-const EMBEDDING_INTERVAL_MS = 60_000;
+const EMBEDDING_INTERVAL_MS = parseInt(process.env.PAI_EMBED_INTERVAL_MS ?? "60000");
 let embeddingTimer: ReturnType<typeof setInterval> | null = null;
 
 async function runEmbeddingCycle() {
