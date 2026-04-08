@@ -121,13 +121,15 @@ services:
     restart: always
     profiles: [dashboard]
     working_dir: /app
-    command: ["bun", "server.ts"]
+    command: ["sh", "-c", "bun install --frozen-lockfile 2>/dev/null; bun server.ts"]
     ports:
       - "127.0.0.1:3100:3100"
     environment:
       - WINDMILL_URL=http://windmill_server:8000
+      - POSTGRES_URL=postgresql://postgres:${WINDMILL_DB_PASSWORD}@windmill_db:5432/pai
+      - HOME=/home/bun
     volumes:
-      - ./status-dashboard:/app:ro
+      - ./status-dashboard:/app
     depends_on:
       windmill_server:
         condition: service_healthy
