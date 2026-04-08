@@ -145,6 +145,27 @@ Bun.serve({
       return json({ ok: false, error: `Unknown action: ${bulk_action}` }, 400);
     }
 
+    // ── GET /integrations — All authenticated data sources ──
+    if (url.pathname === "/integrations" && req.method === "GET") {
+      const domain = url.searchParams.get("domain") || "";
+      try {
+        const body: any = { action: "list" };
+        if (domain) body.domain_filter = domain;
+        const resp = await fetch(
+          `${WINDMILL}/api/w/${WS}/jobs/run_wait_result/p/f/infra/integration_registry`,
+          {
+            method: "POST",
+            headers: { Authorization: `Bearer ${WM_TOKEN}`, "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          }
+        );
+        if (!resp.ok) return json({ error: `Windmill error: ${resp.status}` }, 502);
+        return json(await resp.json());
+      } catch (e: any) {
+        return json({ error: e.message }, 500);
+      }
+    }
+
     // ── GET /wip — Work-In-Progress limit status ──
     if (url.pathname === "/wip" && req.method === "GET") {
       try {

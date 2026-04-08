@@ -95,6 +95,8 @@ let state = {
   mcpCalls: [], mcpTotal: 0, mcpLoading: false,
   // ai activity tab
   aiActivity: null, aiLoading: false,
+  // integrations tab
+  integrations: null, integrationsLoading: false, intDomain: '',
 };
 let autoTimer = null;
 
@@ -579,6 +581,69 @@ function renderAiTab(nodes) {
   }
 }
 
+// ── Integrations tab logic ──
+async function loadIntegrations() {
+  state.integrationsLoading = true; render();
+  try {
+    const q = state.intDomain ? `?domain=${state.intDomain}` : '';
+    const resp = await fetch(`/integrations${q}`);
+    state.integrations = await resp.json();
+  } catch (e) { state.integrations = null; }
+  state.integrationsLoading = false; render();
+}
+
+function setIntDomain(d) { state.intDomain = d; loadIntegrations(); }
+
+function statusBadge(s) {
+  if (s === 'active') return h('span', { className: 'badge b-ok' }, '\u2713 active');
+  if (s === 'configured') return h('span', { className: 'badge', style: 'background:rgba(59,130,246,.15);color:var(--blue)' }, '\u25cb configured');
+  if (s === 'placeholder') return h('span', { className: 'badge', style: 'background:rgba(107,114,128,.15);color:var(--dim)' }, '\u25cb placeholder');
+  return h('span', { className: 'badge b-fail' }, s);
+}
+
+function renderIntegrationsTab(nodes) {
+  nodes.push(h('div', { className: 'ctrl' },
+    h('div', { className: 'modes' },
+      ...['', 'work', 'personal', 'shared', 'infra'].map(d =>
+        h('button', { className: `btn ${state.intDomain === d ? 'on' : ''}`, onclick: () => setIntDomain(d) }, d || 'All')
+      )
+    ),
+    h('button', { className: 'btn', onclick: loadIntegrations, disabled: state.integrationsLoading ? 'disabled' : null },
+      state.integrationsLoading ? '\u21bb ...' : '\u21bb Refresh')
+  ));
+
+  const data = state.integrations;
+  if (!data || !data.integrations) {
+    nodes.push(h('div', { className: 'empty' }, state.integrationsLoading ? 'Loading...' : 'Click refresh to load'));
+    return;
+  }
+
+  // Summary cards
+  const s = data.summary;
+  nodes.push(h('div', { className: 'cg', style: 'margin-bottom:12px' },
+    h('div', { className: 'card' }, h('div', { className: 'cl' }, 'Total'), h('div', { className: 'cv' }, `${s.total}`)),
+    h('div', { className: 'card' }, h('div', { className: 'cl' }, 'Active'), h('div', { className: 'cv tg' }, `${s.active}`)),
+    h('div', { className: 'card' }, h('div', { className: 'cl' }, 'Configured'), h('div', { className: 'cv', style: 'color:var(--blue)' }, `${s.configured}`)),
+    h('div', { className: 'card' }, h('div', { className: 'cl' }, 'Placeholder'), h('div', { className: 'cv td' }, `${s.placeholder}`)),
+  ));
+
+  // Table
+  nodes.push(h('div', { className: 'sec' }, h('div', { className: 'sec-b' },
+    h('table', null,
+      h('thead', null, h('tr', null, h('th', null, 'Integration'), h('th', null, 'Domain'), h('th', null, 'Auth'), h('th', null, 'Status'), h('th', null, 'Notes'))),
+      h('tbody', null, ...data.integrations.map(i =>
+        h('tr', null,
+          h('td', null, i.name),
+          h('td', null, h('span', { className: `action-badge ab-${i.domain === 'work' ? 'queue' : i.domain === 'shared' ? 'notify' : 'other'}` }, i.domain)),
+          h('td', { className: 'mono td' }, i.auth_type),
+          h('td', null, statusBadge(i.status)),
+          h('td', { className: 'td', style: 'max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, i.notes || '\u2014'),
+        )
+      ))
+    )
+  )));
+}
+
 // ── Main render ──
 
 function render() {
@@ -597,6 +662,7 @@ function render() {
     h('button', { className: `tab ${state.tab === 'sessions' ? 'active' : ''}`, onclick: () => { if (state.tab !== 'sessions') { state.tab = 'sessions'; loadSessions(); } else render(); } }, 'Sessions'),
     h('button', { className: `tab ${state.tab === 'mcp' ? 'active' : ''}`, onclick: () => { if (state.tab !== 'mcp') { state.tab = 'mcp'; loadMcpCalls(); } else render(); } }, 'MCP Calls'),
     h('button', { className: `tab ${state.tab === 'ai' ? 'active' : ''}`, onclick: () => { if (state.tab !== 'ai') { state.tab = 'ai'; loadAiActivity(); } else render(); } }, 'AI Activity'),
+    h('button', { className: `tab ${state.tab === 'integrations' ? 'active' : ''}`, onclick: () => { if (state.tab !== 'integrations') { state.tab = 'integrations'; loadIntegrations(); } else render(); } }, 'Integrations'),
   ));
 
   if (state.tab === 'status') renderStatusTab(nodes);
@@ -604,6 +670,7 @@ function render() {
   else if (state.tab === 'sessions') renderSessionsTab(nodes);
   else if (state.tab === 'mcp') renderMcpTab(nodes);
   else if (state.tab === 'ai') renderAiTab(nodes);
+  else if (state.tab === 'integrations') renderIntegrationsTab(nodes);
 
   app.replaceChildren(...nodes.filter(Boolean));
 }
