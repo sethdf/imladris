@@ -5313,3 +5313,36 @@ This is why the graph is in Phase 2 (not Phase 3) — it's not an advanced featu
 
 **PAI writes to the filesystem. The daemon pushes to Postgres. Postgres is where nothing is ever lost. New capabilities read from Postgres. The circle is complete and PAI never knows it exists.**
 
+---
+
+## Integration Gap Supplements
+
+When Windmill's built-in integrations don't cover a service, the following supplements fit the existing TypeScript/Windmill stack without adding new platforms or infrastructure:
+
+### 1. Activepieces Pieces (MIT)
+
+Import individual `@activepieces/*` npm packages directly into Windmill TypeScript scripts for services Windmill doesn't cover. No new platform — just `import` the connector you need in a Windmill script. This gets you 280-500+ service integrations (CRMs, marketing tools, project management, payment processors, etc.) without replacing anything in the stack.
+
+```typescript
+// Example: use Activepieces' HubSpot piece in a Windmill script
+import { hubspot } from "@activepieces/piece-hubspot";
+```
+
+### 2. Windmill Custom Resource Types
+
+Windmill lets you define custom resource types for any API. For services with simple API key or bearer token auth, create the resource type in Windmill and write the script. No framework needed — the credential is stored in Windmill's vault (synced from BWS via `sync-credentials.sh`) and injected at runtime.
+
+### 3. Grant (MIT) — OAuth Helper
+
+If you hit an OAuth service Windmill doesn't natively support, drop [Grant](https://github.com/simov/grant) into a Windmill script to handle the OAuth dance, store the tokens as a Windmill resource, and refresh on a schedule. Lightweight, no new infrastructure — follows the same pattern as `refresh_sdp_token.ts` and `refresh_site24x7_token.ts`.
+
+### When to use what
+
+| Situation | Approach |
+|-----------|----------|
+| Service has a simple API key | Windmill custom resource type + script |
+| Service needs OAuth 2.0 that Windmill supports | Windmill native OAuth resource |
+| Service needs OAuth 2.0 that Windmill doesn't support | Grant in a Windmill script + scheduled token refresh |
+| Service has a complex API you don't want to hand-code | `@activepieces/*` npm package in a Windmill script |
+| Service needs webhook ingestion | Windmill HTTP trigger (native) |
+
