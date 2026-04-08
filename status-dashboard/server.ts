@@ -145,6 +145,24 @@ Bun.serve({
       return json({ ok: false, error: `Unknown action: ${bulk_action}` }, 400);
     }
 
+    // ── GET /wip — Work-In-Progress limit status ──
+    if (url.pathname === "/wip" && req.method === "GET") {
+      try {
+        const resp = await fetch(
+          `${WINDMILL}/api/w/${WS}/jobs/run_wait_result/p/f/core/wip_gate`,
+          {
+            method: "POST",
+            headers: { Authorization: `Bearer ${WM_TOKEN}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "status" }),
+          }
+        );
+        if (!resp.ok) return json({ error: `Windmill error: ${resp.status}` }, 502);
+        return json(await resp.json());
+      } catch (e: any) {
+        return json({ error: e.message }, 500);
+      }
+    }
+
     // ── GET /sessions — recent discussions/sessions ──
     if (url.pathname === "/sessions" && req.method === "GET") {
       const limit = Math.min(parseInt(url.searchParams.get("limit") || "20"), 100);
