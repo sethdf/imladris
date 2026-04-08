@@ -1,6 +1,6 @@
 summary: 'Create or update a read-only investigation script at runtime'
 description: 'Meta-tool: accepts name, description, and code to deploy a new Bun/TypeScript investigation script to f/investigate/ via Windmill API. Safety: rejects code with write operations.'
-lock: '!inline f/imladris/build_investigation_tool.script.lock'
+lock: '!inline f/infra/build_investigation_tool.script.lock'
 kind: script
 schema:
   $schema: https://json-schema.org/draft/2020-12/schema

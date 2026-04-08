@@ -1,6 +1,6 @@
 summary: ''
 description: ''
-lock: '!inline f/imladris/monitor_worker_health.script.lock'
+lock: '!inline f/infra/monitor_worker_health.script.lock'
 kind: script
 schema:
   $schema: https://json-schema.org/draft/2020-12/schema

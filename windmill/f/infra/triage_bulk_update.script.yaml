@@ -1,7 +1,7 @@
 summary: Triage bulk update — investigate or create tickets for selected items
 description: Triggers investigation pipeline or SDP ticket creation for
   bulk-selected triage items from the status dashboard GUI
-lock: '!inline f/imladris/triage_bulk_update.script.lock'
+lock: '!inline f/infra/triage_bulk_update.script.lock'
 kind: script
 schema:
   $schema: https://json-schema.org/draft/2020-12/schema
