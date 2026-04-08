@@ -3,10 +3,22 @@
 // All secrets come from environment variables set by Ansible
 // ============================================================
 
+const HOME = process.env.HOME ?? "/home/ec2-user";
+
 export const config = {
   // Watch root: ~/.claude/MEMORY on host (pre-Docker-Modular)
   // Changes to /pai/memory after Docker-Modular ships (v2.4.0+)
-  watchRoot: process.env.PAI_SYNC_WATCH_ROOT ?? `${process.env.HOME ?? "/home/ec2-user"}/.claude/MEMORY`,
+  watchRoot: process.env.PAI_SYNC_WATCH_ROOT ?? `${HOME}/.claude/MEMORY`,
+
+  // PAI methodology root: ~/.claude/PAI/ — synced to pai_system table
+  // Includes Algorithm, steering rules, principles, system architecture
+  paiRoot: process.env.PAI_SYNC_PAI_ROOT ?? `${HOME}/.claude/PAI`,
+
+  // Agent personas: ~/.claude/skills/Agents/ — synced to pai_system table
+  agentsRoot: process.env.PAI_SYNC_AGENTS_ROOT ?? `${HOME}/.claude/skills/Agents`,
+
+  // TELOS: ~/.claude/PAI/USER/TELOS/ — synced to pai_system table
+  telosRoot: process.env.PAI_SYNC_TELOS_ROOT ?? `${HOME}/.claude/PAI/USER/TELOS`,
 
   // Postgres connection URL — set by Ansible from BWS, written to /etc/pai-sync/env
   postgresUrl: process.env.POSTGRES_URL ?? "",

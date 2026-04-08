@@ -8,6 +8,7 @@
 import { config, validateConfig } from "./config.ts";
 import { SyncEngine } from "./SyncEngine.ts";
 import { processUnembedded } from "./embeddings.ts";
+import { syncPaiSystem } from "./pai-system-sync.ts";
 import pg from "pg";
 
 // Validate config before starting
@@ -41,9 +42,31 @@ async function runEmbeddingCycle() {
   }
 }
 
-// Start embedding worker after a 30s delay (let initial sync settle)
+// PAI system sync — keeps methodology in Postgres in sync with filesystem
+// Runs every 5 minutes (methodology changes infrequently)
+const PAI_SYSTEM_INTERVAL_MS = 300_000;
+let paiSystemTimer: ReturnType<typeof setInterval> | null = null;
+
+async function runPaiSystemSync() {
+  try {
+    const result = await syncPaiSystem(embeddingPool);
+    if (result.synced > 0 || result.errors > 0) {
+      console.log(`[pai-system] synced=${result.synced} skipped=${result.skipped} errors=${result.errors} components=[${result.components.join(",")}]`);
+    }
+  } catch (err) {
+    console.error(`[pai-system] sync error: ${err}`);
+  }
+}
+
+// Start both workers after a 30s delay (let initial sync settle)
 setTimeout(() => {
-  runEmbeddingCycle(); // first run
+  // PAI system sync — first run immediately, then every 5 min
+  runPaiSystemSync();
+  paiSystemTimer = setInterval(runPaiSystemSync, PAI_SYSTEM_INTERVAL_MS);
+  console.log(`[pai-system] sync started (every ${PAI_SYSTEM_INTERVAL_MS / 1000}s)`);
+
+  // Embedding worker
+  runEmbeddingCycle();
   embeddingTimer = setInterval(runEmbeddingCycle, EMBEDDING_INTERVAL_MS);
   console.log(`[embeddings] worker started (every ${EMBEDDING_INTERVAL_MS / 1000}s)`);
 }, 30_000);
@@ -65,6 +88,7 @@ process.on("SIGTERM", async () => {
   console.log("[pai-sync-daemon] SIGTERM received, flushing...");
   if (watchdogInterval) clearInterval(watchdogInterval);
   if (embeddingTimer) clearInterval(embeddingTimer);
+  if (paiSystemTimer) clearInterval(paiSystemTimer);
   await embeddingPool.end();
   await engine.close();
   process.exit(0);
@@ -72,6 +96,7 @@ process.on("SIGTERM", async () => {
 process.on("SIGINT", async () => {
   if (watchdogInterval) clearInterval(watchdogInterval);
   if (embeddingTimer) clearInterval(embeddingTimer);
+  if (paiSystemTimer) clearInterval(paiSystemTimer);
   await embeddingPool.end();
   await engine.close();
   process.exit(0);
