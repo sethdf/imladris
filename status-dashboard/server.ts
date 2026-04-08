@@ -2,14 +2,30 @@
 // Proxies API calls to Windmill on localhost:8000
 // Auth injected server-side so browser needs no token
 // Triage endpoints query SQLite directly (DB is on host, not in Docker workers)
+// Session/MCP/AI activity endpoints query Postgres + MCP log + Windmill API
 
 import { Database } from "bun:sqlite";
+import { readFileSync, existsSync, readdirSync, statSync } from "fs";
+import { join } from "path";
+import pg from "pg";
 
 const WINDMILL = process.env.WINDMILL_URL || "http://127.0.0.1:8000";
 const WM_TOKEN = "nPrsox6CPhsQuRBrCUSj2p9BmxgRMdpS";
 const WS = "imladris";
 const PORT = 3100;
 const TRIAGE_DB = "/local/cache/triage/index.db";
+const HOME = process.env.HOME || "/home/ec2-user";
+const MCP_LOG = `${HOME}/.claude/logs/mcp-calls.jsonl`;
+const MEMORY_WORK = `${HOME}/.claude/MEMORY/WORK`;
+const POSTGRES_URL = process.env.POSTGRES_URL || "";
+
+// Postgres pool for session/AI activity queries (lazy init)
+let pgPool: pg.Pool | null = null;
+function getPg(): pg.Pool | null {
+  if (!POSTGRES_URL) return null;
+  if (!pgPool) pgPool = new pg.Pool({ connectionString: POSTGRES_URL, max: 2 });
+  return pgPool;
+}
 
 const HTML = await Bun.file(import.meta.dir + "/index.html").text();
 
@@ -127,6 +143,118 @@ Bun.serve({
       }
 
       return json({ ok: false, error: `Unknown action: ${bulk_action}` }, 400);
+    }
+
+    // ── GET /sessions — recent discussions/sessions ──
+    if (url.pathname === "/sessions" && req.method === "GET") {
+      const limit = Math.min(parseInt(url.searchParams.get("limit") || "20"), 100);
+      try {
+        // Read WORK directories (each is a session with a PRD)
+        const dirs = readdirSync(MEMORY_WORK)
+          .filter(d => statSync(join(MEMORY_WORK, d)).isDirectory())
+          .sort().reverse()
+          .slice(0, limit);
+
+        const sessions = dirs.map(d => {
+          const prdPath = join(MEMORY_WORK, d, "PRD.md");
+          let title = d;
+          let phase = "unknown";
+          let effort = "unknown";
+          if (existsSync(prdPath)) {
+            const content = readFileSync(prdPath, "utf8").slice(0, 500);
+            const taskMatch = content.match(/^task:\s*(.+)$/m);
+            const phaseMatch = content.match(/^phase:\s*(.+)$/m);
+            const effortMatch = content.match(/^effort:\s*(.+)$/m);
+            if (taskMatch) title = taskMatch[1].trim();
+            if (phaseMatch) phase = phaseMatch[1].trim();
+            if (effortMatch) effort = effortMatch[1].trim();
+          }
+          const dateMatch = d.match(/^(\d{8})/);
+          const date = dateMatch ? `${dateMatch[1].slice(0,4)}-${dateMatch[1].slice(4,6)}-${dateMatch[1].slice(6,8)}` : d;
+          return { slug: d, title, phase, effort, date };
+        });
+
+        return json({ sessions, total: dirs.length });
+      } catch (e: any) {
+        return json({ sessions: [], error: e.message }, 500);
+      }
+    }
+
+    // ── GET /mcp-calls — MCP tool call audit log ──
+    if (url.pathname === "/mcp-calls" && req.method === "GET") {
+      const limit = Math.min(parseInt(url.searchParams.get("limit") || "50"), 500);
+      const session = url.searchParams.get("session") || "";
+      try {
+        if (!existsSync(MCP_LOG)) return json({ calls: [], total: 0 });
+        const lines = readFileSync(MCP_LOG, "utf8").trim().split("\n").filter(Boolean);
+        let calls = lines.map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+        if (session) calls = calls.filter((c: any) => c.session_id?.includes(session));
+        calls.reverse(); // newest first
+        const total = calls.length;
+        calls = calls.slice(0, limit);
+        return json({ calls, total });
+      } catch (e: any) {
+        return json({ calls: [], error: e.message }, 500);
+      }
+    }
+
+    // ── GET /ai-activity — Windmill job history + Postgres AI stats ──
+    if (url.pathname === "/ai-activity" && req.method === "GET") {
+      const hours = parseInt(url.searchParams.get("hours") || "24");
+      try {
+        // Windmill job history
+        const jobResp = await fetch(
+          `${WINDMILL}/api/w/${WS}/jobs/completed/list?per_page=50&order_desc=true`,
+          { headers: { Authorization: `Bearer ${WM_TOKEN}` } }
+        );
+        const jobs = jobResp.ok ? await jobResp.json() : [];
+
+        // Postgres stats (if available)
+        let pgStats: any = null;
+        const pool = getPg();
+        if (pool) {
+          try {
+            const { rows } = await pool.query(`
+              SELECT
+                (SELECT count(*) FROM core.memory_objects WHERE NOT deleted) as total_objects,
+                (SELECT count(*) FROM core.memory_vectors) as total_embeddings,
+                (SELECT count(*) FROM core.memory_lines) as total_lines,
+                (SELECT count(*) FROM core.pai_system) as pai_components,
+                (SELECT count(*) FROM palantir.tool_calls) as palantir_calls
+            `);
+            pgStats = rows[0];
+          } catch { /* palantir schema may not exist yet */ }
+        }
+
+        // MCP call summary
+        let mcpSummary: Record<string, number> = {};
+        if (existsSync(MCP_LOG)) {
+          const cutoff = new Date(Date.now() - hours * 3600000).toISOString();
+          const lines = readFileSync(MCP_LOG, "utf8").trim().split("\n").filter(Boolean);
+          for (const line of lines) {
+            try {
+              const entry = JSON.parse(line);
+              if (entry.timestamp >= cutoff && entry.tool_name) {
+                mcpSummary[entry.tool_name] = (mcpSummary[entry.tool_name] || 0) + 1;
+              }
+            } catch {}
+          }
+        }
+
+        return json({
+          windmill_jobs: (jobs as any[]).slice(0, 20).map((j: any) => ({
+            script: j.script_path,
+            started: j.created_at,
+            duration_ms: j.duration_ms,
+            success: j.success,
+          })),
+          mcp_calls_by_tool: mcpSummary,
+          postgres: pgStats,
+          period_hours: hours,
+        });
+      } catch (e: any) {
+        return json({ error: e.message }, 500);
+      }
     }
 
     // ── Proxy API calls to Windmill with server-side auth ──
