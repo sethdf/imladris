@@ -1,0 +1,19 @@
+{
+  "name": "palantir-mcp",
+  "version": "1.0.0",
+  "description": "Palantir MCP Gateway — PAI knowledge server for Claude Code agents",
+  "type": "module",
+  "scripts": {
+    "start": "bun run server.ts",
+    "setup-db": "bun run setup-db.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "pg": "^8.20.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.10",
+    "bun-types": "latest"
+  }
+}
