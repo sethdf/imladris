@@ -1,0 +1,9 @@
+path: f/core/sync_triage_to_postgres_schedule
+summary: Sync finalized triage records from SQLite to Postgres (every 15 min)
+schedule: '0 */15 * * * *'
+script_path: f/core/sync_triage_to_postgres
+is_flow: false
+args: {}
+timezone: America/Denver
+enabled: true
+ws_error_handler_muted: false

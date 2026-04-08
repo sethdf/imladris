@@ -1,0 +1,11 @@
+path: f/core/entity_triage_integration_schedule
+summary: Tag untagged triage results with extracted entities (every 30 min)
+schedule: '0 */30 * * * *'
+script_path: f/core/entity_triage_integration
+is_flow: false
+args:
+  action: tag
+  limit: 500
+timezone: America/Denver
+enabled: true
+ws_error_handler_muted: false
