@@ -89,6 +89,12 @@ let state = {
   // triage tab
   triageItems: [], triageTotal: 0, triageLoading: false, triageError: null,
   triageFilter: 'all', triageSelected: new Set(), triageBulking: false,
+  // sessions tab
+  sessions: [], sessionsLoading: false,
+  // mcp calls tab
+  mcpCalls: [], mcpTotal: 0, mcpLoading: false,
+  // ai activity tab
+  aiActivity: null, aiLoading: false,
 };
 let autoTimer = null;
 
@@ -437,17 +443,140 @@ function renderTriageTab(nodes) {
   nodes.push(tbl);
 }
 
-function renderAiTab(nodes) {
-  nodes.push(h('div', { className: 'stub-card' },
-    h('div', { className: 'stub-title' }, 'AI Execution Visibility'),
-    h('div', { className: 'stub-desc' },
-      'Shows hooks fired, algorithm phases, guardrails triggered, and reasoning flow for each PAI session — so you can verify the algorithm is being followed.'
-    ),
-    h('div', { className: 'stub-desc' },
-      'Requires structured session log storage in Postgres (Apache AGE + pgvector). Currently logs are ephemeral.'
-    ),
-    h('span', { className: 'stub-tag' }, 'Phase 2a — Postgres backend required')
+// ── Sessions tab logic ──
+async function loadSessions() {
+  state.sessionsLoading = true; render();
+  try {
+    const resp = await fetch('/sessions?limit=30');
+    const data = await resp.json();
+    state.sessions = data.sessions || [];
+  } catch (e) { state.sessions = []; }
+  state.sessionsLoading = false; render();
+}
+
+function renderSessionsTab(nodes) {
+  nodes.push(h('div', { className: 'ctrl' },
+    h('button', { className: 'btn', onclick: loadSessions, disabled: state.sessionsLoading ? 'disabled' : null },
+      state.sessionsLoading ? '\u21bb ...' : '\u21bb Refresh')
   ));
+  if (state.sessions.length === 0) {
+    nodes.push(h('div', { className: 'empty' }, state.sessionsLoading ? 'Loading...' : 'No sessions found'));
+    return;
+  }
+  nodes.push(h('div', { className: 'sec' }, h('div', { className: 'sec-b' },
+    h('table', null,
+      h('thead', null, h('tr', null, h('th', null, 'Date'), h('th', null, 'Title'), h('th', null, 'Phase'), h('th', null, 'Effort'))),
+      h('tbody', null, ...state.sessions.map(s =>
+        h('tr', null,
+          h('td', { className: 'td' }, s.date),
+          h('td', null, s.title),
+          h('td', null, h('span', { className: `badge ${s.phase === 'complete' ? 'b-ok' : 'b-fail'}` }, s.phase)),
+          h('td', { className: 'td' }, s.effort)
+        )
+      ))
+    )
+  )));
+}
+
+// ── MCP Calls tab logic ──
+async function loadMcpCalls() {
+  state.mcpLoading = true; render();
+  try {
+    const resp = await fetch('/mcp-calls?limit=100');
+    const data = await resp.json();
+    state.mcpCalls = data.calls || [];
+    state.mcpTotal = data.total || 0;
+  } catch (e) { state.mcpCalls = []; }
+  state.mcpLoading = false; render();
+}
+
+function renderMcpTab(nodes) {
+  nodes.push(h('div', { className: 'ctrl' },
+    h('span', { className: 'td' }, state.mcpTotal > 0 ? `${state.mcpTotal} total calls` : ''),
+    h('button', { className: 'btn', onclick: loadMcpCalls, disabled: state.mcpLoading ? 'disabled' : null },
+      state.mcpLoading ? '\u21bb ...' : '\u21bb Refresh')
+  ));
+  if (state.mcpCalls.length === 0) {
+    nodes.push(h('div', { className: 'empty' }, state.mcpLoading ? 'Loading...' : 'No MCP calls recorded'));
+    return;
+  }
+  nodes.push(h('div', { className: 'sec' }, h('div', { className: 'sec-b' },
+    h('table', null,
+      h('thead', null, h('tr', null, h('th', null, 'Time'), h('th', null, 'Tool'), h('th', null, 'Direction'), h('th', null, 'Session'))),
+      h('tbody', null, ...state.mcpCalls.slice(0, 50).map(c =>
+        h('tr', null,
+          h('td', { className: 'td' }, c.timestamp ? new Date(c.timestamp).toLocaleString() : '\u2014'),
+          h('td', { className: 'mono' }, (c.tool_name || '').replace('mcp__', '')),
+          h('td', null, h('span', { className: `badge ${c.direction === 'pre' ? 'b-ok' : 'b-fail'}` }, c.direction || '?')),
+          h('td', { className: 'td mono' }, (c.session_id || '').slice(0, 8))
+        )
+      ))
+    )
+  )));
+}
+
+// ── AI Activity tab logic ──
+async function loadAiActivity() {
+  state.aiLoading = true; render();
+  try {
+    const resp = await fetch('/ai-activity?hours=24');
+    state.aiActivity = await resp.json();
+  } catch (e) { state.aiActivity = null; }
+  state.aiLoading = false; render();
+}
+
+function renderAiTab(nodes) {
+  nodes.push(h('div', { className: 'ctrl' },
+    h('button', { className: 'btn', onclick: loadAiActivity, disabled: state.aiLoading ? 'disabled' : null },
+      state.aiLoading ? '\u21bb ...' : '\u21bb Refresh')
+  ));
+
+  const a = state.aiActivity;
+  if (!a) {
+    nodes.push(h('div', { className: 'empty' }, state.aiLoading ? 'Loading...' : 'Click refresh to load'));
+    return;
+  }
+
+  // Postgres stats cards
+  if (a.postgres) {
+    nodes.push(section('pg', 'Postgres (PAI Knowledge Store)', h('div', { className: 'cg' },
+      h('div', { className: 'card' }, h('div', { className: 'cl' }, 'Memory Objects'), h('div', { className: 'cv' }, `${a.postgres.total_objects}`)),
+      h('div', { className: 'card' }, h('div', { className: 'cl' }, 'Embeddings'), h('div', { className: 'cv' }, `${a.postgres.total_embeddings}`)),
+      h('div', { className: 'card' }, h('div', { className: 'cl' }, 'JSONL Lines'), h('div', { className: 'cv' }, `${a.postgres.total_lines}`)),
+      h('div', { className: 'card' }, h('div', { className: 'cl' }, 'PAI Components'), h('div', { className: 'cv' }, `${a.postgres.pai_components}`)),
+      h('div', { className: 'card' }, h('div', { className: 'cl' }, 'Palant\u00edr Calls'), h('div', { className: 'cv' }, `${a.postgres.palantir_calls}`)),
+    )));
+  }
+
+  // MCP calls by tool
+  const mcpTools = Object.entries(a.mcp_calls_by_tool || {}).sort((a, b) => (b[1] as number) - (a[1] as number));
+  if (mcpTools.length > 0) {
+    nodes.push(section('mcp-summary', `MCP Calls (last ${a.period_hours}h)`,
+      h('table', null,
+        h('thead', null, h('tr', null, h('th', null, 'Tool'), h('th', null, 'Calls'))),
+        h('tbody', null, ...mcpTools.map(([tool, count]) =>
+          h('tr', null, h('td', { className: 'mono' }, tool.replace('mcp__', '')), h('td', null, `${count}`))
+        ))
+      )
+    ));
+  }
+
+  // Recent Windmill jobs
+  if (a.windmill_jobs?.length) {
+    nodes.push(section('wm-jobs', 'Recent Windmill Jobs',
+      h('table', null,
+        h('thead', null, h('tr', null, h('th', null, 'Script'), h('th', null, 'Time'), h('th', null, 'Duration'), h('th', null, 'Status'))),
+        h('tbody', null, ...a.windmill_jobs.map(j =>
+          h('tr', null,
+            h('td', { className: 'mono' }, (j.script || '').replace('f/', '')),
+            h('td', { className: 'td' }, j.started ? new Date(j.started).toLocaleString() : '\u2014'),
+            h('td', { className: 'td' }, j.duration_ms != null ? `${j.duration_ms}ms` : '\u2014'),
+            h('td', null, badge(j.success, j.success ? 'ok' : 'fail'))
+          )
+        ))
+      )
+    ));
+  }
 }
 
 // ── Main render ──
@@ -465,11 +594,15 @@ function render() {
   nodes.push(h('div', { className: 'tabs' },
     h('button', { className: `tab ${state.tab === 'status' ? 'active' : ''}`, onclick: () => { state.tab = 'status'; render(); } }, 'Status'),
     h('button', { className: `tab ${state.tab === 'triage' ? 'active' : ''}`, onclick: () => { if (state.tab !== 'triage') { state.tab = 'triage'; loadTriage(); } else render(); } }, 'Triage'),
-    h('button', { className: `tab ${state.tab === 'ai' ? 'active' : ''}`, onclick: () => { state.tab = 'ai'; render(); } }, 'AI Runs'),
+    h('button', { className: `tab ${state.tab === 'sessions' ? 'active' : ''}`, onclick: () => { if (state.tab !== 'sessions') { state.tab = 'sessions'; loadSessions(); } else render(); } }, 'Sessions'),
+    h('button', { className: `tab ${state.tab === 'mcp' ? 'active' : ''}`, onclick: () => { if (state.tab !== 'mcp') { state.tab = 'mcp'; loadMcpCalls(); } else render(); } }, 'MCP Calls'),
+    h('button', { className: `tab ${state.tab === 'ai' ? 'active' : ''}`, onclick: () => { if (state.tab !== 'ai') { state.tab = 'ai'; loadAiActivity(); } else render(); } }, 'AI Activity'),
   ));
 
   if (state.tab === 'status') renderStatusTab(nodes);
   else if (state.tab === 'triage') renderTriageTab(nodes);
+  else if (state.tab === 'sessions') renderSessionsTab(nodes);
+  else if (state.tab === 'mcp') renderMcpTab(nodes);
   else if (state.tab === 'ai') renderAiTab(nodes);
 
   app.replaceChildren(...nodes.filter(Boolean));
