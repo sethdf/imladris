@@ -1,0 +1,78 @@
+# LiteLLM Proxy Configuration
+# All LLM API calls route through this proxy for:
+#   - Full request/response logging to Postgres (lossless transcripts)
+#   - Cost tracking across all providers
+#   - Unified API key management
+#   - Rate limiting and caching
+#   - Provider failover
+#
+# Endpoints:
+#   POST http://localhost:4000/v1/chat/completions  (OpenAI-compatible)
+#   POST http://localhost:4000/v1/embeddings         (OpenAI-compatible)
+#
+# All models accessible via the same endpoint, just change the model name.
+
+model_list:
+  # ── AWS Bedrock (Claude) ──
+  - model_name: claude-opus
+    litellm_params:
+      model: bedrock/us.anthropic.claude-opus-4-6-v1
+      aws_region_name: us-east-1
+
+  - model_name: claude-sonnet
+    litellm_params:
+      model: bedrock/us.anthropic.claude-sonnet-4-6-v1
+      aws_region_name: us-east-1
+
+  - model_name: claude-haiku
+    litellm_params:
+      model: bedrock/anthropic.claude-haiku-4-5-20251001-v1:0
+      aws_region_name: us-east-1
+
+  # ── AWS Bedrock (Titan Embeddings) ──
+  - model_name: titan-embed
+    litellm_params:
+      model: bedrock/amazon.titan-embed-text-v2:0
+      aws_region_name: us-east-1
+
+  # ── Google Gemini (free API) ──
+  - model_name: gemini-flash
+    litellm_params:
+      model: gemini/gemini-2.0-flash
+      api_key: os.environ/GEMINI_API_KEY
+
+  - model_name: gemini-pro
+    litellm_params:
+      model: gemini/gemini-2.5-pro
+      api_key: os.environ/GEMINI_API_KEY
+
+  # ── OpenAI (if configured) ──
+  - model_name: gpt-4o
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: gpt-4o-mini
+    litellm_params:
+      model: openai/gpt-4o-mini
+      api_key: os.environ/OPENAI_API_KEY
+
+# ── Logging ──
+# Log all requests/responses to Postgres for lossless conversation capture
+general_settings:
+  store_model_in_db: true
+
+litellm_settings:
+  # Log full request + response to Postgres
+  success_callback: ["postgres"]
+  failure_callback: ["postgres"]
+
+  # Cache settings (optional — reduces duplicate API calls)
+  cache: false
+
+  # Cost tracking
+  max_budget: 100.0          # monthly budget cap ($)
+  budget_duration: "30d"
+
+  # Drop unnecessary params to avoid provider-specific errors
+  drop_params: true

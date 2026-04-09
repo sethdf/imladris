@@ -9,6 +9,7 @@ import { config, validateConfig } from "./config.ts";
 import { SyncEngine } from "./SyncEngine.ts";
 import { processUnembedded } from "./embeddings.ts";
 import { syncPaiSystem } from "./pai-system-sync.ts";
+import { existsSync } from "fs";
 import pg from "pg";
 
 // Validate config before starting
@@ -104,6 +105,12 @@ process.on("SIGINT", async () => {
 
 // Spawn inotifywait in monitor mode
 // -r = recursive, -m = monitor (continuous), -e = events, --format = line format
+// Watches MEMORY/ + projects/ (conversation transcripts) + any extra paths
+const watchPaths = [config.watchRoot, ...config.extraWatchPaths].filter(p => {
+  try { return existsSync(p); } catch { return false; }
+});
+console.log(`[pai-sync-daemon] watching ${watchPaths.length} paths: ${watchPaths.join(", ")}`);
+
 const inotify = Bun.spawn(
   [
     "inotifywait",
@@ -115,7 +122,7 @@ const inotify = Bun.spawn(
     "-e", "delete",
     "--format", "%w%f %e",
     "--quiet",
-    config.watchRoot,
+    ...watchPaths,
   ],
   {
     stdout: "pipe",

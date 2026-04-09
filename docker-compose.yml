@@ -113,6 +113,28 @@ services:
     ports:
       - "127.0.0.1:3001:3001"
 
+  # ── LiteLLM Proxy — unified LLM gateway with full logging ───────────────
+  # All LLM calls (Bedrock, OpenAI, Gemini) route through this proxy.
+  # Captures full request/response for lossless conversation history.
+  # Start with: docker compose --profile proxy up -d
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    restart: always
+    profiles: [proxy]
+    ports:
+      - "127.0.0.1:4000:4000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:${WINDMILL_DB_PASSWORD}@windmill_db:5432/pai
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-imladris-litellm}
+      - AWS_REGION_NAME=us-east-1
+    volumes:
+      - ./litellm-config.yaml:/app/config.yaml:ro
+    command: ["--config", "/app/config.yaml", "--port", "4000", "--detailed_debug"]
+    depends_on:
+      windmill_db:
+        condition: service_healthy
+
   # ── Dashboard profile ──────────────────────────────────────────────────────
   # Start with: docker compose --profile dashboard up -d
 

@@ -10,6 +10,10 @@ export const config = {
   // Changes to /pai/memory after Docker-Modular ships (v2.4.0+)
   watchRoot: process.env.PAI_SYNC_WATCH_ROOT ?? `${HOME}/.claude/MEMORY`,
 
+  // Additional watch paths — synced to memory_objects alongside MEMORY/
+  // Conversation transcripts live here (2,770 .jsonl files, 662MB)
+  extraWatchPaths: (process.env.PAI_SYNC_EXTRA_WATCH ?? `${HOME}/.claude/projects`).split(",").filter(Boolean),
+
   // PAI methodology root: ~/.claude/PAI/ — synced to pai_system table
   // Includes Algorithm, steering rules, principles, system architecture
   paiRoot: process.env.PAI_SYNC_PAI_ROOT ?? `${HOME}/.claude/PAI`,
