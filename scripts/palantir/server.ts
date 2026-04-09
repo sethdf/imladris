@@ -810,6 +810,259 @@ server.tool(
   },
 );
 
+// ══════════════════════════════════════════════════════════════════
+// SESSION LIFECYCLE — session_start / session_end
+// Simulates PAI hooks for non-Claude-Code clients
+// ══════════════════════════════════════════════════════════════════
+
+server.tool(
+  "session_start",
+  "Start a PAI session. Call this first — returns full context (methodology + relevant learnings). Required before any other tools.",
+  {
+    task_description: z.string().describe("What you're about to work on"),
+    model_name: z.string().optional().describe("Model identifier (e.g. gemini-2.0-flash)"),
+    context_level: z.string().optional().describe("minimal, standard, or full"),
+  },
+  async (args) => {
+    const sid = args._meta?.sessionId || `session-${Date.now()}`;
+    const level = args.context_level || "standard";
+    try {
+      // Record session start
+      await pool.query(`
+        INSERT INTO core.sessions (session_id, machine_id, task_title, started_at, metadata)
+        VALUES ($1, $2, $3, NOW(), $4)
+        ON CONFLICT (session_id) DO UPDATE SET task_title = $3, metadata = $4
+      `, [sid, args.model_name || "unknown", args.task_description, JSON.stringify({ model: args.model_name, level })]);
+
+      // Mark session as context-loaded
+      await pool.query(`
+        INSERT INTO palantir.session_state (session_id, context_loaded, started_at)
+        VALUES ($1, TRUE, NOW())
+        ON CONFLICT (session_id) DO UPDATE SET context_loaded = TRUE
+      `, [sid]);
+
+      // Assemble full context (same as get_context but with session logging)
+      const { rows } = await pool.query(`SELECT core.assemble_context($1, $2) as ctx`, [args.task_description, level]);
+      const context = rows[0]?.ctx || {};
+
+      await logToolCall(sid, "session_start", { task_description: args.task_description, model: args.model_name });
+
+      return {
+        content: [{
+          type: "text" as const,
+          text: JSON.stringify({
+            session_id: sid,
+            status: "started",
+            context_level: level,
+            ...context,
+            message: "Session started. Follow the methodology above. Call session_end when done.",
+          }, null, 2),
+        }],
+      };
+    } catch (err: any) {
+      return { content: [{ type: "text" as const, text: JSON.stringify({ error: err.message }) }] };
+    }
+  },
+);
+
+server.tool(
+  "session_end",
+  "End a PAI session. Captures summary and any final learnings. Call this when work is complete.",
+  {
+    summary: z.string().describe("Brief summary of what was accomplished"),
+    learnings: z.array(z.string()).optional().describe("Non-obvious things discovered during this session"),
+    outcome: z.string().optional().describe("success, partial, blocked, or failed"),
+  },
+  async (args) => {
+    const sid = args._meta?.sessionId || "unknown";
+    try {
+      // Update session end time
+      await pool.query(`
+        UPDATE core.sessions SET ended_at = NOW(), metadata = metadata || $2
+        WHERE session_id = $1
+      `, [sid, JSON.stringify({ outcome: args.outcome || "success", summary: args.summary })]);
+
+      // Auto-record any learnings provided
+      let learningsRecorded = 0;
+      if (args.learnings?.length) {
+        for (const learning of args.learnings) {
+          const key = `learning/SESSION/${new Date().toISOString().slice(0, 10)}/${Date.now()}`;
+          await pool.query(`
+            INSERT INTO core.memory_objects (key, content, content_hash, metadata, source, created_at, updated_at)
+            VALUES ($1, $2, encode(sha256($2::bytea), 'hex'), $3, 'session_end', NOW(), NOW())
+          `, [key, learning, JSON.stringify({
+            domain: "SESSION",
+            confidence: "medium",
+            source_model: "session_end",
+            origin: "session_lifecycle",
+            session_id: sid,
+          })]);
+          learningsRecorded++;
+        }
+      }
+
+      await logToolCall(sid, "session_end", { summary: args.summary, outcome: args.outcome, learnings_count: learningsRecorded });
+
+      return {
+        content: [{
+          type: "text" as const,
+          text: JSON.stringify({
+            session_id: sid,
+            status: "ended",
+            summary: args.summary,
+            outcome: args.outcome || "success",
+            learnings_recorded: learningsRecorded,
+          }, null, 2),
+        }],
+      };
+    } catch (err: any) {
+      return { content: [{ type: "text" as const, text: JSON.stringify({ error: err.message }) }] };
+    }
+  },
+);
+
+// ══════════════════════════════════════════════════════════════════
+// WINDMILL TOOL PROXY — auto-discover and register all Windmill scripts
+// Any MCP client gets access to the full 116-script tool palette
+// ══════════════════════════════════════════════════════════════════
+
+const WINDMILL_BASE = process.env.WINDMILL_BASE || "http://localhost:8000";
+const WINDMILL_TOKEN = process.env.WINDMILL_TOKEN || "";
+const WINDMILL_WORKSPACE = process.env.WINDMILL_WORKSPACE || "imladris";
+
+async function runWindmillScript(path: string, args: Record<string, any>): Promise<any> {
+  const resp = await fetch(
+    `${WINDMILL_BASE}/api/w/${WINDMILL_WORKSPACE}/jobs/run_wait_result/p/${path}`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${WINDMILL_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(args),
+    },
+  );
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`Windmill ${path}: ${resp.status} ${text.slice(0, 200)}`);
+  }
+  return await resp.json();
+}
+
+async function discoverWindmillTools() {
+  if (!WINDMILL_TOKEN) {
+    console.error("[palantir] No WINDMILL_TOKEN — skipping Windmill tool discovery");
+    return;
+  }
+
+  const skipPaths = new Set(["f/core/mcp_server"]);
+  const allowedPrefixes = ["f/core/", "f/domains/", "f/shared/", "f/infra/"];
+  let registered = 0;
+
+  try {
+    const resp = await fetch(
+      `${WINDMILL_BASE}/api/w/${WINDMILL_WORKSPACE}/scripts/list?per_page=200`,
+      { headers: { Authorization: `Bearer ${WINDMILL_TOKEN}` } },
+    );
+    if (!resp.ok) {
+      console.error(`[palantir] Failed to list Windmill scripts: ${resp.status}`);
+      return;
+    }
+
+    const rawScripts = await resp.json() as Array<{ path: string; summary: string; description: string }>;
+    const seen = new Set<string>();
+    const scripts = rawScripts.filter((s) => {
+      if (seen.has(s.path)) return false;
+      seen.add(s.path);
+      return allowedPrefixes.some((p) => s.path.startsWith(p));
+    });
+
+    // Fetch schemas in parallel
+    const withSchemas = await Promise.all(
+      scripts.filter(s => !skipPaths.has(s.path)).map(async (s) => {
+        try {
+          const r = await fetch(
+            `${WINDMILL_BASE}/api/w/${WINDMILL_WORKSPACE}/scripts/get/p/${s.path}`,
+            { headers: { Authorization: `Bearer ${WINDMILL_TOKEN}` } },
+          );
+          if (!r.ok) return { ...s, schema: null };
+          const detail = await r.json() as { schema: any; summary: string; description: string };
+          return { ...s, schema: detail.schema, summary: detail.summary || s.summary, description: detail.description || s.description };
+        } catch { return { ...s, schema: null }; }
+      })
+    );
+
+    for (const script of withSchemas) {
+      if (skipPaths.has(script.path)) continue;
+
+      // Convert path to tool name: f/domains/work/sources/get_ec2 → wm_work_sources_get_ec2
+      const parts = script.path.replace("f/", "").split("/");
+      const toolName = `wm_${parts.join("_")}`;
+      const description = script.summary || script.description || `Windmill: ${script.path}`;
+
+      // Convert JSON Schema to Zod
+      const zodShape: Record<string, z.ZodTypeAny> = {};
+      const props = script.schema?.properties || {};
+      const required = new Set(script.schema?.required || []);
+
+      for (const [name, prop] of Object.entries(props) as [string, any][]) {
+        let field: z.ZodTypeAny;
+        switch (prop.type) {
+          case "number": case "integer": field = z.number(); break;
+          case "boolean": field = z.boolean(); break;
+          case "array": field = z.array(z.any()); break;
+          case "object": field = z.record(z.any()); break;
+          default: field = z.string();
+        }
+        if (prop.description) field = field.describe(prop.description);
+        if (prop.default !== undefined) field = field.optional().default(prop.default);
+        else if (!required.has(name)) field = field.optional();
+        zodShape[name] = field;
+      }
+
+      try {
+        const scriptPath = script.path;
+        server.tool(toolName, description, zodShape, async (args: Record<string, any>) => {
+          const sid = args._meta?.sessionId || "unknown";
+
+          // Enforcement: write tools require session context
+          const isWrite = scriptPath.includes("/actions/") || scriptPath.includes("create_") || scriptPath.includes("close_") || scriptPath.includes("add_note");
+          if (isWrite) {
+            const { rows } = await pool.query(
+              "SELECT context_loaded FROM palantir.session_state WHERE session_id = $1", [sid]
+            );
+            if (!rows[0]?.context_loaded) {
+              await logToolCall(sid, toolName, args, "rejected", "session context not loaded");
+              return {
+                content: [{ type: "text" as const, text: JSON.stringify({
+                  error: "Session context required",
+                  message: "Call session_start or get_context before using write tools.",
+                }) }],
+              };
+            }
+          }
+
+          await logToolCall(sid, toolName, args);
+          try {
+            const result = await runWindmillScript(scriptPath, args);
+            return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
+          } catch (err: any) {
+            await logToolCall(sid, toolName, args, "error", err.message);
+            return { content: [{ type: "text" as const, text: JSON.stringify({ error: err.message }) }] };
+          }
+        });
+        registered++;
+      } catch (e: any) {
+        console.error(`[palantir] Failed to register ${toolName}: ${e.message}`);
+      }
+    }
+  } catch (e: any) {
+    console.error(`[palantir] Windmill discovery error: ${e.message}`);
+  }
+
+  console.error(`[palantir] Registered ${registered} Windmill tools`);
+}
+
 // ── Start ──
 
 async function main() {
@@ -825,6 +1078,9 @@ async function main() {
   // Verify Fabric patterns
   const patterns = listFabricPatterns();
   console.error(`[palantir] Fabric patterns loaded: ${patterns.length} patterns from ${FABRIC_PATTERNS_DIR}`);
+
+  // Discover and register Windmill tools
+  await discoverWindmillTools();
 
   // Start MCP transport
   const transport = new StdioServerTransport();
