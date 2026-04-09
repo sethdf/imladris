@@ -110,9 +110,31 @@ async function addIntegration(name: string, domain: string = "work") {
   console.log(`  Required fields: ${entry.fields.join(", ") || "none"}`);
   console.log();
 
-  // Step 1: Install npm package if needed
+  const providerSlug = entry.name.toLowerCase().replace(/[^a-z0-9]/g, "_").replace(/_+/g, "_");
+
+  // Step 1: Check for existing secrets in BWS
+  console.log("Checking for existing credentials in BWS...");
+  const existingSecrets = await checkBwsSecrets(providerSlug, entry.fields);
+  const missingFields: string[] = [];
+  const existingFields: string[] = [];
+
+  for (const field of entry.fields) {
+    const bwsKey = `${providerSlug}-${field.replace(/_/g, "-")}`;
+    if (existingSecrets.has(bwsKey)) {
+      existingFields.push(field);
+      console.log(`  ✓ ${field} — already in BWS as "${bwsKey}"`);
+    } else {
+      missingFields.push(field);
+    }
+  }
+
+  if (existingFields.length > 0 && missingFields.length === 0) {
+    console.log("\n  All credentials already exist in BWS. Skipping credential prompts.");
+  }
+
+  // Step 2: Install npm package if needed
   if (entry.package) {
-    console.log(`Installing ${entry.package}...`);
+    console.log(`\nInstalling ${entry.package}...`);
     const proc = Bun.spawn(["bun", "add", entry.package], {
       cwd: join(import.meta.dir, "../windmill"),
       stdout: "pipe",
@@ -122,25 +144,38 @@ async function addIntegration(name: string, domain: string = "work") {
     console.log(`  Installed.`);
   }
 
-  // Step 2: Collect credentials
+  // Step 3: Collect ONLY missing credentials
   const credentials: Record<string, string> = {};
-  for (const field of entry.fields) {
-    const value = await prompt(`  Enter ${field}: `);
-    if (value) credentials[field] = value;
+  if (missingFields.length > 0) {
+    console.log(`\n  Missing credentials (${missingFields.length}):`);
+    for (const field of missingFields) {
+      const value = await prompt(`  Enter ${field}: `);
+      if (value) credentials[field] = value;
+    }
   }
 
-  // Step 3: Store credentials
-  const providerSlug = entry.name.toLowerCase().replace(/[^a-z0-9]/g, "_").replace(/_+/g, "_");
-
+  // Step 4: Store new credentials in BWS (source of truth) + Windmill (cache)
   if (Object.keys(credentials).length > 0) {
     console.log("\nStoring credentials...");
 
-    // Store in Windmill variables via REST API
+    // 4a: Store in BWS
+    for (const [field, value] of Object.entries(credentials)) {
+      const bwsKey = `${providerSlug}-${field.replace(/_/g, "-")}`;
+      const stored = await storeBwsSecret(bwsKey, value, `${entry.name} ${field}`);
+      if (stored) {
+        console.log(`  BWS: stored "${bwsKey}"`);
+      } else {
+        console.log(`  BWS: failed to store "${bwsKey}" (store manually)`);
+      }
+    }
+
+    // 4b: Store in Windmill variables (cache)
     const wmToken = getWindmillToken();
     const wmBase = "http://127.0.0.1:8000/api/w/imladris";
+    const wmFolder = domain === "work" ? "domains/work/infra" : domain;
 
     for (const [field, value] of Object.entries(credentials)) {
-      const varPath = `f/${domain === "work" ? "domains/work/infra" : domain}/${providerSlug}_${field}`;
+      const varPath = `f/${wmFolder}/${providerSlug}_${field}`;
       const resp = await fetch(`${wmBase}/variables/create`, {
         method: "POST",
         headers: { Authorization: `Bearer ${wmToken}`, "Content-Type": "application/json" },
@@ -153,15 +188,35 @@ async function addIntegration(name: string, domain: string = "work") {
       });
 
       if (resp.ok) {
-        console.log(`  Stored: ${varPath}`);
+        console.log(`  Windmill: stored ${varPath}`);
       } else {
         const text = await resp.text();
         if (text.includes("already exists")) {
-          console.log(`  Exists: ${varPath} (skipped)`);
+          console.log(`  Windmill: ${varPath} (already exists)`);
         } else {
-          console.error(`  Error: ${varPath} — ${resp.status} ${text.slice(0, 100)}`);
+          console.error(`  Windmill: error ${varPath} — ${resp.status}`);
         }
       }
+    }
+  } else if (existingFields.length > 0) {
+    // Ensure existing BWS secrets are also in Windmill
+    console.log("\nSyncing existing BWS secrets to Windmill...");
+    const wmToken = getWindmillToken();
+    const wmBase = "http://127.0.0.1:8000/api/w/imladris";
+    const wmFolder = domain === "work" ? "domains/work/infra" : domain;
+
+    for (const field of existingFields) {
+      const bwsKey = `${providerSlug}-${field.replace(/_/g, "-")}`;
+      const value = await getBwsSecretValue(bwsKey);
+      if (!value) continue;
+
+      const varPath = `f/${wmFolder}/${providerSlug}_${field}`;
+      await fetch(`${wmBase}/variables/create`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${wmToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ path: varPath, value, is_secret: true, description: `${entry.name} ${field} — synced from BWS` }),
+      });
+      console.log(`  Windmill: synced ${varPath}`);
     }
   }
 
@@ -247,6 +302,67 @@ function getWindmillToken(): string {
     return first.token;
   } catch {
     return "";
+  }
+}
+
+// ── BWS helpers ──
+
+async function checkBwsSecrets(providerSlug: string, fields: string[]): Promise<Set<string>> {
+  // Check which BWS secrets already exist for this provider
+  const existing = new Set<string>();
+  try {
+    const proc = Bun.spawn(["bws", "secret", "list"], { stdout: "pipe", stderr: "pipe" });
+    const output = await new Response(proc.stdout).text();
+    await proc.exited;
+    const secrets: Array<{ key: string }> = JSON.parse(output);
+
+    const allKeys = new Set(secrets.map(s => s.key));
+
+    // Check both naming conventions: provider-field and legacy patterns
+    for (const field of fields) {
+      const bwsKey = `${providerSlug}-${field.replace(/_/g, "-")}`;
+      if (allKeys.has(bwsKey)) existing.add(bwsKey);
+
+      // Also check common legacy patterns
+      const altKeys = [
+        `api-${providerSlug}-${field.replace(/_/g, "-")}`,
+        `investigate-${providerSlug}-${field.replace(/_/g, "-")}`,
+        `devops-${providerSlug}-${field.replace(/_/g, "-")}`,
+      ];
+      for (const alt of altKeys) {
+        if (allKeys.has(alt)) existing.add(alt);
+      }
+    }
+  } catch {
+    // BWS not available — return empty set (will prompt for all fields)
+  }
+  return existing;
+}
+
+async function storeBwsSecret(key: string, value: string, note: string): Promise<boolean> {
+  try {
+    // BWS create secret requires a project ID — get the default one
+    const proc = Bun.spawn(
+      ["bws", "secret", "create", key, value, "--note", note],
+      { stdout: "pipe", stderr: "pipe" }
+    );
+    const exitCode = await proc.exited;
+    return exitCode === 0;
+  } catch {
+    return false;
+  }
+}
+
+async function getBwsSecretValue(key: string): Promise<string | null> {
+  try {
+    const proc = Bun.spawn(["bws", "secret", "list"], { stdout: "pipe", stderr: "pipe" });
+    const output = await new Response(proc.stdout).text();
+    await proc.exited;
+    const secrets: Array<{ key: string; value: string }> = JSON.parse(output);
+    const match = secrets.find(s => s.key === key);
+    return match?.value || null;
+  } catch {
+    return null;
   }
 }
 
