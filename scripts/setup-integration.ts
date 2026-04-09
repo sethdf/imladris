@@ -24,6 +24,69 @@ import { createInterface } from "readline";
 
 const CATALOG_PATH = join(import.meta.dir, "integration-catalog.json");
 const WINDMILL_DIR = join(import.meta.dir, "../windmill/f");
+const CONFIG_PATH = join(import.meta.dir, ".integration-config.json");
+
+// ── Secret Manager Configuration ──
+
+interface SecretManagerConfig {
+  provider: string;  // "bws" | "aws_sm" | "hashicorp" | "1password" | "ssm" | "windmill_only"
+  configured_at: string;
+}
+
+const SECRET_MANAGERS = [
+  { id: "bws", name: "Bitwarden Secrets Manager (BWS)", cmd: "bws", desc: "CLI-based, open source. Current default." },
+  { id: "aws_sm", name: "AWS Secrets Manager", cmd: "aws", desc: "AWS-native, pay per secret. Uses IAM role." },
+  { id: "ssm", name: "AWS SSM Parameter Store", cmd: "aws", desc: "AWS-native, free tier. Uses IAM role." },
+  { id: "hashicorp", name: "HashiCorp Vault", cmd: "vault", desc: "Self-hosted or HCP Cloud. Industry standard." },
+  { id: "1password", name: "1Password (via CLI)", cmd: "op", desc: "Uses `op read` CLI. Requires 1Password account." },
+  { id: "cyberark", name: "CyberArk", cmd: null, desc: "Enterprise PAM. Requires CyberArk API access." },
+  { id: "windmill_only", name: "Windmill variables only (no external vault)", cmd: null, desc: "Secrets stored in Windmill DB only. No external backup." },
+];
+
+function loadConfig(): SecretManagerConfig | null {
+  try {
+    return JSON.parse(readFileSync(CONFIG_PATH, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function saveConfig(config: SecretManagerConfig) {
+  writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), "utf8");
+}
+
+async function chooseSecretManager(): Promise<string> {
+  const existing = loadConfig();
+  if (existing) {
+    const mgr = SECRET_MANAGERS.find(m => m.id === existing.provider);
+    console.log(`\nSecret manager: ${mgr?.name || existing.provider} (configured ${existing.configured_at})`);
+    const change = await prompt("  Change secret manager? (y/N): ");
+    if (change.toLowerCase() !== "y") return existing.provider;
+  }
+
+  console.log("\nWhere should secrets be stored?\n");
+  for (let i = 0; i < SECRET_MANAGERS.length; i++) {
+    const m = SECRET_MANAGERS[i];
+    const available = m.cmd ? (await isCommandAvailable(m.cmd) ? "✓ installed" : "✗ not found") : "";
+    console.log(`  ${i + 1}. ${m.name}`);
+    console.log(`     ${m.desc} ${available ? `[${available}]` : ""}`);
+  }
+
+  const choice = await prompt(`\nChoose (1-${SECRET_MANAGERS.length}): `);
+  const idx = parseInt(choice) - 1;
+  const selected = SECRET_MANAGERS[idx] || SECRET_MANAGERS[0];
+
+  saveConfig({ provider: selected.id, configured_at: new Date().toISOString() });
+  console.log(`\n  Secret manager set to: ${selected.name}`);
+  return selected.id;
+}
+
+async function isCommandAvailable(cmd: string): Promise<boolean> {
+  try {
+    const proc = Bun.spawn(["which", cmd], { stdout: "pipe", stderr: "pipe" });
+    return (await proc.exited) === 0;
+  } catch { return false; }
+}
 
 interface CatalogEntry {
   name: string;
@@ -112,9 +175,12 @@ async function addIntegration(name: string, domain: string = "work") {
 
   const providerSlug = entry.name.toLowerCase().replace(/[^a-z0-9]/g, "_").replace(/_+/g, "_");
 
-  // Step 1: Check for existing secrets in BWS
-  console.log("Checking for existing credentials in BWS...");
-  const existingSecrets = await checkBwsSecrets(providerSlug, entry.fields);
+  // Step 0: Choose or confirm secret manager
+  const secretMgr = await chooseSecretManager();
+
+  // Step 1: Check for existing secrets
+  console.log(`\nChecking for existing credentials in ${SECRET_MANAGERS.find(m => m.id === secretMgr)?.name || secretMgr}...`);
+  const existingSecrets = await checkExistingSecrets(secretMgr, providerSlug, entry.fields);
   const missingFields: string[] = [];
   const existingFields: string[] = [];
 
@@ -158,14 +224,15 @@ async function addIntegration(name: string, domain: string = "work") {
   if (Object.keys(credentials).length > 0) {
     console.log("\nStoring credentials...");
 
-    // 4a: Store in BWS
+    // 4a: Store in secret manager
     for (const [field, value] of Object.entries(credentials)) {
-      const bwsKey = `${providerSlug}-${field.replace(/_/g, "-")}`;
-      const stored = await storeBwsSecret(bwsKey, value, `${entry.name} ${field}`);
+      const secretKey = `${providerSlug}-${field.replace(/_/g, "-")}`;
+      const stored = await storeSecret(secretMgr, secretKey, value, `${entry.name} ${field}`);
+      const mgrName = SECRET_MANAGERS.find(m => m.id === secretMgr)?.name || secretMgr;
       if (stored) {
-        console.log(`  BWS: stored "${bwsKey}"`);
+        console.log(`  ${mgrName}: stored "${secretKey}"`);
       } else {
-        console.log(`  BWS: failed to store "${bwsKey}" (store manually)`);
+        console.log(`  ${mgrName}: failed to store "${secretKey}" (store manually)`);
       }
     }
 
@@ -199,15 +266,15 @@ async function addIntegration(name: string, domain: string = "work") {
       }
     }
   } else if (existingFields.length > 0) {
-    // Ensure existing BWS secrets are also in Windmill
-    console.log("\nSyncing existing BWS secrets to Windmill...");
+    // Ensure existing secrets are also in Windmill
+    console.log("\nSyncing existing secrets to Windmill...");
     const wmToken = getWindmillToken();
     const wmBase = "http://127.0.0.1:8000/api/w/imladris";
     const wmFolder = domain === "work" ? "domains/work/infra" : domain;
 
     for (const field of existingFields) {
-      const bwsKey = `${providerSlug}-${field.replace(/_/g, "-")}`;
-      const value = await getBwsSecretValue(bwsKey);
+      const secretKey = `${providerSlug}-${field.replace(/_/g, "-")}`;
+      const value = await getSecretValue(secretMgr, secretKey);
       if (!value) continue;
 
       const varPath = `f/${wmFolder}/${providerSlug}_${field}`;
@@ -305,62 +372,139 @@ function getWindmillToken(): string {
   }
 }
 
-// ── BWS helpers ──
+// ── Multi-backend secret manager helpers ──
 
-async function checkBwsSecrets(providerSlug: string, fields: string[]): Promise<Set<string>> {
-  // Check which BWS secrets already exist for this provider
+async function checkExistingSecrets(mgr: string, providerSlug: string, fields: string[]): Promise<Set<string>> {
   const existing = new Set<string>();
-  try {
-    const proc = Bun.spawn(["bws", "secret", "list"], { stdout: "pipe", stderr: "pipe" });
-    const output = await new Response(proc.stdout).text();
-    await proc.exited;
-    const secrets: Array<{ key: string }> = JSON.parse(output);
+  const allKeys = await listSecretKeys(mgr);
 
-    const allKeys = new Set(secrets.map(s => s.key));
+  for (const field of fields) {
+    const key = `${providerSlug}-${field.replace(/_/g, "-")}`;
+    if (allKeys.has(key)) { existing.add(key); continue; }
 
-    // Check both naming conventions: provider-field and legacy patterns
-    for (const field of fields) {
-      const bwsKey = `${providerSlug}-${field.replace(/_/g, "-")}`;
-      if (allKeys.has(bwsKey)) existing.add(bwsKey);
-
-      // Also check common legacy patterns
-      const altKeys = [
-        `api-${providerSlug}-${field.replace(/_/g, "-")}`,
-        `investigate-${providerSlug}-${field.replace(/_/g, "-")}`,
-        `devops-${providerSlug}-${field.replace(/_/g, "-")}`,
-      ];
-      for (const alt of altKeys) {
-        if (allKeys.has(alt)) existing.add(alt);
-      }
+    // Check legacy naming patterns
+    for (const prefix of ["api-", "investigate-", "devops-"]) {
+      if (allKeys.has(`${prefix}${key}`)) { existing.add(`${prefix}${key}`); break; }
     }
-  } catch {
-    // BWS not available — return empty set (will prompt for all fields)
   }
   return existing;
 }
 
-async function storeBwsSecret(key: string, value: string, note: string): Promise<boolean> {
+async function listSecretKeys(mgr: string): Promise<Set<string>> {
   try {
-    // BWS create secret requires a project ID — get the default one
-    const proc = Bun.spawn(
-      ["bws", "secret", "create", key, value, "--note", note],
-      { stdout: "pipe", stderr: "pipe" }
-    );
-    const exitCode = await proc.exited;
-    return exitCode === 0;
+    switch (mgr) {
+      case "bws": {
+        const proc = Bun.spawn(["bws", "secret", "list"], { stdout: "pipe", stderr: "pipe" });
+        const output = await new Response(proc.stdout).text();
+        await proc.exited;
+        const secrets: Array<{ key: string }> = JSON.parse(output);
+        return new Set(secrets.map(s => s.key));
+      }
+      case "aws_sm": {
+        const proc = Bun.spawn(["aws", "secretsmanager", "list-secrets", "--output", "json"], { stdout: "pipe", stderr: "pipe" });
+        const output = await new Response(proc.stdout).text();
+        await proc.exited;
+        const result = JSON.parse(output);
+        return new Set((result.SecretList || []).map((s: any) => s.Name));
+      }
+      case "ssm": {
+        const proc = Bun.spawn(["aws", "ssm", "describe-parameters", "--output", "json"], { stdout: "pipe", stderr: "pipe" });
+        const output = await new Response(proc.stdout).text();
+        await proc.exited;
+        const result = JSON.parse(output);
+        return new Set((result.Parameters || []).map((p: any) => p.Name.replace(/^\/imladris\//, "")));
+      }
+      case "hashicorp": {
+        const proc = Bun.spawn(["vault", "kv", "list", "-format=json", "secret/imladris/"], { stdout: "pipe", stderr: "pipe" });
+        const output = await new Response(proc.stdout).text();
+        await proc.exited;
+        return new Set(JSON.parse(output));
+      }
+      case "1password": {
+        const proc = Bun.spawn(["op", "item", "list", "--format=json", "--vault=imladris"], { stdout: "pipe", stderr: "pipe" });
+        const output = await new Response(proc.stdout).text();
+        await proc.exited;
+        const items: Array<{ title: string }> = JSON.parse(output);
+        return new Set(items.map(i => i.title));
+      }
+      default:
+        return new Set();
+    }
+  } catch {
+    return new Set();
+  }
+}
+
+async function storeSecret(mgr: string, key: string, value: string, note: string): Promise<boolean> {
+  try {
+    switch (mgr) {
+      case "bws": {
+        const proc = Bun.spawn(["bws", "secret", "create", key, value, "--note", note], { stdout: "pipe", stderr: "pipe" });
+        return (await proc.exited) === 0;
+      }
+      case "aws_sm": {
+        const proc = Bun.spawn(["aws", "secretsmanager", "create-secret", "--name", `imladris/${key}`, "--secret-string", value, "--description", note], { stdout: "pipe", stderr: "pipe" });
+        return (await proc.exited) === 0;
+      }
+      case "ssm": {
+        const proc = Bun.spawn(["aws", "ssm", "put-parameter", "--name", `/imladris/${key}`, "--value", value, "--type", "SecureString", "--description", note, "--overwrite"], { stdout: "pipe", stderr: "pipe" });
+        return (await proc.exited) === 0;
+      }
+      case "hashicorp": {
+        const proc = Bun.spawn(["vault", "kv", "put", `secret/imladris/${key}`, `value=${value}`], { stdout: "pipe", stderr: "pipe" });
+        return (await proc.exited) === 0;
+      }
+      case "1password": {
+        const proc = Bun.spawn(["op", "item", "create", "--category=password", `--title=${key}`, `--vault=imladris`, `password=${value}`, `--tags=${note}`], { stdout: "pipe", stderr: "pipe" });
+        return (await proc.exited) === 0;
+      }
+      case "windmill_only":
+        return true; // stored in Windmill only (done in the main flow)
+      default:
+        return false;
+    }
   } catch {
     return false;
   }
 }
 
-async function getBwsSecretValue(key: string): Promise<string | null> {
+async function getSecretValue(mgr: string, key: string): Promise<string | null> {
   try {
-    const proc = Bun.spawn(["bws", "secret", "list"], { stdout: "pipe", stderr: "pipe" });
-    const output = await new Response(proc.stdout).text();
-    await proc.exited;
-    const secrets: Array<{ key: string; value: string }> = JSON.parse(output);
-    const match = secrets.find(s => s.key === key);
-    return match?.value || null;
+    switch (mgr) {
+      case "bws": {
+        const proc = Bun.spawn(["bws", "secret", "list"], { stdout: "pipe", stderr: "pipe" });
+        const output = await new Response(proc.stdout).text();
+        await proc.exited;
+        const secrets: Array<{ key: string; value: string }> = JSON.parse(output);
+        return secrets.find(s => s.key === key)?.value || null;
+      }
+      case "aws_sm": {
+        const proc = Bun.spawn(["aws", "secretsmanager", "get-secret-value", "--secret-id", `imladris/${key}`, "--output", "json"], { stdout: "pipe", stderr: "pipe" });
+        const output = await new Response(proc.stdout).text();
+        await proc.exited;
+        return JSON.parse(output).SecretString || null;
+      }
+      case "ssm": {
+        const proc = Bun.spawn(["aws", "ssm", "get-parameter", "--name", `/imladris/${key}`, "--with-decryption", "--output", "json"], { stdout: "pipe", stderr: "pipe" });
+        const output = await new Response(proc.stdout).text();
+        await proc.exited;
+        return JSON.parse(output).Parameter?.Value || null;
+      }
+      case "hashicorp": {
+        const proc = Bun.spawn(["vault", "kv", "get", "-format=json", `secret/imladris/${key}`], { stdout: "pipe", stderr: "pipe" });
+        const output = await new Response(proc.stdout).text();
+        await proc.exited;
+        return JSON.parse(output).data?.data?.value || null;
+      }
+      case "1password": {
+        const proc = Bun.spawn(["op", "item", "get", key, "--vault=imladris", "--fields=password"], { stdout: "pipe", stderr: "pipe" });
+        const output = await new Response(proc.stdout).text();
+        await proc.exited;
+        return output.trim() || null;
+      }
+      default:
+        return null;
+    }
   } catch {
     return null;
   }
