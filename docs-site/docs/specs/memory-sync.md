@@ -1064,6 +1064,14 @@ Machines subscribe to `sync_changes` channel. When Machine A pushes, Machine B g
 
 ## Phase 4: Windmill Autonomous Workflows
 
+**Status (2026-04-10):** Phase 4a ✅ shipped · Phase 4c ✅ shipped · Phase 4b ⛔ **deferred — spec vs deployed reality drift**
+
+- **4a** — 5 scripts landed in `f/core/`: `session_harvester`, `learning_synthesis`, `wisdom_cross_synthesis`, `integrity_audit`, `steering_rule_proposal`. All tagged `native` worker group.
+- **4c** — `f/core/agentic_investigator.ts` calls `core.assemble_context()` per investigation via a `fetchPAIContext()` helper that fails open if Postgres is unreachable.
+- **4b** — The 6 Postgres-backed scripts below (`entity_resolution_batch`, `failure_clustering`, `contradiction_detection`, `steering_rule_proposal_v2`, `rrf_index_refresh`, `knowledge_graph_maintenance`) are **not built** because the spec references `record_learning()` and an `ops.*` schema that do not exist in the deployed `pai` database. What IS deployed: `core.record_reasoning_pattern()`, `core.search_memory_by_vector()`, `core.suggest_approach()`, `core.suggest_effort_level()`, `core.generate_optimization_hints()`, and the schema-sharded `work.triage_results` / `personal.triage_results` / `shared.entities_global`. Before building 4b, either (a) update this spec's SQL examples to match deployed reality, or (b) add the missing functions/schema via a new migration in `scripts/palantir/schemas/`.
+
+---
+
 This is what makes PAI agentic. Phases 1-3 build the knowledge backbone (store, enrich, retrieve, serve). Phase 4 schedules the tools that already exist to run without human initiation — closing the learning loop.
 
 **Why Windmill, not Arbol:** PAI's upstream project (danielmiessler/PAI) includes Arbol — a Cloudflare Workers execution layer for Action→Pipeline→Flow composition. Arbol was evaluated and rejected for this architecture. Windmill on EC2 (imladris-4) already provides everything Arbol does — cron scheduling, step chaining, monitoring UI, error handling — plus direct Postgres access and native PAI script execution that Cloudflare Workers cannot offer. The DevOps pipeline (`f/devops/`) already proves the pattern: 55+ scripts, 11 cron schedules, an agentic investigator using Bedrock Opus with 16+ tools. Phase 4 applies the same proven pattern to PAI memory.

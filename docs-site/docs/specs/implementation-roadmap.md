@@ -134,6 +134,32 @@ These close the gaps identified in cognitive-architecture.md Part XI. They requi
 
 ---
 
+## Phase 4 — Autonomous Workflows (closes the learning loop)
+
+See [memory-sync spec §4](./memory-sync) for full detail. Ships in three parts.
+
+### 4a: Filesystem-based autonomous workflows ✅ shipped 2026-04-10
+- **What:** 5 Windmill scripts in `f/core/` wrapping existing PAI tools, running on the `native` worker group (host filesystem access required)
+  - `session_harvester` — nightly transcript → learnings
+  - `learning_synthesis` — weekly signals → pattern reports
+  - `wisdom_cross_synthesis` — weekly cross-frame wisdom
+  - `integrity_audit` — daily 16-check sweep of `~/.claude/`
+  - `steering_rule_proposal` — weekly v1 heuristic candidate rule generator
+- **No Postgres dependency** — safe to ship before/independent of Phase 4b
+
+### 4c: PAI context preamble for agentic investigator ✅ shipped 2026-04-10
+- **What:** `f/core/agentic_investigator.ts` calls `core.assemble_context()` before each Bedrock Opus run and prepends PAI methodology + relevant memory to the system prompt
+- **Fail-open** if Postgres unreachable — doesn't break existing investigator behavior
+- **Dependency:** Phase 2c (Palantír deployed `core.assemble_context` function)
+
+### 4b: Postgres-backed autonomous workflows ⛔ deferred — spec/reality reconciliation required
+- **What the spec calls for:** 6 scripts (`entity_resolution_batch`, `failure_clustering`, `contradiction_detection`, `steering_rule_proposal_v2`, `rrf_index_refresh`, `knowledge_graph_maintenance`) that query Postgres directly
+- **Why deferred:** The spec's SQL examples reference `record_learning()` and an `ops.*` schema that don't exist in the deployed `pai` database. Deployed reality uses `core.record_reasoning_pattern()` with a different signature and schema-sharded `work.triage_results` / `personal.triage_results` / `shared.entities_global`
+- **Unblock path:** either (a) update memory-sync spec SQL examples to match deployed reality, then build; or (b) add the missing functions/schema via a new migration in `scripts/palantir/schemas/`, then build
+- **Dependency once unblocked:** none beyond what's already shipped
+
+---
+
 ## Sequencing Diagram
 
 ```
