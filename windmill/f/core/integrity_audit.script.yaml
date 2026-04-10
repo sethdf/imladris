@@ -2,7 +2,7 @@ summary: Integrity Audit (daily)
 description: Runs 16 parallel integrity checks across ~/.claude/ for broken
   references, orphaned files, and schema violations. Wraps the PAI
   IntegrityMaintenance.ts tool. Must run on the native worker group.
-lock: ''
+lock: '!inline f/core/integrity_audit.script.lock'
 kind: script
 schema:
   $schema: https://json-schema.org/draft/2020-12/schema

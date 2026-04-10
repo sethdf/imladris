@@ -1,8 +1,8 @@
 summary: Wisdom Cross-Frame Synthesis (weekly)
-description: Finds cross-domain patterns by synthesizing across all Wisdom Frames
-  in ~/.claude/MEMORY/WISDOM/. Wraps the PAI WisdomCrossFrameSynthesizer.ts tool.
-  Must run on the native worker group.
-lock: ''
+description: Finds cross-domain patterns by synthesizing across all Wisdom
+  Frames in ~/.claude/MEMORY/WISDOM/. Wraps the PAI
+  WisdomCrossFrameSynthesizer.ts tool. Must run on the native worker group.
+lock: '!inline f/core/wisdom_cross_synthesis.script.lock'
 kind: script
 schema:
   $schema: https://json-schema.org/draft/2020-12/schema

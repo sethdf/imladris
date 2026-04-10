@@ -84,7 +84,23 @@ services:
     environment:
       <<: *worker-env
       WORKER_GROUP: native
+      # WORKER_TAGS routes scripts/jobs that declare `tag: native` (in script.yaml)
+      # to this worker exclusively. memory-sync Phase 4a workflows tag themselves
+      # `native` because they wrap PAI tools that need to WRITE to ~/.claude/.
+      WORKER_TAGS: native
       NUM_WORKERS: "1"
+    # Override the read-only ~/.claude mount from worker-volumes — this worker
+    # is the only one that may write to PAI memory directories. All other
+    # workers stay read-only as a safety boundary.
+    volumes:
+      - /local/cache:/local/cache
+      - /usr/lib/nodejs20/lib/node_modules/@anthropic-ai:/usr/lib/node_modules/@anthropic-ai:ro
+      - /home/ec2-user/.claude:/home/ec2-user/.claude:rw
+      - /home/ec2-user/.claude.json:/home/ec2-user/.claude.json:ro
+      - ./scripts/native-worker-entrypoint.sh:/scripts/native-worker-entrypoint.sh:ro
+      - ./knowledge:/home/ec2-user/repos/imladris/knowledge:ro
+      - /pai/inbox:/pai/inbox
+      - /pai/outbox:/pai/outbox:ro
 
   windmill_db:
     image: imladris/postgres:pg16
