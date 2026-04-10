@@ -71,50 +71,50 @@ fi
 
 # Build the new task definition
 echo "Building new task definition with ADOT sidecar (Coralogix backend)..."
-NEW_TASKDEF=$(echo "${CURRENT_TASKDEF}" | python3 -c "
-import json, sys
+NEW_TASKDEF=$(echo "${CURRENT_TASKDEF}" | SVCNAME="${SERVICE_NAME}" ENVNAME="${ENVIRONMENT}" CXKEY="${CORALOGIX_PRIVATE_KEY}" CXINGRESS="${CORALOGIX_INGRESS}" python3 -c '
+import json, sys, os
 
-data = json.load(sys.stdin)['taskDefinition']
+data = json.load(sys.stdin)["taskDefinition"]
 
 # Remove metadata fields
-for k in ['taskDefinitionArn','revision','status','requiresAttributes','compatibilities','registeredAt','registeredBy','deregisteredAt']:
+for k in ["taskDefinitionArn","revision","status","requiresAttributes","compatibilities","registeredAt","registeredBy","deregisteredAt"]:
     data.pop(k, None)
 
-service_name = '${SERVICE_NAME}'
-environment = '${ENVIRONMENT}'
-private_key = '${CORALOGIX_PRIVATE_KEY}'
-ingress = '${CORALOGIX_INGRESS}'
+service_name = os.environ["SVCNAME"]
+environment = os.environ["ENVNAME"]
+private_key = os.environ["CXKEY"]
+ingress = os.environ["CXINGRESS"]
 
 # Add shared volume for auto-instrumentation files
-data['volumes'] = data.get('volumes', [])
-data['volumes'].append({
-    'name': 'otel-auto-instrumentation',
-    'host': {}
+data["volumes"] = data.get("volumes", [])
+data["volumes"].append({
+    "name": "otel-auto-instrumentation",
+    "host": {}
 })
 
 # OTel .NET init container
 init_container = {
-    'name': 'otel-dotnet-init',
-    'image': '945243322929.dkr.ecr.us-east-1.amazonaws.com/otel-dotnet-init:1.14.1',
-    'essential': False,
-    'command': ['cp', '-r', '/autoinstrumentation/.', '/otel-auto-instrumentation/'],
-    'mountPoints': [{
-        'sourceVolume': 'otel-auto-instrumentation',
-        'containerPath': '/otel-auto-instrumentation',
-        'readOnly': False
+    "name": "otel-dotnet-init",
+    "image": "945243322929.dkr.ecr.us-east-1.amazonaws.com/otel-dotnet-init:1.14.1",
+    "essential": False,
+    "command": ["cp", "-r", "/autoinstrumentation/.", "/otel-auto-instrumentation/"],
+    "mountPoints": [{
+        "sourceVolume": "otel-auto-instrumentation",
+        "containerPath": "/otel-auto-instrumentation",
+        "readOnly": False
     }],
-    'logConfiguration': {
-        'logDriver': 'awslogs',
-        'options': {
-            'awslogs-group': f'/ecs/{data[\"family\"]}',
-            'awslogs-region': 'us-east-1',
-            'awslogs-stream-prefix': 'otel-init'
+    "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+            "awslogs-group": "/ecs/" + data["family"],
+            "awslogs-region": "us-east-1",
+            "awslogs-stream-prefix": "otel-init"
         }
     }
 }
 
 # ADOT Collector sidecar — Coralogix OTLP exporter
-otel_config = '''receivers:
+otel_config = f"""receivers:
   otlp:
     protocols:
       grpc:
@@ -136,13 +136,13 @@ processors:
         value: buxton
         action: upsert
       - key: cx.subsystem.name
-        value: ''' + environment + '''
+        value: {environment}
         action: upsert
 exporters:
   otlp:
-    endpoint: ''' + ingress + ''':443
+    endpoint: {ingress}:443
     headers:
-      Authorization: "Bearer ''' + private_key + '''"
+      Authorization: "Bearer {private_key}"
 service:
   telemetry:
     logs:
@@ -155,76 +155,76 @@ service:
     metrics:
       receivers: [otlp, awsecscontainermetrics]
       processors: [resourcedetection, resource/cx, batch]
-      exporters: [otlp]'''
+      exporters: [otlp]"""
 
 sidecar_container = {
-    'name': 'otel-collector',
-    'image': 'public.ecr.aws/aws-observability/aws-otel-collector:v0.41.2',
-    'essential': False,
-    'cpu': 128,
-    'memory': 256,
-    'portMappings': [
-        {'containerPort': 4317, 'hostPort': 4317, 'protocol': 'tcp'},
-        {'containerPort': 4318, 'hostPort': 4318, 'protocol': 'tcp'}
+    "name": "otel-collector",
+    "image": "public.ecr.aws/aws-observability/aws-otel-collector:v0.41.2",
+    "essential": False,
+    "cpu": 128,
+    "memory": 256,
+    "portMappings": [
+        {"containerPort": 4317, "hostPort": 4317, "protocol": "tcp"},
+        {"containerPort": 4318, "hostPort": 4318, "protocol": "tcp"}
     ],
-    'environment': [
-        {'name': 'AOT_CONFIG_CONTENT', 'value': otel_config}
+    "environment": [
+        {"name": "AOT_CONFIG_CONTENT", "value": otel_config}
     ],
-    'logConfiguration': {
-        'logDriver': 'awslogs',
-        'options': {
-            'awslogs-group': f'/ecs/{data[\"family\"]}',
-            'awslogs-region': 'us-east-1',
-            'awslogs-stream-prefix': 'otel-sidecar'
+    "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+            "awslogs-group": "/ecs/" + data["family"],
+            "awslogs-region": "us-east-1",
+            "awslogs-stream-prefix": "otel-sidecar"
         }
     }
 }
 
 # Modify the app container
-app_container = data['containerDefinitions'][0]
+app_container = data["containerDefinitions"][0]
 
 # Add mount point for auto-instrumentation
-app_container['mountPoints'] = app_container.get('mountPoints', [])
-app_container['mountPoints'].append({
-    'sourceVolume': 'otel-auto-instrumentation',
-    'containerPath': '/otel-auto-instrumentation',
-    'readOnly': True
+app_container["mountPoints"] = app_container.get("mountPoints", [])
+app_container["mountPoints"].append({
+    "sourceVolume": "otel-auto-instrumentation",
+    "containerPath": "/otel-auto-instrumentation",
+    "readOnly": True
 })
 
 # Add dependency on init container
-app_container['dependsOn'] = [
-    {'containerName': 'otel-dotnet-init', 'condition': 'SUCCESS'},
-    {'containerName': 'otel-collector', 'condition': 'START'}
+app_container["dependsOn"] = [
+    {"containerName": "otel-dotnet-init", "condition": "SUCCESS"},
+    {"containerName": "otel-collector", "condition": "START"}
 ]
 
 # Add OTel environment variables
 otel_env_vars = [
-    {'name': 'CORECLR_ENABLE_PROFILING', 'value': '1'},
-    {'name': 'CORECLR_PROFILER', 'value': '{918728DD-259F-4A6A-AC2B-B85E1B658318}'},
-    {'name': 'CORECLR_PROFILER_PATH', 'value': '/otel-auto-instrumentation/linux-x64/OpenTelemetry.AutoInstrumentation.Native.so'},
-    {'name': 'DOTNET_ADDITIONAL_DEPS', 'value': '/otel-auto-instrumentation/AdditionalDeps'},
-    {'name': 'DOTNET_SHARED_STORE', 'value': '/otel-auto-instrumentation/store'},
-    {'name': 'DOTNET_STARTUP_HOOKS', 'value': '/otel-auto-instrumentation/net/OpenTelemetry.AutoInstrumentation.StartupHook.dll'},
-    {'name': 'OTEL_DOTNET_AUTO_HOME', 'value': '/otel-auto-instrumentation'},
-    {'name': 'OTEL_SERVICE_NAME', 'value': service_name},
-    {'name': 'OTEL_EXPORTER_OTLP_ENDPOINT', 'value': 'http://localhost:4318'},
-    {'name': 'OTEL_EXPORTER_OTLP_PROTOCOL', 'value': 'http/protobuf'},
-    {'name': 'OTEL_RESOURCE_ATTRIBUTES', 'value': f'deployment.environment={environment},service.namespace=buxton'},
-    {'name': 'OTEL_TRACES_EXPORTER', 'value': 'otlp'},
-    {'name': 'OTEL_METRICS_EXPORTER', 'value': 'otlp'},
-    {'name': 'OTEL_LOGS_EXPORTER', 'value': 'otlp'}
+    {"name": "CORECLR_ENABLE_PROFILING", "value": "1"},
+    {"name": "CORECLR_PROFILER", "value": "{918728DD-259F-4A6A-AC2B-B85E1B658318}"},
+    {"name": "CORECLR_PROFILER_PATH", "value": "/otel-auto-instrumentation/linux-x64/OpenTelemetry.AutoInstrumentation.Native.so"},
+    {"name": "DOTNET_ADDITIONAL_DEPS", "value": "/otel-auto-instrumentation/AdditionalDeps"},
+    {"name": "DOTNET_SHARED_STORE", "value": "/otel-auto-instrumentation/store"},
+    {"name": "DOTNET_STARTUP_HOOKS", "value": "/otel-auto-instrumentation/net/OpenTelemetry.AutoInstrumentation.StartupHook.dll"},
+    {"name": "OTEL_DOTNET_AUTO_HOME", "value": "/otel-auto-instrumentation"},
+    {"name": "OTEL_SERVICE_NAME", "value": service_name},
+    {"name": "OTEL_EXPORTER_OTLP_ENDPOINT", "value": "http://localhost:4318"},
+    {"name": "OTEL_EXPORTER_OTLP_PROTOCOL", "value": "http/protobuf"},
+    {"name": "OTEL_RESOURCE_ATTRIBUTES", "value": f"deployment.environment={environment},service.namespace=buxton"},
+    {"name": "OTEL_TRACES_EXPORTER", "value": "otlp"},
+    {"name": "OTEL_METRICS_EXPORTER", "value": "otlp"},
+    {"name": "OTEL_LOGS_EXPORTER", "value": "otlp"}
 ]
 
-existing_env_names = {e['name'] for e in app_container.get('environment', [])}
+existing_env_names = {e["name"] for e in app_container.get("environment", [])}
 for env in otel_env_vars:
-    if env['name'] not in existing_env_names:
-        app_container['environment'].append(env)
+    if env["name"] not in existing_env_names:
+        app_container["environment"].append(env)
 
 # Add containers: init first, then sidecar, then app (reorder)
-data['containerDefinitions'] = [init_container, sidecar_container, app_container]
+data["containerDefinitions"] = [init_container, sidecar_container, app_container]
 
 print(json.dumps(data, indent=2))
-")
+')
 
 # Save to file for review
 OUTPUT_FILE="/tmp/coralogix-taskdef-${SERVICE_NAME}.json"

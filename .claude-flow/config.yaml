@@ -1,0 +1,88 @@
+# RuFlo V3 Runtime Configuration
+# Integrated with Imladris stack: Postgres (shared), LiteLLM (routing), Palantír (knowledge)
+
+version: "3.0.0"
+
+swarm:
+  topology: hierarchical-mesh
+  maxAgents: 15
+  autoScale: true
+  coordinationStrategy: consensus
+
+memory:
+  backend: hybrid
+  enableHNSW: true
+  persistPath: .claude-flow/data
+  cacheSize: 200
+  learningBridge:
+    enabled: true
+    sonaMode: balanced
+    confidenceDecayRate: 0.005
+    accessBoostAmount: 0.03
+    consolidationThreshold: 10
+  memoryGraph:
+    enabled: true
+    pageRankDamping: 0.85
+    maxNodes: 10000
+    similarityThreshold: 0.8
+  agentScopes:
+    enabled: true
+    defaultScope: project
+  # Persist to our Postgres (ruflo schema) for durability
+  postgres:
+    enabled: true
+    host: 127.0.0.1
+    port: 5432
+    database: pai
+    user: postgres
+    schema: ruflo
+
+neural:
+  enabled: true
+  modelPath: .claude-flow/neural
+
+hooks:
+  enabled: true
+  autoExecute: true
+  preTask:
+    - name: pai-context
+      description: Load PAI context before task execution
+      action: mcp_call
+      params:
+        tool: get_context
+  postTask:
+    - name: pai-learning
+      description: Record significant learnings to PAI
+      action: mcp_call
+      params:
+        tool: record_learning
+
+providers:
+  # Route through LiteLLM for logging + multi-model routing
+  primary:
+    type: litellm
+    baseUrl: http://127.0.0.1:4000
+    apiKey: sk-imladris-litellm
+  # Fallback: direct Bedrock if LiteLLM is down
+  fallback:
+    type: bedrock
+    region: us-east-1
+
+mcp:
+  # Ruflo exposes itself as MCP server
+  server:
+    enabled: true
+    transport: stdio
+  # Ruflo connects to Palantír for PAI knowledge
+  clients:
+    palantir:
+      command: bun
+      args: ["run", "scripts/palantir/server.ts"]
+
+# Build phase delegation: PAI Algorithm → Ruflo
+# When PAI's BUILD phase triggers, Ruflo receives ISC criteria as task spec
+delegation:
+  enabled: true
+  triggerOn: multi-file-change
+  minFiles: 2
+  acceptFrom: pai-algorithm
