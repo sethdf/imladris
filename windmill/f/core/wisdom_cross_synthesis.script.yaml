@@ -1,0 +1,12 @@
+summary: Wisdom Cross-Frame Synthesis (weekly)
+description: Finds cross-domain patterns by synthesizing across all Wisdom Frames
+  in ~/.claude/MEMORY/WISDOM/. Wraps the PAI WisdomCrossFrameSynthesizer.ts tool.
+  Must run on the native worker group.
+lock: ''
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties: {}
+  required: []
+tag: native

@@ -1,0 +1,11 @@
+args: {}
+cron_version: v2
+email: admin@windmill.dev
+enabled: true
+is_flow: false
+no_flow_overlap: false
+schedule: 0 0 6 * * *
+script_path: f/core/integrity_audit
+summary: Daily PAI memory integrity audit
+timezone: America/Los_Angeles
+ws_error_handler_muted: false

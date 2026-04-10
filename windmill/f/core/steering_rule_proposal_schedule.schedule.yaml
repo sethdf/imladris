@@ -1,0 +1,12 @@
+args:
+  signal_threshold: 5
+cron_version: v2
+email: admin@windmill.dev
+enabled: true
+is_flow: false
+no_flow_overlap: false
+schedule: 0 0 6 * * 1
+script_path: f/core/steering_rule_proposal
+summary: Weekly steering rule proposal pass (Mondays 06:00)
+timezone: America/Los_Angeles
+ws_error_handler_muted: false

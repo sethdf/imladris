@@ -1,0 +1,16 @@
+summary: Session Harvester (nightly)
+description: Extracts learnings from ~/.claude/projects/ session transcripts
+  into ~/.claude/MEMORY/LEARNING/. Wraps the PAI SessionHarvester.ts tool.
+  Must run on the native worker group — requires host filesystem access.
+lock: ''
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    recent:
+      type: number
+      description: Number of most recent sessions to harvest
+      default: 20
+  required: []
+tag: native

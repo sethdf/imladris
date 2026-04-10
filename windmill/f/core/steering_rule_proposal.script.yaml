@@ -1,0 +1,18 @@
+summary: Steering Rule Proposal (weekly, v1 heuristic)
+description: Reads recent ~/.claude/MEMORY/SYNTHESIS/*.md pattern reports and
+  proposes candidate steering rules, writing them to
+  ~/.claude/MEMORY/STEERING_PROPOSALS/ for human review. Heuristic-only in v1
+  (no LLM, no semantic search). v2 with semantic search blocked on
+  memory-sync Phase 4b reconciliation. Must run on the native worker group.
+lock: ''
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    signal_threshold:
+      type: number
+      description: Minimum signal count for a pattern to be proposed
+      default: 5
+  required: []
+tag: native

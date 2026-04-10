@@ -1,0 +1,16 @@
+summary: Learning Pattern Synthesis (weekly)
+description: Aggregates ratings from ~/.claude/MEMORY/SIGNALS/ into pattern
+  reports in ~/.claude/MEMORY/SYNTHESIS/. Wraps the PAI LearningPatternSynthesis.ts
+  tool. Must run on the native worker group.
+lock: ''
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    window_days:
+      type: number
+      description: Rolling window of days to aggregate signals over
+      default: 7
+  required: []
+tag: native
