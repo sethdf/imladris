@@ -38,7 +38,11 @@ export async function main(
   const { Client } = (await import("pg")) as any;
 
   const dbUrl = new URL(process.env.DATABASE_URL!);
-  dbUrl.pathname = "/pai_memory";
+  // The deployed memory_vectors table lives in the `pai` database, NOT
+  // `pai_memory` (which is a leftover staging DB with no Phase 2+ tables).
+  // Verified 2026-04-10: pai.core.memory_vectors has 1902 rows;
+  // pai_memory has only Phase 1 tables. See memory-sync.md §4 status block.
+  dbUrl.pathname = "/pai";
 
   // Single client — holds one PG backend process with cached model
   const client = new Client({ connectionString: dbUrl.toString() });

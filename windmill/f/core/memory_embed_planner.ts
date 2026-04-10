@@ -21,9 +21,10 @@ export async function main(
 ) {
   const { Client } = (await import("pg")) as any;
 
-  // Derive pai_memory URL from DATABASE_URL (workers have windmill DB URL in env)
+  // Derive `pai` DB URL from DATABASE_URL (workers have windmill DB URL in env).
+  // memory_vectors lives in the `pai` database, not `pai_memory`. Fixed 2026-04-10.
   const dbUrl = new URL(process.env.DATABASE_URL!);
-  dbUrl.pathname = "/pai_memory";
+  dbUrl.pathname = "/pai";
 
   const client = new Client({ connectionString: dbUrl.toString() });
   await client.connect();
