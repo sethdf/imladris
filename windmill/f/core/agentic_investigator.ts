@@ -194,6 +194,53 @@ ${algorithmPrinciples}`;
 
 const SYSTEM_PROMPT = buildSystemPrompt();
 
+// ── PAI Context Preamble (memory-sync Phase 4c) ──
+//
+// Before each investigation, query Postgres core.assemble_context() to get
+// PAI's institutional knowledge relevant to the current alert — recent
+// learnings, failure patterns, and domain wisdom. Prepend it to the system
+// prompt so Opus starts each investigation with the accumulated lessons
+// from every prior run.
+//
+// Fails open: if Postgres is unreachable, the function returns empty string
+// and the investigator runs with only the base system prompt (current behavior).
+
+async function fetchPAIContext(taskDescription: string): Promise<string> {
+  const dbUrlRaw = process.env.DATABASE_URL;
+  if (!dbUrlRaw) return "";
+
+  try {
+    const { Client } = (await import("pg")) as any;
+    const dbUrl = new URL(dbUrlRaw);
+    dbUrl.pathname = "/pai";
+    const client = new Client({ connectionString: dbUrl.toString(), statement_timeout: 5000 });
+    await client.connect();
+    try {
+      const res = await client.query(
+        "SELECT core.assemble_context($1, $2) AS ctx",
+        [taskDescription.slice(0, 2000), "standard"],
+      );
+      const ctx = res.rows?.[0]?.ctx;
+      if (!ctx) return "";
+      const methodology = ctx.methodology || "";
+      const memory = ctx.relevant_memory || ctx.memory || "";
+      const stats = ctx.stats ? JSON.stringify(ctx.stats) : "";
+      const parts: string[] = [];
+      if (methodology) parts.push(`METHODOLOGY:\n${methodology}`);
+      if (memory) parts.push(`RELEVANT PAI MEMORY:\n${typeof memory === "string" ? memory : JSON.stringify(memory)}`);
+      if (stats) parts.push(`MEMORY STATS: ${stats}`);
+      return parts.length
+        ? `\n\n━━━ PAI INSTITUTIONAL CONTEXT (from core.assemble_context) ━━━\n${parts.join("\n\n")}\n`
+        : "";
+    } finally {
+      await client.end().catch(() => {});
+    }
+  } catch (err) {
+    console.warn(`[PAI context] fetch failed, continuing without: ${(err as Error).message}`);
+    return "";
+  }
+}
+
 // ── Tool Definitions ──
 
 const TOOLS: ToolConfiguration = {
@@ -1029,7 +1076,12 @@ export async function main(
   }
 
   const client = new BedrockRuntimeClient({ region: "us-east-1" });
-  const system: SystemContentBlock[] = [{ text: SYSTEM_PROMPT }];
+
+  // Phase 4c: prepend PAI institutional context (methodology + relevant memory)
+  // to the system prompt for this investigation. Fails open if Postgres is down.
+  const taskDesc = `${subject} — ${triage_classification || "unclassified"} — ${source}`;
+  const paiContext = await fetchPAIContext(taskDesc);
+  const system: SystemContentBlock[] = [{ text: SYSTEM_PROMPT + paiContext }];
 
   // Build initial user message with alert context
   const alertContext = [
