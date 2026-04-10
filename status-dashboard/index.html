@@ -83,7 +83,7 @@ const WM_BASE = window.location.pathname.replace(/\/+$/, '');
 const WM_PATH = '/api/w/imladris/jobs/run_wait_result/p/f/imladris/status_check';
 
 let state = {
-  tab: 'status',
+  tab: 'health',
   // status tab
   data: null, loading: false, mode: 'quick', auto: false, error: null, collapsed: {},
   // triage tab
@@ -97,6 +97,9 @@ let state = {
   aiActivity: null, aiLoading: false,
   // integrations tab
   integrations: null, integrationsLoading: false, intDomain: '',
+  // health tab — at-a-glance "is everything running and working?"
+  healthCreds: null, healthSchedules: null, healthSync: null, healthCi: null,
+  healthLoading: false,
 };
 let autoTimer = null;
 
@@ -551,7 +554,7 @@ function renderAiTab(nodes) {
   }
 
   // MCP calls by tool
-  const mcpTools = Object.entries(a.mcp_calls_by_tool || {}).sort((a, b) => (b[1] as number) - (a[1] as number));
+  const mcpTools = Object.entries(a.mcp_calls_by_tool || {}).sort((a, b) => Number(b[1]) - Number(a[1]));
   if (mcpTools.length > 0) {
     nodes.push(section('mcp-summary', `MCP Calls (last ${a.period_hours}h)`,
       h('table', null,
@@ -644,6 +647,173 @@ function renderIntegrationsTab(nodes) {
   )));
 }
 
+// ── Health tab logic ──
+
+async function loadHealth() {
+  state.healthLoading = true; render();
+  try {
+    const [credR, schedR, syncR, ciR] = await Promise.all([
+      fetch('/health/credentials').then(r => r.json()).catch(e => ({ error: e.message })),
+      fetch('/health/schedules').then(r => r.json()).catch(e => ({ error: e.message })),
+      fetch('/health/sync-daemon').then(r => r.json()).catch(e => ({ error: e.message })),
+      fetch('/health/ci').then(r => r.json()).catch(e => ({ error: e.message })),
+    ]);
+    state.healthCreds = credR;
+    state.healthSchedules = schedR;
+    state.healthSync = syncR;
+    state.healthCi = ciR;
+  } finally {
+    state.healthLoading = false;
+    render();
+  }
+}
+
+function dot(status) {
+  // Returns a colored circle char by status
+  const map = {
+    fresh: '🟢', ok: '🟢', active: '🟢', success: '🟢', present: '🟢', completed: '🟢',
+    aging: '🟡', idle: '🟡', 'no-runs': '🟡', in_progress: '🟡', queued: '🟡',
+    stale: '🔴', failing: '🔴', missing: '🔴', error: '🔴', failure: '🔴', cancelled: '🔴', expired: '🔴',
+    unknown: '⚪',
+  };
+  return map[status] || '⚪';
+}
+
+function renderHealthTab(nodes) {
+  if (state.healthLoading && !state.healthCreds) {
+    nodes.push(h('div', { className: 'loading' }, 'Loading health…'));
+    return;
+  }
+
+  // Top-line summary banner
+  const c = state.healthCreds?.summary || {};
+  const s = state.healthSchedules?.summary || {};
+  const sync = state.healthSync || {};
+  const ci = state.healthCi || {};
+  const overall = (
+    (c.expired || 0) > 0 || (c.missing || 0) > 0 ||
+    (s.failing || 0) > 0 ||
+    sync.status === 'stale' || sync.status === 'error' ||
+    ci.latest_conclusion === 'failure'
+  ) ? '🔴' : (
+    (c.aging || 0) > 0 || (s.no_runs || 0) > 0 ||
+    sync.status === 'idle' || sync.status === 'unknown' ||
+    ci.latest_conclusion === null
+  ) ? '🟡' : '🟢';
+
+  nodes.push(section('health-summary', `${overall} Overall Health`,
+    h('div', { className: 'cg' },
+      h('div', null,
+        h('strong', null, 'Credentials: '),
+        `${c.present || 0} present, ${c.aging || 0} OAuth aging, ${c.expired || 0} expired, ${c.missing || 0} missing`,
+      ),
+      h('div', null,
+        h('strong', null, 'Schedules: '),
+        `${s.ok || 0} ok, ${s.failing || 0} failing, ${s.no_runs || 0} no-runs (of ${s.total || 0} enabled)`,
+      ),
+      h('div', null,
+        h('strong', null, 'Sync daemon: '),
+        `${dot(sync.status)} ${sync.status || 'unknown'}`,
+        sync.minutes_since_write != null ? ` — ${sync.minutes_since_write}m since last write` : '',
+        sync.unembedded_backlog != null ? ` — ${sync.unembedded_backlog} unembedded` : '',
+      ),
+      h('div', null,
+        h('strong', null, 'CI: '),
+        ci.latest_conclusion ? `${dot(ci.latest_conclusion)} ${ci.latest_conclusion}` :
+        ci.latest_status ? `${dot(ci.latest_status)} ${ci.latest_status}` : `${dot('unknown')} no runs yet`,
+      ),
+    )
+  ));
+
+  // Credentials detail (Windmill API does not expose updated_at on variables;
+  // expires_at is only set on OAuth tokens — that's the actionable freshness signal)
+  if (state.healthCreds?.credentials) {
+    nodes.push(section('health-creds', 'Credentials',
+      h('table', null,
+        h('thead', null, h('tr', null,
+          h('th', null, ''), h('th', null, 'Variable'),
+          h('th', null, 'Type'), h('th', null, 'Expires'), h('th', null, 'Critical'),
+        )),
+        h('tbody', null,
+          ...state.healthCreds.credentials.map(item => h('tr', null,
+            h('td', null, dot(item.status)),
+            h('td', null, h('div', null, item.label), h('div', { className: 'dim' }, item.path)),
+            h('td', null, item.is_oauth ? 'OAuth' : item.is_secret ? 'secret' : 'plain'),
+            h('td', null,
+              item.expires_at
+                ? `${new Date(item.expires_at).toISOString().slice(0, 10)} (${item.expires_in_days}d)`
+                : item.status === 'missing' ? '—' : 'no expiry'
+            ),
+            h('td', null, item.critical ? '⚠' : ''),
+          )),
+        ),
+      )
+    ));
+  }
+
+  // Schedules detail
+  if (state.healthSchedules?.schedules) {
+    nodes.push(section('health-sched', 'Enabled Schedules — Last Run + Success Rate',
+      h('table', null,
+        h('thead', null, h('tr', null,
+          h('th', null, ''), h('th', null, 'Script'),
+          h('th', null, 'Cron'), h('th', null, 'Last Run'), h('th', null, '10-run rate'),
+        )),
+        h('tbody', null,
+          ...state.healthSchedules.schedules.map(s => h('tr', null,
+            h('td', null, dot(s.status)),
+            h('td', null, s.script_path || s.path),
+            h('td', null, s.schedule || '—'),
+            h('td', null, s.last_run_at ? new Date(s.last_run_at).toISOString().replace('T', ' ').slice(0, 16) : 'never'),
+            h('td', null, s.success_rate_10 != null ? `${s.success_rate_10}%` : '—'),
+          )),
+        ),
+      )
+    ));
+  }
+
+  // Sync daemon detail
+  if (sync.last_object_write !== undefined) {
+    nodes.push(section('health-sync', 'PAI Sync Daemon (Postgres core.memory_*)',
+      h('div', { className: 'cg' },
+        h('div', null, h('strong', null, 'Status: '), `${dot(sync.status)} ${sync.status}`),
+        h('div', null, h('strong', null, 'Last write: '), sync.last_object_write || '—'),
+        h('div', null, h('strong', null, 'Minutes idle: '), sync.minutes_since_write ?? '—'),
+        h('div', null, h('strong', null, 'Total objects: '), sync.total_objects ?? '—'),
+        h('div', null, h('strong', null, 'Total vectors: '), sync.total_vectors ?? '—'),
+        h('div', null, h('strong', null, 'Unembedded backlog: '), sync.unembedded_backlog ?? '—'),
+      )
+    ));
+  }
+
+  // CI detail
+  if (state.healthCi?.runs?.length) {
+    nodes.push(section('health-ci', 'GitHub Actions — test.yml',
+      h('table', null,
+        h('thead', null, h('tr', null,
+          h('th', null, ''), h('th', null, '#'), h('th', null, 'Branch'),
+          h('th', null, 'SHA'), h('th', null, 'Event'), h('th', null, 'Conclusion'), h('th', null, 'When'),
+        )),
+        h('tbody', null,
+          ...state.healthCi.runs.map(r => h('tr', null,
+            h('td', null, dot(r.conclusion || r.status)),
+            h('td', null, h('a', { href: r.html_url, target: '_blank' }, `#${r.run_number}`)),
+            h('td', null, r.head_branch),
+            h('td', null, r.head_sha),
+            h('td', null, r.event),
+            h('td', null, r.conclusion || r.status || '—'),
+            h('td', null, r.created_at ? new Date(r.created_at).toISOString().replace('T', ' ').slice(0, 16) : '—'),
+          )),
+        ),
+      )
+    ));
+  } else if (state.healthCi?.error) {
+    nodes.push(section('health-ci', 'GitHub Actions — test.yml',
+      h('div', { className: 'dim' }, `CI fetch error: ${state.healthCi.error}`)
+    ));
+  }
+}
+
 // ── Main render ──
 
 function render() {
@@ -655,8 +825,9 @@ function render() {
     h('h1', null, 'Imladris'),
   ));
 
-  // Tab nav
+  // Tab nav — Health is first (at-a-glance answer to "is everything running?")
   nodes.push(h('div', { className: 'tabs' },
+    h('button', { className: `tab ${state.tab === 'health' ? 'active' : ''}`, onclick: () => { if (state.tab !== 'health') { state.tab = 'health'; loadHealth(); } else render(); } }, 'Health'),
     h('button', { className: `tab ${state.tab === 'status' ? 'active' : ''}`, onclick: () => { state.tab = 'status'; render(); } }, 'Status'),
     h('button', { className: `tab ${state.tab === 'triage' ? 'active' : ''}`, onclick: () => { if (state.tab !== 'triage') { state.tab = 'triage'; loadTriage(); } else render(); } }, 'Triage'),
     h('button', { className: `tab ${state.tab === 'sessions' ? 'active' : ''}`, onclick: () => { if (state.tab !== 'sessions') { state.tab = 'sessions'; loadSessions(); } else render(); } }, 'Sessions'),
@@ -665,7 +836,8 @@ function render() {
     h('button', { className: `tab ${state.tab === 'integrations' ? 'active' : ''}`, onclick: () => { if (state.tab !== 'integrations') { state.tab = 'integrations'; loadIntegrations(); } else render(); } }, 'Integrations'),
   ));
 
-  if (state.tab === 'status') renderStatusTab(nodes);
+  if (state.tab === 'health') renderHealthTab(nodes);
+  else if (state.tab === 'status') renderStatusTab(nodes);
   else if (state.tab === 'triage') renderTriageTab(nodes);
   else if (state.tab === 'sessions') renderSessionsTab(nodes);
   else if (state.tab === 'mcp') renderMcpTab(nodes);
@@ -676,6 +848,7 @@ function render() {
 }
 
 render();
+loadHealth();   // tab defaults to 'health' so kick off the fetch
 runCheck();
 </script>
 </body>

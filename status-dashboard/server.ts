@@ -296,6 +296,193 @@ Bun.serve({
       }
     }
 
+    // ── GET /health/credentials — Windmill variable presence + OAuth expiry for known creds ──
+    if (url.pathname === "/health/credentials" && req.method === "GET") {
+      // Probe a known set of credential variable paths. Windmill variables don't
+      // expose updated_at/created_at via API, but OAuth variables do expose
+      // expires_at + is_expired which is the most actionable freshness signal.
+      const probes = [
+        { path: "f/devops/sdp_api_key", label: "SDP API key", critical: true },
+        { path: "f/devops/sdp_base_url", label: "SDP base URL", critical: false },
+        { path: "f/investigate/site24x7_access_token", label: "Site24x7 access token", critical: true },
+        { path: "f/investigate/site24x7_refresh_token", label: "Site24x7 refresh token", critical: false },
+        { path: "f/devops/site24x7_client_id", label: "Site24x7 client ID", critical: false },
+        { path: "f/devops/site24x7_client_secret", label: "Site24x7 client secret", critical: false },
+        { path: "f/investigate/aikido_client_id", label: "Aikido client ID", critical: false },
+        { path: "f/investigate/aikido_client_secret", label: "Aikido client secret", critical: true },
+        { path: "f/devops/m365_tenant_id", label: "M365 tenant ID", critical: false },
+        { path: "f/devops/m365_client_id", label: "M365 client ID", critical: false },
+        { path: "f/devops/m365_client_secret", label: "M365 client secret", critical: true },
+      ];
+      const items: any[] = [];
+      const now = Date.now();
+      for (const p of probes) {
+        try {
+          const meta = await fetch(
+            `${WINDMILL}/api/w/${WS}/variables/get/${encodeURIComponent(p.path)}`,
+            { headers: { Authorization: `Bearer ${WM_TOKEN}` } },
+          );
+          if (meta.ok) {
+            const m = (await meta.json()) as any;
+            const expiresAt = m.expires_at || null;
+            const isExpired = m.is_expired === true;
+            const expiresInDays = expiresAt ? Math.round((new Date(expiresAt).getTime() - now) / 86400000) : null;
+            let status: string;
+            if (isExpired) status = "expired";
+            else if (expiresInDays != null && expiresInDays <= 0) status = "expired";
+            else if (expiresInDays != null && expiresInDays <= 7) status = "aging";
+            else status = "present";  // present-but-no-expiry-info OR fresh OAuth
+            items.push({
+              path: p.path,
+              label: p.label,
+              critical: p.critical,
+              present: true,
+              is_secret: m.is_secret === true,
+              is_oauth: m.is_oauth === true,
+              expires_at: expiresAt,
+              expires_in_days: expiresInDays,
+              description: m.description || null,
+              status,
+            });
+          } else {
+            items.push({
+              path: p.path,
+              label: p.label,
+              critical: p.critical,
+              present: false,
+              status: "missing",
+            });
+          }
+        } catch (e: any) {
+          items.push({ path: p.path, label: p.label, critical: p.critical, status: "error", error: e.message });
+        }
+      }
+      const summary = {
+        total: items.length,
+        present: items.filter(i => i.status === "present").length,
+        aging: items.filter(i => i.status === "aging").length,
+        expired: items.filter(i => i.status === "expired").length,
+        missing: items.filter(i => i.status === "missing").length,
+      };
+      return json({ credentials: items, summary });
+    }
+
+    // ── GET /health/schedules — last-run + success rate per enabled schedule ──
+    if (url.pathname === "/health/schedules" && req.method === "GET") {
+      try {
+        const schedResp = await fetch(
+          `${WINDMILL}/api/w/${WS}/schedules/list?per_page=200`,
+          { headers: { Authorization: `Bearer ${WM_TOKEN}` } },
+        );
+        if (!schedResp.ok) return json({ schedules: [], error: `schedules list ${schedResp.status}` }, 502);
+        const schedules = (await schedResp.json()) as any[];
+
+        const enriched = await Promise.all(
+          schedules.filter((s: any) => s.enabled).map(async (s: any) => {
+            try {
+              const jobResp = await fetch(
+                `${WINDMILL}/api/w/${WS}/jobs/completed/list?schedule_path=${encodeURIComponent(s.path)}&per_page=10&order_desc=true`,
+                { headers: { Authorization: `Bearer ${WM_TOKEN}` } },
+              );
+              const jobs = jobResp.ok ? (await jobResp.json() as any[]) : [];
+              const successCount = jobs.filter((j: any) => j.success).length;
+              const last = jobs[0] || null;
+              return {
+                path: s.path,
+                script_path: s.script_path,
+                schedule: s.schedule,
+                timezone: s.timezone,
+                last_run_at: last?.created_at || null,
+                last_success: last?.success ?? null,
+                success_rate_10: jobs.length ? Math.round((successCount / jobs.length) * 100) : null,
+                runs_seen: jobs.length,
+                status: !last ? "no-runs" : last.success ? "ok" : "failing",
+              };
+            } catch (e: any) {
+              return { path: s.path, status: "error", error: e.message };
+            }
+          }),
+        );
+
+        const summary = {
+          total: enriched.length,
+          ok: enriched.filter(s => s.status === "ok").length,
+          failing: enriched.filter(s => s.status === "failing").length,
+          no_runs: enriched.filter(s => s.status === "no-runs").length,
+        };
+        return json({ schedules: enriched, summary });
+      } catch (e: any) {
+        return json({ schedules: [], error: e.message }, 500);
+      }
+    }
+
+    // ── GET /health/sync-daemon — pai-sync inotify/embedding daemon health ──
+    if (url.pathname === "/health/sync-daemon" && req.method === "GET") {
+      const pool = getPg();
+      if (!pool) return json({ status: "unknown", reason: "POSTGRES_URL not set" });
+      try {
+        const { rows } = await pool.query(`
+          SELECT
+            (SELECT MAX(updated_at) FROM core.memory_objects) AS last_object_write,
+            (SELECT count(*) FROM core.memory_objects WHERE NOT deleted) AS total_objects,
+            (SELECT count(*) FROM core.memory_vectors) AS total_vectors,
+            (SELECT count(*) FROM core.memory_objects mo
+              WHERE NOT deleted
+              AND NOT EXISTS (SELECT 1 FROM core.memory_vectors mv WHERE mv.source_key = mo.key)
+            ) AS unembedded_objects
+        `);
+        const r = rows[0];
+        const lastWrite = r.last_object_write ? new Date(r.last_object_write).getTime() : null;
+        const ageMin = lastWrite ? Math.round((Date.now() - lastWrite) / 60000) : null;
+        const status = ageMin === null ? "unknown" :
+                       ageMin <= 5 ? "active" :
+                       ageMin <= 60 ? "idle" :
+                       "stale";
+        return json({
+          status,
+          last_object_write: r.last_object_write,
+          minutes_since_write: ageMin,
+          total_objects: parseInt(r.total_objects, 10),
+          total_vectors: parseInt(r.total_vectors, 10),
+          unembedded_backlog: parseInt(r.unembedded_objects, 10),
+        });
+      } catch (e: any) {
+        return json({ status: "error", error: e.message }, 500);
+      }
+    }
+
+    // ── GET /health/ci — latest GitHub Actions run for test.yml ──
+    if (url.pathname === "/health/ci" && req.method === "GET") {
+      try {
+        // Public repo, unauthenticated read OK
+        const r = await fetch(
+          "https://api.github.com/repos/sethdf/imladris/actions/workflows/test.yml/runs?per_page=5",
+          { headers: { "User-Agent": "imladris-status-dashboard" } },
+        );
+        if (!r.ok) return json({ runs: [], error: `gh api ${r.status}` }, 502);
+        const data = (await r.json()) as any;
+        const runs = (data.workflow_runs || []).map((run: any) => ({
+          id: run.id,
+          run_number: run.run_number,
+          event: run.event,
+          status: run.status,
+          conclusion: run.conclusion,
+          created_at: run.created_at,
+          html_url: run.html_url,
+          head_branch: run.head_branch,
+          head_sha: run.head_sha?.slice(0, 7),
+        }));
+        const latest = runs[0];
+        return json({
+          runs,
+          latest_status: latest?.status || null,
+          latest_conclusion: latest?.conclusion || null,
+        });
+      } catch (e: any) {
+        return json({ runs: [], error: e.message }, 500);
+      }
+    }
+
     // ── Proxy API calls to Windmill with server-side auth ──
     if (url.pathname.startsWith("/api/")) {
       const target = `${WINDMILL}${url.pathname}${url.search}`;
