@@ -28,3 +28,12 @@ windmill/wmill-lock.yaml
 windmill/.claude/
 windmill/CLAUDE.md
 windmill/AGENTS.md
+
+# modules/pai — defense-in-depth: never commit runtime/secrets/personal
+modules/pai/settings.json
+modules/pai/**/.env
+modules/pai/**/*.key
+modules/pai/**/*.pem
+modules/pai/**/.credentials.json
+modules/pai/USER/
+modules/pai/TELOS/

@@ -1,0 +1,1 @@
+/home/ec2-user/repos/imladris/pai-config/hooks/PreCompact.hook.ts
