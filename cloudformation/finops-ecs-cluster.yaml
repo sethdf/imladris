@@ -1,0 +1,104 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  FinOps - ECS Fargate cluster and shared task execution role.
+  This is the runtime foundation for all services (Metabase, Airbyte, dbt,
+  reverse-ETL). Uses FARGATE_SPOT as default capacity provider with FARGATE
+  fallback - Spot saves ~70% for workloads that tolerate interruption. Long-
+  running services (Metabase) should override back to FARGATE in their task.
+
+Parameters:
+  ProjectTag:
+    Type: String
+    Default: Finops
+
+  VpcStackName:
+    Type: String
+    Description: finops-vpc stack name.
+
+  ContainerInsightsMode:
+    Type: String
+    Default: enhanced
+    AllowedValues: [enhanced, enabled, disabled]
+    Description: ECS Container Insights. 'enhanced' adds richer metrics at modest cost.
+
+Resources:
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub '${ProjectTag}-cluster'
+      ClusterSettings:
+        - Name: containerInsights
+          Value: !Ref ContainerInsightsMode
+      CapacityProviders: [FARGATE, FARGATE_SPOT]
+      DefaultCapacityProviderStrategy:
+        - { CapacityProvider: FARGATE_SPOT, Weight: 4 }
+        - { CapacityProvider: FARGATE,      Weight: 1 }
+      Tags:
+        - { Key: Project, Value: !Ref ProjectTag }
+
+  # Shared execution role - every task uses this to pull from ECR, read
+  # secrets at startup, and ship logs. Per-task roles (for runtime DB/API
+  # access) live in each service's own stack.
+  TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectTag}-task-exec'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ecs-tasks.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: ReadSecretsManager
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:DescribeSecret
+                Resource:
+                  - !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ProjectTag}/*'
+                  - !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:rds!*'  # RDS-managed
+      Tags:
+        - { Key: Project, Value: !Ref ProjectTag }
+
+  # Namespace for service discovery across tasks (useful when Airbyte's
+  # worker needs to reach the server).
+  ServiceDiscoveryNamespace:
+    Type: AWS::ServiceDiscovery::PrivateDnsNamespace
+    Properties:
+      Name: !Sub '${ProjectTag}.local'
+      Vpc: !ImportValue
+        Fn::Sub: '${VpcStackName}-VpcId'
+
+  # Shared log group for task output; each service uses its own stream prefix.
+  ClusterLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /ecs/${ProjectTag}
+      RetentionInDays: 30
+
+Outputs:
+  ClusterName:
+    Value: !Ref Cluster
+    Export: { Name: !Sub '${AWS::StackName}-ClusterName' }
+
+  ClusterArn:
+    Value: !GetAtt Cluster.Arn
+    Export: { Name: !Sub '${AWS::StackName}-ClusterArn' }
+
+  TaskExecutionRoleArn:
+    Value: !GetAtt TaskExecutionRole.Arn
+    Export: { Name: !Sub '${AWS::StackName}-TaskExecutionRoleArn' }
+
+  ServiceDiscoveryNamespaceId:
+    Value: !Ref ServiceDiscoveryNamespace
+    Export: { Name: !Sub '${AWS::StackName}-ServiceDiscoveryNamespaceId' }
+
+  ClusterLogGroupName:
+    Value: !Ref ClusterLogGroup
+    Export: { Name: !Sub '${AWS::StackName}-ClusterLogGroupName' }

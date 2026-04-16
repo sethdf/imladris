@@ -1,0 +1,53 @@
+version: 2
+
+sources:
+  - name: salesforce
+    schema: raw
+    description: Salesforce CRM data synced via Airbyte
+    tables:
+      - name: accounts
+        description: Salesforce Account objects
+      - name: opportunities
+        description: Salesforce Opportunity objects
+      - name: contacts
+        description: Salesforce Contact objects
+
+  - name: hubspot
+    schema: raw
+    description: HubSpot CRM data synced via Airbyte
+    tables:
+      - name: companies
+        description: HubSpot Company objects
+      - name: deals
+        description: HubSpot Deal objects
+      - name: contacts
+        description: HubSpot Contact objects
+
+  - name: gong
+    schema: raw
+    description: Gong conversation intelligence data synced via Airbyte
+    tables:
+      - name: calls
+        description: Gong call records
+      - name: transcripts
+        description: Gong call transcripts
+
+  - name: stripe
+    schema: raw
+    description: Stripe billing data synced via Airbyte
+    tables:
+      - name: customers
+        description: Stripe Customer objects
+      - name: subscriptions
+        description: Stripe Subscription objects
+      - name: invoices
+        description: Stripe Invoice objects
+
+  - name: chartmogul
+    schema: raw
+    description: ChartMogul subscription analytics data synced via Airbyte
+    tables:
+      - name: customers
+        description: ChartMogul Customer records
+      - name: mrr_movements
+        description: ChartMogul MRR movement events (new, expansion, contraction, churn, reactivation)

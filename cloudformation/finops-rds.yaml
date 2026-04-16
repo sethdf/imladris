@@ -1,0 +1,237 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  FinOps - RDS PostgreSQL (the actual data warehouse). Single-AZ
+  db.t4g.small with 50 GB gp3, 7-day PITR, master password managed by RDS
+  (auto-generated + auto-rotated via Secrets Manager - no password ever
+  touches CFN). Private subnets only; reachable from ECS Fargate tasks in
+  the same VPC via SG reference. Parameter group tuned for an analytics
+  workload (more connections, larger work_mem than defaults).
+
+  ChartMogul Destinations requires public network access to the DB to push
+  data. If that path is needed, set EnableChartMogulPublicAccess=true - this
+  flips publicly_accessible on the DB AND opens 5439 (TCP) from ChartMogul's
+  published egress CIDR. Default is false; start private, open only if
+  ChartMogul comes online and we commit to their native push.
+
+Parameters:
+  ProjectTag:
+    Type: String
+    Default: Finops
+
+  VpcStackName:
+    Type: String
+    Description: Name of the finops-vpc stack to import subnet/VPC IDs from.
+
+  DbInstanceClass:
+    Type: String
+    Default: db.t4g.small
+    Description: >
+      Graviton2 instance class. t4g.small = 2 vCPU, 2 GB, $0.032/hr ≈ $23/mo.
+      Resize in-place if workload grows (~10 min maintenance window).
+    AllowedValues:
+      - db.t4g.micro
+      - db.t4g.small
+      - db.t4g.medium
+      - db.t4g.large
+      - db.m6g.large
+      - db.m6g.xlarge
+      - db.r6g.large
+
+  DbAllocatedStorage:
+    Type: Number
+    Default: 50
+    MinValue: 20
+    MaxValue: 1000
+    Description: Initial gp3 storage in GB (auto-extends via MaxAllocatedStorage).
+
+  DbMaxAllocatedStorage:
+    Type: Number
+    Default: 500
+    Description: Upper bound on storage auto-scaling.
+
+  DbEngineVersion:
+    Type: String
+    Default: '16.4'
+    Description: PostgreSQL engine version.
+
+  DbName:
+    Type: String
+    Default: warehouse
+    Description: Initial database name.
+
+  MasterUsername:
+    Type: String
+    Default: whadmin
+    Description: DB master user. Password is RDS-managed (never exposed here).
+
+  BackupRetentionDays:
+    Type: Number
+    Default: 7
+    MinValue: 1
+    MaxValue: 35
+    Description: PITR retention window.
+
+  PreferredBackupWindow:
+    Type: String
+    Default: '07:00-08:00'
+    Description: UTC. 07:00-08:00 UTC = 03:00-04:00 ET (pre-business-hours).
+
+  PreferredMaintenanceWindow:
+    Type: String
+    Default: 'sun:08:00-sun:09:00'
+
+  EnableChartMogulPublicAccess:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: >
+      Flip to true when ChartMogul Destinations is enabled - makes the DB
+      publicly accessible AND adds an ingress rule from ChartMogul's egress
+      CIDR on port 5432. Leave false until needed.
+
+  ChartMogulEgressCidr:
+    Type: String
+    Default: '0.0.0.0/32'
+    Description: >
+      ChartMogul's published outbound CIDR (verify at their docs before
+      using; default is a no-op placeholder).
+
+Conditions:
+  ChartMogulPublic: !Equals [!Ref EnableChartMogulPublicAccess, 'true']
+
+Resources:
+  DbSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: !Sub '${ProjectTag} warehouse DB private subnets'
+      SubnetIds: !Split
+        - ','
+        - !ImportValue
+          Fn::Sub: '${VpcStackName}-PrivateSubnetIds'
+      Tags:
+        - { Key: Project, Value: !Ref ProjectTag }
+
+  DbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub '${ProjectTag} warehouse RDS - ingress from Fargate tasks'
+      VpcId:
+        Fn::ImportValue: !Sub '${VpcStackName}-VpcId'
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          CidrIp:
+            Fn::ImportValue: !Sub '${VpcStackName}-VpcCidr'
+          Description: 'PostgreSQL from anywhere in the warehouse VPC'
+      Tags:
+        - { Key: Name, Value: !Sub '${ProjectTag}-rds-sg' }
+        - { Key: Project, Value: !Ref ProjectTag }
+
+  ChartMogulIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: ChartMogulPublic
+    Properties:
+      GroupId: !Ref DbSecurityGroup
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+      CidrIp: !Ref ChartMogulEgressCidr
+      Description: 'ChartMogul Destinations egress'
+
+  # Param group family is POSTGRES + MAJOR ONLY (e.g., postgres16), not postgres16.4.
+  # Splitting the EngineVersion string to extract major.
+  DbParameterGroup:
+    Type: AWS::RDS::DBParameterGroup
+    Properties:
+      Description: !Sub '${ProjectTag} - analytics-tuned PG params'
+      Family: !Sub
+        - 'postgres${Major}'
+        - Major: !Select [0, !Split ['.', !Ref DbEngineVersion]]
+      # max_connections × work_mem must fit in RAM; reduced from 200/32MB to
+      # 80/16MB so worst-case concurrent-sort usage (80 × 16MB = 1.28 GB) stays
+      # well under 2 GB on db.t4g.small.
+      Parameters:
+        max_connections: '80'
+        work_mem: '16384'                     # 16 MB
+        maintenance_work_mem: '262144'        # 256 MB - VACUUM/CREATE INDEX
+        shared_buffers: '{DBInstanceClassMemory/32768}'  # ~25% RAM (RDS default pattern)
+        effective_cache_size: '{DBInstanceClassMemory/16384}'  # ~50% RAM
+        log_min_duration_statement: '1000'    # log queries > 1s
+
+        # Performance-tracking extensions: pg_stat_statements captures query
+        # stats (calls, total_time, rows, block IO); auto_explain logs slow-query
+        # plans. Both load at startup (static params => DB reboot required after
+        # first application). Extension itself is created per-database via
+        # CREATE EXTENSION pg_stat_statements;
+        shared_preload_libraries: 'pg_stat_statements,auto_explain'
+        'pg_stat_statements.track': 'all'           # track top-level AND nested statements
+        'pg_stat_statements.max': '10000'
+        'pg_stat_statements.save': '1'              # survive restart
+        'track_activity_query_size': '4096'         # see longer queries in pg_stat_activity
+        'track_io_timing': '1'
+        'auto_explain.log_min_duration': '5000'     # plans for queries > 5s
+        'auto_explain.log_analyze': '1'
+        'auto_explain.log_buffers': '1'
+      Tags:
+        - { Key: Project, Value: !Ref ProjectTag }
+
+  DbInstance:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      Engine: postgres
+      EngineVersion: !Ref DbEngineVersion
+      DBInstanceClass: !Ref DbInstanceClass
+      AllocatedStorage: !Ref DbAllocatedStorage
+      MaxAllocatedStorage: !Ref DbMaxAllocatedStorage
+      StorageType: gp3
+      StorageEncrypted: true
+      DBName: !Ref DbName
+      MasterUsername: !Ref MasterUsername
+      ManageMasterUserPassword: true        # RDS creates + rotates secret
+      DBSubnetGroupName: !Ref DbSubnetGroup
+      VPCSecurityGroups: [!Ref DbSecurityGroup]
+      DBParameterGroupName: !Ref DbParameterGroup
+      MultiAZ: false
+      PubliclyAccessible: !If [ChartMogulPublic, true, false]
+      BackupRetentionPeriod: !Ref BackupRetentionDays
+      PreferredBackupWindow: !Ref PreferredBackupWindow
+      PreferredMaintenanceWindow: !Ref PreferredMaintenanceWindow
+      CopyTagsToSnapshot: true
+      DeletionProtection: true
+      EnableIAMDatabaseAuthentication: true   # engineers authenticate via IAM
+      EnablePerformanceInsights: true
+      PerformanceInsightsRetentionPeriod: 7
+      AutoMinorVersionUpgrade: true
+      Tags:
+        - { Key: Name, Value: !Sub '${ProjectTag}-db' }
+        - { Key: Project, Value: !Ref ProjectTag }
+
+Outputs:
+  DbInstanceId:
+    Value: !Ref DbInstance
+    Export: { Name: !Sub '${AWS::StackName}-DbInstanceId' }
+
+  DbEndpoint:
+    Value: !GetAtt DbInstance.Endpoint.Address
+    Export: { Name: !Sub '${AWS::StackName}-DbEndpoint' }
+
+  DbPort:
+    Value: !GetAtt DbInstance.Endpoint.Port
+    Export: { Name: !Sub '${AWS::StackName}-DbPort' }
+
+  DbSecurityGroupId:
+    Value: !Ref DbSecurityGroup
+    Description: 'Reference this SG in Fargate task SGs to grant DB access.'
+    Export: { Name: !Sub '${AWS::StackName}-DbSecurityGroupId' }
+
+  MasterSecretArn:
+    Value: !GetAtt DbInstance.MasterUserSecret.SecretArn
+    Description: 'Secrets Manager ARN of the RDS-managed master password.'
+    Export: { Name: !Sub '${AWS::StackName}-MasterSecretArn' }
+
+  DbName:
+    Value: !Ref DbName
+    Export: { Name: !Sub '${AWS::StackName}-DbName' }
