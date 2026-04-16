@@ -1,0 +1,27 @@
+summary: Steering Rule Proposal v2 (weekly, semantic, v0.1-draft)
+description: >-
+  Semantic-search-backed steering rule proposal. Uses core.reasoning_patterns
+  success_rating and core.memory_vectors learning patterns to propose DO/AVOID
+  rules. Writes proposals to ~/.claude/MEMORY/STEERING_PROPOSALS/. v2 replaces
+  the heuristic v1 with database-backed analysis. v0.1-draft.
+lock: '!inline f/core/steering_rule_proposal_v2.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    min_success_rating:
+      type: number
+      description: Minimum success_rating to consider a reasoning pattern
+      default: 7
+    min_pattern_frequency:
+      type: number
+      description: Minimum occurrence count to propose a rule
+      default: 3
+    lookback_days:
+      type: number
+      description: Number of days to look back for patterns
+      default: 60
+  required: []
+language: bun
+tag: native

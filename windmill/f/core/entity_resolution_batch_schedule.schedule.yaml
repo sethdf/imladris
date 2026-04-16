@@ -1,0 +1,13 @@
+args:
+  name_similarity_threshold: 0.8
+  dry_run: true
+cron_version: v2
+email: admin@windmill.dev
+enabled: false
+is_flow: false
+no_flow_overlap: false
+schedule: 0 0 7 * * 1
+script_path: f/core/entity_resolution_batch
+summary: Weekly entity resolution batch (Mondays 07:00 Denver)
+timezone: America/Denver
+ws_error_handler_muted: false

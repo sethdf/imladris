@@ -1,0 +1,14 @@
+args:
+  min_success_rating: 7
+  min_pattern_frequency: 3
+  lookback_days: 60
+cron_version: v2
+email: admin@windmill.dev
+enabled: false
+is_flow: false
+no_flow_overlap: false
+schedule: 0 0 7 * * 1
+script_path: f/core/steering_rule_proposal_v2
+summary: Weekly steering rule proposal v2 (Mondays 07:00 Denver)
+timezone: America/Denver
+ws_error_handler_muted: false

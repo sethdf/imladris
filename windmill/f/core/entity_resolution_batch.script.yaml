@@ -1,0 +1,22 @@
+summary: Entity Resolution Batch (weekly, v0.1-draft)
+description: >-
+  Deduplicates entities across shared/work/personal schemas by matching entity_id
+  and display_name similarity. Merges duplicates into shared.entities_global.
+  Defaults to dry_run=true for safety. v0.1-draft.
+lock: '!inline f/core/entity_resolution_batch.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties:
+    name_similarity_threshold:
+      type: number
+      description: Minimum Dice coefficient for display_name matching
+      default: 0.8
+    dry_run:
+      type: boolean
+      description: If true, report duplicates without merging
+      default: true
+  required: []
+language: bun
+tag: native

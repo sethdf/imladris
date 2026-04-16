@@ -164,6 +164,9 @@
           POSTGRES_URL={{ pai_sync_postgres_url }}
           PAI_SYNC_WATCH_ROOT={{ pai_sync_watch_root }}
           PAI_SYNC_MACHINE_ID={{ pai_sync_machine_id }}
+          PAI_SYNC_EXTRA_WATCH={{ claude_dir }}/projects
+          PAI_EMBED_BATCH_SIZE=20
+          PAI_EMBED_INTERVAL_MS=60000
       become: true
       when: pai_sync_postgres_url | length > 0
       no_log: true  # suppress URL (contains password) from Ansible output

@@ -1,0 +1,14 @@
+args:
+  lookback_days: 14
+  prefix_depth: 3
+  min_group_size: 2
+cron_version: v2
+email: admin@windmill.dev
+enabled: false
+is_flow: false
+no_flow_overlap: false
+schedule: 0 0 9 * * *
+script_path: f/core/contradiction_detection
+summary: Daily contradiction detection (09:00 Denver)
+timezone: America/Denver
+ws_error_handler_muted: false

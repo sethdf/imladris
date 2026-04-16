@@ -1,0 +1,14 @@
+args:
+  similarity_threshold: 0.85
+  lookback_days: 30
+  max_vectors: 500
+cron_version: v2
+email: admin@windmill.dev
+enabled: false
+is_flow: false
+no_flow_overlap: false
+schedule: 0 0 8 * * *
+script_path: f/core/failure_clustering
+summary: Daily failure clustering (08:00 Denver)
+timezone: America/Denver
+ws_error_handler_muted: false
