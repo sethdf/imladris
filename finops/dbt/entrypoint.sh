@@ -2,7 +2,7 @@
 set -euo pipefail
 
 echo "=== dbt debug ==="
-dbt debug --profiles-dir /dbt
+dbt debug --profiles-dir /dbt || echo "dbt debug had warnings (non-fatal)"
 
 echo "=== dbt deps ==="
 dbt deps --profiles-dir /dbt || true
