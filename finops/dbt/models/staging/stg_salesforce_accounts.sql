@@ -10,8 +10,12 @@ renamed as (
         annual_revenue,
         number_of_employees,
         owner_id,
+        billing_country,
+        website,
+        is_deleted,
         created_date,
         last_modified_date
     from source
+    where not coalesce(is_deleted, false)
 )
 select * from renamed

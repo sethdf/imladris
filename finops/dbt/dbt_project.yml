@@ -7,4 +7,24 @@ analysis-paths: ["analyses"]
 test-paths: ["tests"]
 seed-paths: ["seeds"]
 macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
 clean-targets: ["target", "dbt_packages"]
+
+models:
+  finops:
+    staging:
+      +schema: staging
+      +materialized: view
+    analytics:
+      +schema: analytics
+      +materialized: table
+    metrics:
+      +schema: metrics
+      +materialized: table
+    marts:
+      +schema: marts
+      +materialized: table
+
+seeds:
+  finops:
+    +schema: analytics
