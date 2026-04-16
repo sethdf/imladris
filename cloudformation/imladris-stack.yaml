@@ -466,7 +466,7 @@ Resources:
           progress "repo cloned"
 
           # Run boot-only Ansible playbook (bake-phase roles already in AMI)
-          # --limit imladris-local: only target localhost (imladris-1 is for remote runs from Aurora)
+          # --limit imladris-local: only target localhost (imladris inventory entry is for remote runs from Aurora)
           progress "starting ansible"
           cd /home/ec2-user/repos/imladris/ansible
           sudo -u ec2-user /usr/local/bin/ansible-playbook \

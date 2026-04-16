@@ -59,7 +59,7 @@ SILENCE_THRESHOLD = float(os.environ.get("SILENCE_THRESHOLD", "200"))  # RMS of 
 SILENCE_DURATION = float(os.environ.get("SILENCE_DURATION", "1.5"))
 MAX_RECORD_SECONDS = int(os.environ.get("MAX_RECORD_SECONDS", "30"))
 BEEP_ENABLED = os.environ.get("BEEP_ENABLED", "1") == "1"
-TMUX_SSH_HOST = os.environ.get("TMUX_SSH_HOST", "ec2-user@imladris-4")
+TMUX_SSH_HOST = os.environ.get("TMUX_SSH_HOST", "ec2-user@imladris")
 TMUX_SESSION = os.environ.get("TMUX_SESSION", "work")
 
 shutting_down = False

@@ -24,14 +24,6 @@ sources:
     tables:
       - name: calls
 
-  - name: stripe
-    schema: raw
-    description: Stripe billing data synced via Airbyte
-    tables:
-      - name: customers
-      - name: subscriptions
-      - name: invoices
-
   - name: chartmogul
     schema: raw_chartmogul
     description: ChartMogul subscription data via ChartMogul Destinations (push to Postgres)

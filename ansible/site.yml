@@ -7,7 +7,7 @@
 #
 # Usage:
 #   Local:  ansible-playbook site.yml
-#   Remote: ansible-playbook -i imladris-1, -u ec2-user site.yml
+#   Remote: ansible-playbook -i imladris, -u ec2-user site.yml
 #   Check:  ansible-playbook site.yml --check --diff
 #   Tags:   ansible-playbook site.yml --tags docker,tailscale
 #

@@ -33,3 +33,22 @@ Recommended ACL policy:
 - **Tailscale SSH** — no SSH keys to manage, identity-based
 - **MagicDNS** — access as `imladris` instead of IP
 - **ACLs** — identity-based access control
+
+## Ghost Cleanup (prevent `imladris-N` suffix bump)
+
+Every EC2 rebuild would leave a ghost device holding the `imladris` name, so
+the next re-enrollment got bumped to `imladris-2`, `-3`, `-4`, …. That broke
+every hardcoded reference to `imladris-1`.
+
+Fix: `scripts/tailscale-cleanup-ghosts.sh` runs before `tailscale up` during
+both `bootstrap.sh` and the Ansible `tailscale` role. It deletes any tailnet
+device named `imladris` or `imladris-N` via the Tailscale REST API.
+
+Prereqs:
+- BWS secret `tailscale-api-key` with scopes `devices:core:read` +
+  `devices:delete`. Create at
+  <https://login.tailscale.com/admin/settings/keys> and store via
+  `bws secret create tailscale-api-key <value> <project-id>`.
+- The helper fails open: missing token or expired API key logs a warning but
+  does not block bootstrap. Manual cleanup path:
+  <https://login.tailscale.com/admin/machines>.

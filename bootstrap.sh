@@ -704,6 +704,16 @@ step_start_services() {
       SKIPPED+=("Tailscale auth")
     else
       log INFO "Authenticating Tailscale..."
+      # Delete any tailnet ghost holding the canonical `imladris` name so this
+      # enrollment can claim it cleanly (instead of being bumped to imladris-N).
+      # Helper fails open if BWS/API-key are unavailable — never blocks bootstrap.
+      local cleanup_script="$IMLADRIS_DIR/scripts/tailscale-cleanup-ghosts.sh"
+      if [ -x "$cleanup_script" ]; then
+        log INFO "Cleaning up any tailnet ghost devices named 'imladris[-N]'..."
+        bash "$cleanup_script" || log WARN "ghost cleanup exited non-zero; continuing"
+      else
+        log WARN "$cleanup_script not found or not executable; skipping ghost cleanup"
+      fi
       sudo tailscale up --authkey "$TAILSCALE_AUTH_KEY" --hostname imladris --ssh
       log OK "Tailscale authenticated (hostname: imladris)"
       INSTALLED+=("Tailscale auth")

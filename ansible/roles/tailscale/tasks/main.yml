@@ -33,6 +33,22 @@
   changed_when: false
   failed_when: false
 
+- name: Clean up tailnet ghost devices before enrollment
+  # Prevents the `imladris → imladris-N` suffix bump when a prior EC2 instance's
+  # tailnet device still holds the canonical hostname. Fails open if prereqs
+  # missing — never blocks provisioning.
+  ansible.builtin.command: >
+    bash {{ playbook_dir }}/../scripts/tailscale-cleanup-ghosts.sh
+    --name={{ tailscale_hostname }}
+  environment:
+    BWS_ACCESS_TOKEN: "{{ bws_access_token | default(lookup('env', 'BWS_ACCESS_TOKEN'), true) }}"
+  register: ghost_cleanup
+  changed_when: "'deleted=' in ghost_cleanup.stdout and 'deleted=0' not in ghost_cleanup.stdout"
+  failed_when: false
+  when:
+    - tailscale_auth_key | length > 0
+    - tailscale_status.rc != 0
+
 - name: Authenticate Tailscale
   ansible.builtin.command: >
     tailscale up

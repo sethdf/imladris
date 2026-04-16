@@ -10,6 +10,7 @@
 - Never continuously check status after spawning a swarm — wait for results
 - ALWAYS read a file before editing it
 - NEVER commit secrets, credentials, or .env files
+- BEFORE deploying, configuring, or writing UserData / CFN / Helm / Docker for any third-party tool (Airbyte, Metabase, Postgres, dbt, Docker, Kubernetes, etc.), call Context7 (`mcp__context7__resolve-library-id` then `mcp__context7__query-docs`) to verify current install commands, system requirements, and recommended deployment patterns. Training data is stale; OSS install paths change. Do not rely on memory for tool-specific deployment details.
 
 ## File Organization
 

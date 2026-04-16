@@ -23,12 +23,12 @@
 #   Playback:  Aurora fetches MP3 from localhost:8888/audio/latest → PipeWire → speakers
 #
 # Prerequisites:
-#   - Tailscale connected (imladris-1 reachable)
-#   - SSH key configured for ec2-user@imladris-1
+#   - Tailscale connected (imladris reachable)
+#   - SSH access to ec2-user@imladris via Tailscale SSH
 
 set -euo pipefail
 
-REMOTE_HOST="${IMLADRIS_HOST:-ec2-user@imladris-1}"
+REMOTE_HOST="${IMLADRIS_HOST:-ec2-user@imladris}"
 LOCAL_PORT="${VOICE_PORT:-8888}"
 REMOTE_PORT="${VOICE_PORT:-8888}"
 PID_FILE="/tmp/voice-tunnel.pid"

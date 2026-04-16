@@ -18,6 +18,9 @@ node_modules/
 *.swp
 *~
 
+# Not part of imladris
+adeptia/
+
 # Runtime state (should never be in this repo)
 MEMORY/
 *.jsonl

@@ -11,7 +11,7 @@
 # Prerequisites:
 #   - bun installed (~/.bun/bin/bun)
 #   - PipeWire running (pw-play, pw-record available)
-#   - SSH access to imladris-4 (for BWS credential sync)
+#   - SSH access to imladris (for BWS credential sync)
 #
 # Tags:
 #   voice            — all voice components
@@ -39,7 +39,7 @@
     voice_server_aurora_env_file: "{{ ansible_env.HOME }}/.config/PAI/.env"
     voice_server_aurora_scripts_dir: "{{ aurora_scripts_dir }}"
     voice_server_aurora_bun_bin: "{{ bun_bin }}"
-    voice_server_aurora_bws_host: imladris-4
+    voice_server_aurora_bws_host: imladris
     voice_server_aurora_bws_user: ec2-user
     voice_server_aurora_sync_credentials: true
 
@@ -61,7 +61,7 @@
     voice_listener_server_url: "http://localhost:8888"
     voice_listener_wake_word: hey_jarvis
     voice_listener_wayland_display: wayland-0
-    voice_listener_tmux_ssh_host: ec2-user@imladris-4
+    voice_listener_tmux_ssh_host: ec2-user@imladris
     voice_listener_tmux_session: work
 
   roles:

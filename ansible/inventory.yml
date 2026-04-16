@@ -4,7 +4,7 @@ all:
     imladris:
       hosts:
         # Local execution (from UserData / on-box)
-        # Uncomment localhost and comment imladris-1 to run on-box
+        # Uncomment localhost and comment imladris to run on-box
         # localhost:
         #   ansible_connection: local
         #   ansible_python_interpreter: /usr/bin/python3
@@ -16,8 +16,13 @@ all:
           ansible_connection: local
           ansible_python_interpreter: /usr/bin/python3
 
-        # Remote execution (from Aurora over Tailscale SSH)
-        imladris-1:
-          ansible_host: 100.75.112.33
+        # Remote execution (from Aurora over Tailscale SSH).
+        # Host entry name differs from group name to avoid the "group and host
+        # with same name" Ansible warning. `ansible_host` is the canonical
+        # Tailscale MagicDNS name — guaranteed to resolve to the live
+        # workstation because bootstrap's pre-enroll ghost cleanup
+        # (scripts/tailscale-cleanup-ghosts.sh) keeps the `imladris` name free.
+        imladris-remote:
+          ansible_host: imladris
           ansible_user: ec2-user
           ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
