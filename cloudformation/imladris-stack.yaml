@@ -9,24 +9,22 @@ Description: >
 Parameters:
   InstanceType:
     Type: String
-    Default: m7gd.xlarge
-    Description: EC2 instance type (Graviton3, NVMe instance store, non-burstable — 4 vCPU, 16GB)
+    Default: m7id.xlarge
+    Description: EC2 instance type (Intel x86, NVMe instance store, non-burstable — 4 vCPU, 16GB). Switched from Graviton to x86 for universal Docker/binary compatibility (+$20/mo).
     AllowedValues:
-      - m7g.xlarge
-      - m7gd.large
+      - m7i.xlarge
+      - m7id.xlarge
+      - m7id.2xlarge
+      - m7a.xlarge
+      - m7ad.xlarge
+      - m7ad.2xlarge
       - m7gd.xlarge
       - m7gd.2xlarge
-      - m8g.xlarge
-      - m8gd.xlarge
-      - m8gd.2xlarge
-      - t4g.large
-      - t4g.xlarge
-      - t4g.2xlarge
 
   AmiId:
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
     Default: /imladris/ami-id
-    Description: SSM parameter containing baked AMI ID from Packer
+    Description: SSM parameter containing baked AMI ID from Packer. Must match instance architecture (x86_64 for m7i/m7id/m7a, arm64 for m7gd). Update this SSM param when switching architectures.
 
   AdminPrincipalArn:
     Type: String
