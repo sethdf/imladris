@@ -4,14 +4,31 @@
 // using cosine similarity. Clusters failures that share >0.85 similarity and writes
 // a summary memory_object with cluster descriptions.
 //
-// Uses postgres.js tagged template queries against the PAI Postgres database.
+// Uses pg (node-postgres) parameterized queries against the PAI Postgres database.
 // Runs on the NATIVE worker group. Scheduled daily at 08:00 Denver.
 
-import postgres from "postgres";
+// pg (node-postgres) client initialized inside main()
 
-const sql = postgres(
-  process.env.DATABASE_URL || "postgresql://postgres@127.0.0.1:5432/pai"
-);
+async function getVariable(path: string): Promise<string | undefined> {
+  const base = process.env.BASE_INTERNAL_URL || "http://windmill_server:8000";
+  const token = process.env.WM_TOKEN;
+  const workspace = process.env.WM_WORKSPACE || "imladris";
+  if (!token) return undefined;
+  try {
+    const resp = await fetch(`${base}/api/w/${workspace}/variables/get_value/${path}`, { headers: { Authorization: `Bearer ${token}` } });
+    if (!resp.ok) return undefined;
+    const val = await resp.text();
+    return (val.startsWith('"') ? JSON.parse(val) : val).trim();
+  } catch { return undefined; }
+}
+
+async function connectPai() {
+  const { Client } = (await import("pg")) as any;
+  const password = await getVariable("f/core/pai_db_password");
+  const client = new Client({ host: "windmill_db", port: 5432, database: "pai", user: "postgres", password: password || "" });
+  await client.connect();
+  return client;
+}
 
 interface VectorRow {
   source_key: string;
@@ -50,22 +67,26 @@ export async function main(
   lookback_days: number = 30,
   max_vectors: number = 500
 ) {
+  const client = await connectPai();
+
   const startedAt = new Date().toISOString();
   const cutoff = new Date(Date.now() - lookback_days * 86400000).toISOString();
 
   // Fetch learning-type vectors with embeddings
-  const rows = await sql<VectorRow[]>`
-    SELECT source_key, chunk_text, embedding::text, created_at::text
+  const result = await client.query(
+    `SELECT source_key, chunk_text, embedding::text, created_at::text
     FROM core.memory_vectors
     WHERE source_type = 'learning'
-      AND created_at >= ${cutoff}
+      AND created_at >= $1
       AND embedding IS NOT NULL
     ORDER BY created_at DESC
-    LIMIT ${max_vectors}
-  `;
+    LIMIT $2`,
+    [cutoff, max_vectors]
+  );
+  const rows: VectorRow[] = result.rows;
 
   if (rows.length === 0) {
-    await sql.end();
+    await client.end();
     return { status: "skipped", reason: "no learning vectors found", started_at: startedAt };
   }
 
@@ -120,29 +141,21 @@ export async function main(
 
   const contentHash = Bun.hash(summaryContent).toString(16);
 
-  await sql`
-    INSERT INTO core.memory_objects (key, content, metadata, content_hash, compressed, chunk_index, chunk_total, source, version, created_at, updated_at, deleted)
+  await client.query(
+    `INSERT INTO core.memory_objects (key, content, metadata, content_hash, compressed, chunk_index, chunk_total, source, version, created_at, updated_at, deleted)
     VALUES (
-      ${summaryKey},
-      ${summaryContent},
-      ${JSON.stringify({ type: "failure_clustering", version: "0.1-draft" })}::jsonb,
-      ${contentHash},
-      false,
-      0, 1,
-      'f/core/failure_clustering',
-      1,
-      NOW(), NOW(),
-      false
+      $1, $2, $3::jsonb, $4, false, 0, 1, 'f/core/failure_clustering', 1, NOW(), NOW(), false
     )
     ON CONFLICT (key) DO UPDATE SET
       content = EXCLUDED.content,
       content_hash = EXCLUDED.content_hash,
       metadata = EXCLUDED.metadata,
       version = core.memory_objects.version + 1,
-      updated_at = NOW()
-  `;
+      updated_at = NOW()`,
+    [summaryKey, summaryContent, JSON.stringify({ type: "failure_clustering", version: "0.1-draft" }), contentHash]
+  );
 
-  await sql.end();
+  await client.end();
 
   return {
     status: "success",

@@ -1,18 +1,15 @@
 summary: Failure Clustering (daily, v0.1-draft)
-description: >-
-  Groups similar failure patterns from core.memory_vectors (source_type='learning')
-  using cosine similarity. Clusters failures sharing >0.85 similarity and writes
-  a summary memory_object with cluster descriptions. v0.1-draft.
+description: Groups similar failure patterns from core.memory_vectors
+  (source_type='learning') using cosine similarity. Clusters failures sharing
+  >0.85 similarity and writes a summary memory_object with cluster descriptions.
+  v0.1-draft.
 lock: '!inline f/core/failure_clustering.script.lock'
 kind: script
+language: bun
 schema:
   $schema: https://json-schema.org/draft/2020-12/schema
   type: object
   properties:
-    similarity_threshold:
-      type: number
-      description: Minimum cosine similarity to cluster two vectors together
-      default: 0.85
     lookback_days:
       type: number
       description: Number of days to look back for learning vectors
@@ -21,6 +18,8 @@ schema:
       type: number
       description: Maximum number of vectors to analyze per run
       default: 500
+    similarity_threshold:
+      type: number
+      description: Minimum cosine similarity to cluster two vectors together
+      default: 0.85
   required: []
-language: bun
-tag: native

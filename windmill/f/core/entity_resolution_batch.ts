@@ -4,14 +4,31 @@
 // entity_id and display_name similarity. Merges duplicates into
 // shared.entities_global by updating source_domains and metadata.
 //
-// Uses postgres.js tagged template queries against the PAI Postgres database.
+// Uses pg (node-postgres) parameterized queries against the PAI Postgres database.
 // Runs on the NATIVE worker group. Scheduled weekly Monday 07:00 Denver.
 
-import postgres from "postgres";
+// pg (node-postgres) client initialized inside main()
 
-const sql = postgres(
-  process.env.DATABASE_URL || "postgresql://postgres@127.0.0.1:5432/pai"
-);
+async function getVariable(path: string): Promise<string | undefined> {
+  const base = process.env.BASE_INTERNAL_URL || "http://windmill_server:8000";
+  const token = process.env.WM_TOKEN;
+  const workspace = process.env.WM_WORKSPACE || "imladris";
+  if (!token) return undefined;
+  try {
+    const resp = await fetch(`${base}/api/w/${workspace}/variables/get_value/${path}`, { headers: { Authorization: `Bearer ${token}` } });
+    if (!resp.ok) return undefined;
+    const val = await resp.text();
+    return (val.startsWith('"') ? JSON.parse(val) : val).trim();
+  } catch { return undefined; }
+}
+
+async function connectPai() {
+  const { Client } = (await import("pg")) as any;
+  const password = await getVariable("f/core/pai_db_password");
+  const client = new Client({ host: "windmill_db", port: 5432, database: "pai", user: "postgres", password: password || "" });
+  await client.connect();
+  return client;
+}
 
 interface EntityRow {
   schema_name: string;
@@ -58,6 +75,8 @@ export async function main(
   name_similarity_threshold: number = 0.8,
   dry_run: boolean = true
 ) {
+  const client = await connectPai();
+
   const startedAt = new Date().toISOString();
 
   // Pull entities from all three schemas
@@ -68,20 +87,23 @@ export async function main(
       schema === "work" ? "work.entities_work" :
       "personal.entities_personal";
 
-    const rows = await sql<EntityRow[]>`
-      SELECT
-        ${schema} AS schema_name,
+    // shared.entities_global has source_domains + instance_id; work/personal don't
+    const extraCols = schema === "shared" ? "source_domains, " : "ARRAY[]::text[] AS source_domains, ";
+    const idCol = schema === "shared" ? "instance_id" : "NULL AS instance_id";
+    const result = await client.query(
+      `SELECT
+        '${schema}' AS schema_name,
         entity_type, entity_id, display_name,
-        source_domains, metadata,
-        first_seen_at::text, last_seen_at::text, instance_id
-      FROM ${sql(table)}
-      ORDER BY entity_type, entity_id
-    `;
-    allEntities.push(...rows);
+        ${extraCols}metadata,
+        first_seen_at::text, last_seen_at::text, ${idCol}
+      FROM ${table}
+      ORDER BY entity_type, entity_id`
+    );
+    allEntities.push(...result.rows);
   }
 
   if (allEntities.length === 0) {
-    await sql.end();
+    await client.end();
     return { status: "skipped", reason: "no entities found", started_at: startedAt };
   }
 
@@ -138,27 +160,30 @@ export async function main(
 
   if (!dry_run && mergeActions.length > 0) {
     for (const action of mergeActions) {
-      await sql`
-        INSERT INTO shared.entities_global (entity_type, entity_id, display_name, source_domains, metadata, first_seen_at, last_seen_at)
+      await client.query(
+        `INSERT INTO shared.entities_global (entity_type, entity_id, display_name, source_domains, metadata, first_seen_at, last_seen_at)
         VALUES (
-          ${action.canonical_type},
-          ${action.canonical_id},
-          ${action.display_name},
-          ${sql.array(action.combined_domains)},
-          ${JSON.stringify({ merged_from: action.merged_from, merge_date: startedAt })}::jsonb,
-          ${action.earliest_seen}::timestamptz,
-          ${action.latest_seen}::timestamptz
+          $1, $2, $3, $4::text[], $5::jsonb, $6::timestamptz, $7::timestamptz
         )
         ON CONFLICT (entity_type, entity_id) DO UPDATE SET
           source_domains = EXCLUDED.source_domains,
           metadata = shared.entities_global.metadata || EXCLUDED.metadata,
-          last_seen_at = GREATEST(shared.entities_global.last_seen_at, EXCLUDED.last_seen_at)
-      `;
+          last_seen_at = GREATEST(shared.entities_global.last_seen_at, EXCLUDED.last_seen_at)`,
+        [
+          action.canonical_type,
+          action.canonical_id,
+          action.display_name,
+          action.combined_domains,
+          JSON.stringify({ merged_from: action.merged_from, merge_date: startedAt }),
+          action.earliest_seen,
+          action.latest_seen,
+        ]
+      );
       mergedCount++;
     }
   }
 
-  await sql.end();
+  await client.end();
 
   return {
     status: "success",

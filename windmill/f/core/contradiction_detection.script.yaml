@@ -1,10 +1,10 @@
 summary: Contradiction Detection (daily, v0.1-draft)
-description: >-
-  Finds memory_objects with conflicting content: same key prefix, different
-  content_hash, overlapping time windows. Reports contradictions as a summary
-  memory_object for human review. v0.1-draft.
+description: 'Finds memory_objects with conflicting content: same key prefix,
+  different content_hash, overlapping time windows. Reports contradictions as a
+  summary memory_object for human review. v0.1-draft.'
 lock: '!inline f/core/contradiction_detection.script.lock'
 kind: script
+language: bun
 schema:
   $schema: https://json-schema.org/draft/2020-12/schema
   type: object
@@ -13,14 +13,12 @@ schema:
       type: number
       description: Number of days to look back for recently updated memory objects
       default: 14
-    prefix_depth:
-      type: number
-      description: Number of path segments to use for key prefix grouping
-      default: 3
     min_group_size:
       type: number
       description: Minimum objects sharing a prefix to check for contradictions
       default: 2
+    prefix_depth:
+      type: number
+      description: Number of path segments to use for key prefix grouping
+      default: 3
   required: []
-language: bun
-tag: native

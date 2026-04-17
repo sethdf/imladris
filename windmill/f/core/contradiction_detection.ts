@@ -4,14 +4,31 @@
 // content_hash, overlapping time windows. Reports contradictions as a summary
 // memory_object for human review.
 //
-// Uses postgres.js tagged template queries against the PAI Postgres database.
+// Uses pg (node-postgres) parameterized queries against the PAI Postgres database.
 // Runs on the NATIVE worker group. Scheduled daily at 09:00 Denver.
 
-import postgres from "postgres";
+// pg (node-postgres) client initialized inside main()
 
-const sql = postgres(
-  process.env.DATABASE_URL || "postgresql://postgres@127.0.0.1:5432/pai"
-);
+async function getVariable(path: string): Promise<string | undefined> {
+  const base = process.env.BASE_INTERNAL_URL || "http://windmill_server:8000";
+  const token = process.env.WM_TOKEN;
+  const workspace = process.env.WM_WORKSPACE || "imladris";
+  if (!token) return undefined;
+  try {
+    const resp = await fetch(`${base}/api/w/${workspace}/variables/get_value/${path}`, { headers: { Authorization: `Bearer ${token}` } });
+    if (!resp.ok) return undefined;
+    const val = await resp.text();
+    return (val.startsWith('"') ? JSON.parse(val) : val).trim();
+  } catch { return undefined; }
+}
+
+async function connectPai() {
+  const { Client } = (await import("pg")) as any;
+  const password = await getVariable("f/core/pai_db_password");
+  const client = new Client({ host: "windmill_db", port: 5432, database: "pai", user: "postgres", password: password || "" });
+  await client.connect();
+  return client;
+}
 
 interface MemoryRow {
   key: string;
@@ -50,21 +67,25 @@ export async function main(
   prefix_depth: number = 3,
   min_group_size: number = 2
 ) {
+  const client = await connectPai();
+
   const startedAt = new Date().toISOString();
   const cutoff = new Date(Date.now() - lookback_days * 86400000).toISOString();
 
   // Fetch active memory objects updated within the lookback window
-  const rows = await sql<MemoryRow[]>`
-    SELECT key, content, content_hash, version,
+  const result = await client.query(
+    `SELECT key, content, content_hash, version,
            created_at::text, updated_at::text, deleted, source
     FROM core.memory_objects
     WHERE deleted = false
-      AND updated_at >= ${cutoff}
-    ORDER BY key
-  `;
+      AND updated_at >= $1
+    ORDER BY key`,
+    [cutoff]
+  );
+  const rows: MemoryRow[] = result.rows;
 
   if (rows.length === 0) {
-    await sql.end();
+    await client.end();
     return { status: "skipped", reason: "no recent memory objects", started_at: startedAt };
   }
 
@@ -143,29 +164,21 @@ export async function main(
 
   const contentHash = Bun.hash(summaryContent).toString(16);
 
-  await sql`
-    INSERT INTO core.memory_objects (key, content, metadata, content_hash, compressed, chunk_index, chunk_total, source, version, created_at, updated_at, deleted)
+  await client.query(
+    `INSERT INTO core.memory_objects (key, content, metadata, content_hash, compressed, chunk_index, chunk_total, source, version, created_at, updated_at, deleted)
     VALUES (
-      ${summaryKey},
-      ${summaryContent},
-      ${JSON.stringify({ type: "contradiction_detection", version: "0.1-draft" })}::jsonb,
-      ${contentHash},
-      false,
-      0, 1,
-      'f/core/contradiction_detection',
-      1,
-      NOW(), NOW(),
-      false
+      $1, $2, $3::jsonb, $4, false, 0, 1, 'f/core/contradiction_detection', 1, NOW(), NOW(), false
     )
     ON CONFLICT (key) DO UPDATE SET
       content = EXCLUDED.content,
       content_hash = EXCLUDED.content_hash,
       metadata = EXCLUDED.metadata,
       version = core.memory_objects.version + 1,
-      updated_at = NOW()
-  `;
+      updated_at = NOW()`,
+    [summaryKey, summaryContent, JSON.stringify({ type: "contradiction_detection", version: "0.1-draft" }), contentHash]
+  );
 
-  await sql.end();
+  await client.end();
 
   return {
     status: "success",

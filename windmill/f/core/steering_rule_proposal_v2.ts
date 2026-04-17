@@ -8,16 +8,34 @@
 // v2 of steering_rule_proposal — replaces the heuristic regex-based v1 with
 // database-backed vector search and reasoning pattern analysis.
 //
-// Uses postgres.js tagged template queries against the PAI Postgres database.
+// Uses pg (node-postgres) parameterized queries against the PAI Postgres database.
 // Runs on the NATIVE worker group. Scheduled weekly Monday 07:00 Denver.
 
-import postgres from "postgres";
 import { existsSync, mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
 
-const sql = postgres(
-  process.env.DATABASE_URL || "postgresql://postgres@127.0.0.1:5432/pai"
-);
+// pg (node-postgres) client initialized inside main()
+
+async function getVariable(path: string): Promise<string | undefined> {
+  const base = process.env.BASE_INTERNAL_URL || "http://windmill_server:8000";
+  const token = process.env.WM_TOKEN;
+  const workspace = process.env.WM_WORKSPACE || "imladris";
+  if (!token) return undefined;
+  try {
+    const resp = await fetch(`${base}/api/w/${workspace}/variables/get_value/${path}`, { headers: { Authorization: `Bearer ${token}` } });
+    if (!resp.ok) return undefined;
+    const val = await resp.text();
+    return (val.startsWith('"') ? JSON.parse(val) : val).trim();
+  } catch { return undefined; }
+}
+
+async function connectPai() {
+  const { Client } = (await import("pg")) as any;
+  const password = await getVariable("f/core/pai_db_password");
+  const client = new Client({ host: "windmill_db", port: 5432, database: "pai", user: "postgres", password: password || "" });
+  await client.connect();
+  return client;
+}
 
 const HOME = process.env.HOME || "/home/ec2-user";
 const PROPOSALS_DIR = join(HOME, ".claude", "MEMORY", "STEERING_PROPOSALS");
@@ -60,6 +78,8 @@ export async function main(
   min_pattern_frequency: number = 3,
   lookback_days: number = 60
 ) {
+  const client = await connectPai();
+
   const startedAt = new Date().toISOString();
   const cutoff = new Date(Date.now() - lookback_days * 86400000).toISOString();
 
@@ -68,8 +88,8 @@ export async function main(
   }
 
   // Step 1: Query reasoning_patterns for high-frequency, high-success patterns
-  const reasoningPatterns = await sql<ReasoningPattern[]>`
-    SELECT
+  const rpResult = await client.query(
+    `SELECT
       task_type,
       approach,
       skills_used,
@@ -77,23 +97,27 @@ export async function main(
       task_description,
       COUNT(*)::int AS count
     FROM core.reasoning_patterns
-    WHERE created_at >= ${cutoff}
-      AND success_rating >= ${min_success_rating}
+    WHERE created_at >= $1
+      AND success_rating >= $2
     GROUP BY task_type, approach, skills_used, success_rating, task_description
-    HAVING COUNT(*) >= ${min_pattern_frequency}
+    HAVING COUNT(*) >= $3
     ORDER BY COUNT(*) DESC, success_rating DESC
-    LIMIT 50
-  `;
+    LIMIT 50`,
+    [cutoff, min_success_rating, min_pattern_frequency]
+  );
+  const reasoningPatterns: ReasoningPattern[] = rpResult.rows;
 
   // Step 2: Query recent learning vectors for failure patterns
-  const failureVectors = await sql<LearningPattern[]>`
-    SELECT source_key, chunk_text, 1.0::float AS similarity
+  const fvResult = await client.query(
+    `SELECT source_key, chunk_text, 1.0::float AS similarity
     FROM core.memory_vectors
     WHERE source_type = 'learning'
-      AND created_at >= ${cutoff}
+      AND created_at >= $1
     ORDER BY created_at DESC
-    LIMIT 200
-  `;
+    LIMIT 200`,
+    [cutoff]
+  );
+  const failureVectors: LearningPattern[] = fvResult.rows;
 
   // Step 3: Analyze reasoning patterns to extract proposed rules
   const proposedRules: ProposedRule[] = [];
@@ -199,7 +223,7 @@ export async function main(
 
   writeFileSync(outFile, lines.join("\n"), "utf-8");
 
-  await sql.end();
+  await client.end();
 
   return {
     status: "success",
