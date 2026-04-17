@@ -66,10 +66,10 @@ These establish the structural and infrastructure foundation everything else bui
 - **Risk:** Medium. Windmill script paths in `.script.yaml` must be updated. Test all schedules after migration.
 - **Dependency:** Phase 0 specs landed (so nothing gets moved mid-implementation)
 
-### 1b: Docker-Modular Architecture (PAI containerization)
-- **Why here:** Containerizing Claude Code into a named Docker container (with named volumes for MEMORY and config) is the infra prerequisite for the memory sync in Phase 2. It also reduces Ansible from 16 roles to 4-5.
-- **Scope:** Per the [spec](./docker-modular): build PAI container image, create named volumes, install `pai` session manager, migrate `~/.claude` into volumes, collapse Ansible.
-- **Risk:** Medium. Host-to-container migration of Claude Code. Well-proven path (Anthropic devcontainer). Clear rollback: stop container, run `claude` on host directly.
+### 1b: Docker-Modular Architecture (infrastructure services only)
+- **Status:** PAI containerization was evaluated and abandoned. Claude Code runs directly on the host for full filesystem, Docker, and network access. Docker-Modular now refers only to the Windmill + Postgres Docker Compose stack.
+- **Scope:** The [docker-modular spec](./docker-modular) sections 2-4 (per-session PAI containers, volume strategy, session manager) are superseded. Section 1 (Windmill/Postgres compose stack) and host Ansible roles remain active.
+- **Risk:** Low. No PAI migration needed — Claude Code stays on host.
 - **Dependency:** None, but should follow 1a so the box architecture is clean before this adds more moving parts
 
 ---
@@ -83,7 +83,7 @@ With structural and infra foundations stable, expand PAI's intelligence capabili
 - **Scope:** Provision Postgres, create `core` schema + `windmill` database, deploy `pai-sync` systemd daemon, write-race conflict resolution, migration tooling. Per the [spec](./memory-sync) Phase 1.
 - **Sprint-1 prerequisites (Council Decision 2026-04-07):** Write-race resolution mechanism, schema DDL with role grants, protected invariant set definition, stale pgml audit.
 - **Risk:** Medium-high. Self-hosted Postgres ops (not RDS/Aurora — Apache AGE requires self-hosted). Daemon must handle concurrent PAI session writes safely.
-- **Dependency:** Phase 1b (PAI containerization — daemon watches `/pai/memory/` host bind mount)
+- **Dependency:** Phase 1b (infrastructure services). PAI containerization is no longer required — daemon watches `~/.claude/MEMORY/` directly on host.
 
 ### 2b: Semantic Search + Knowledge Graph
 - **Why here:** Requires Postgres running (2a) with data synced. pgvector for semantic search across learnings/failures. Apache AGE for causal chain queries.
@@ -195,7 +195,7 @@ These can be done independently, in any order, at any time:
 3. **Don't build contextual surfacing before entity extraction is stable** — A surfacing system without feedback becomes noise. Once trained to ignore it, users never re-enable it.
 4. **Don't start the personal domain with finance or health as the first slice** — High-sensitivity data, complex API integrations, no existing scaffolding. Telegram is already partially wired and scoped cleanly.
 5. **Don't make the reorg a full freeze** — Time-box to hours, not days. The goal is clean lane boundaries, not perfect structure. Specs 0a and 0b are already designed and shouldn't wait.
-6. **Don't implement PAI Memory Sync before Docker-Modular is stable** — Memory Sync requires named volumes from containerized PAI. Running it on host-PAI creates migration complexity.
+6. **Don't implement PAI Memory Sync before Docker-Modular is stable** — *(Superseded: PAI runs on host, not in containers. Memory Sync watches `~/.claude/MEMORY/` directly -- no named volume indirection needed. This constraint no longer applies.)*
 
 ## Principle Implications
 

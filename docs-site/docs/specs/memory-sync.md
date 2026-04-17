@@ -302,6 +302,8 @@ as a plain directory — it is the `pai-config` (ro) and `pai-memory` (rw) named
 inside each session container. The sync daemon runs on the **host** and watches the memory via a
 stable bind mount.
 
+> **(Note: Claude Code now runs on the host, not in containers. The per-session PAI container model has been abandoned. `pai-sync` watches the host filesystem directly at `~/.claude/MEMORY/`. The bind-mount indirection described below is not needed.)**
+
 **Solution:** Add `/pai/memory` as a host bind mount backed by the `pai-memory` volume. This
 follows the same pattern as `/pai/inbox` and `/pai/outbox` defined in the docker-modular spec.
 
@@ -310,7 +312,7 @@ follows the same pattern as `/pai/inbox` and `/pai/outbox` defined in the docker
 volumes:
   - type: volume
     source: pai-memory
-    target: /home/node/.claude/MEMORY       # inside pai-* containers
+    target: /home/node/.claude/MEMORY       # inside pai-* containers (superseded — Claude Code runs on host)
   - type: bind
     source: /pai/memory                     # host-side stable path
     target: /pai/memory                     # used by host-side sync daemon
@@ -323,7 +325,7 @@ are adjusted accordingly:
 - WAL location: `/pai/memory/STATE/sync-wal.jsonl` (consistent with STATE/ exclusion rule)
 - Sync log: `/pai/memory/STATE/sync-log.jsonl`
 
-**Why host daemon (not container daemon):**
+**Why host daemon (not container daemon):** *(Note: With Claude Code running on the host, this is now the only model -- the container daemon alternative no longer applies.)*
 - The daemon's lifetime should exceed any individual session container
 - A host daemon survives `pai-session stop/start` cycles without missing writes
 - systemd manages restart on host reboot; no container lifecycle coupling needed
