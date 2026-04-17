@@ -1,0 +1,188 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  FinOps - dbt docs served via ECS Fargate behind the shared ALB.
+  Runs dbt docs generate + dbt docs serve on port 8080.
+  Accessible at https://docs.finops.audiense.us
+
+Parameters:
+  ProjectTag:
+    Type: String
+    Default: Finops
+
+  VpcStackName:
+    Type: String
+
+  RdsStackName:
+    Type: String
+
+  EcsStackName:
+    Type: String
+
+  AlbStackName:
+    Type: String
+    Default: finops-alb-entra
+
+  TaskCpu:
+    Type: String
+    Default: '256'
+
+  TaskMemory:
+    Type: String
+    Default: '512'
+
+  ImageTag:
+    Type: String
+    Default: latest
+
+Resources:
+  Repository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: finops/dbt-docs
+      ImageScanningConfiguration: { ScanOnPush: true }
+      ImageTagMutability: MUTABLE
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          { "rules": [ { "rulePriority": 1, "description": "keep last 5 images",
+                         "selection": { "tagStatus": "any", "countType": "imageCountMoreThan",
+                                        "countNumber": 5 }, "action": { "type": "expire" } } ] }
+      Tags:
+        - { Key: Project, Value: !Ref ProjectTag }
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /ecs/${ProjectTag}/dbt-docs
+      RetentionInDays: 14
+
+  TaskSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub '${ProjectTag} dbt-docs - ALB ingress on 8080 + RDS egress'
+      VpcId: !ImportValue { Fn::Sub: '${VpcStackName}-VpcId' }
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          SourceSecurityGroupId: !ImportValue { Fn::Sub: '${AlbStackName}-AlbSecurityGroupId' }
+          Description: 'dbt-docs from ALB'
+      Tags:
+        - { Key: Name, Value: !Sub '${ProjectTag}-dbt-docs-sg' }
+        - { Key: Project, Value: !Ref ProjectTag }
+
+  RdsIngressFromDbtDocs:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !ImportValue { Fn::Sub: '${RdsStackName}-DbSecurityGroupId' }
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+      SourceSecurityGroupId: !Ref TaskSecurityGroup
+      Description: 'dbt-docs to RDS (for docs generate)'
+
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub '${ProjectTag}-dbt-docs'
+      Cpu: !Ref TaskCpu
+      Memory: !Ref TaskMemory
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      RuntimePlatform:
+        CpuArchitecture: ARM64
+        OperatingSystemFamily: LINUX
+      ExecutionRoleArn: !ImportValue { Fn::Sub: '${EcsStackName}-TaskExecutionRoleArn' }
+      ContainerDefinitions:
+        - Name: dbt-docs
+          Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/finops/dbt-docs:${ImageTag}'
+          Essential: true
+          PortMappings:
+            - ContainerPort: 8080
+              Protocol: tcp
+          Environment:
+            - { Name: DBT_HOST, Value: !ImportValue { Fn::Sub: '${RdsStackName}-DbEndpoint' } }
+            - { Name: DBT_DBNAME, Value: !ImportValue { Fn::Sub: '${RdsStackName}-DbName' } }
+            - { Name: DBT_PORT, Value: '5432' }
+          Secrets:
+            - Name: DBT_USER
+              ValueFrom: !Sub
+                - '${Arn}:username::'
+                - { Arn: !ImportValue { Fn::Sub: '${RdsStackName}-MasterSecretArn' } }
+            - Name: DBT_PASSWORD
+              ValueFrom: !Sub
+                - '${Arn}:password::'
+                - { Arn: !ImportValue { Fn::Sub: '${RdsStackName}-MasterSecretArn' } }
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: dbt-docs
+
+  Service:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: !Sub '${ProjectTag}-dbt-docs'
+      Cluster: !ImportValue { Fn::Sub: '${EcsStackName}-ClusterArn' }
+      TaskDefinition: !Ref TaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      HealthCheckGracePeriodSeconds: 120
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets: !Split
+            - ','
+            - !ImportValue { Fn::Sub: '${VpcStackName}-PublicSubnetIds' }
+          SecurityGroups: [!Ref TaskSecurityGroup]
+      LoadBalancers:
+        - ContainerName: dbt-docs
+          ContainerPort: 8080
+          TargetGroupArn: !Ref TargetGroup
+
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub '${ProjectTag}-dbt-docs-tg'
+      Port: 8080
+      Protocol: HTTP
+      TargetType: ip
+      VpcId: !ImportValue { Fn::Sub: '${VpcStackName}-VpcId' }
+      HealthCheckPath: /
+      HealthCheckIntervalSeconds: 30
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      Matcher:
+        HttpCode: '200'
+      Tags:
+        - { Key: Project, Value: !Ref ProjectTag }
+
+  ListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !ImportValue { Fn::Sub: '${AlbStackName}-HttpsListenerArn' }
+      Priority: 90
+      Conditions:
+        - Field: host-header
+          HostHeaderConfig:
+            Values: ['docs.finops.audiense.us']
+      Actions:
+        - Type: authenticate-oidc
+          Order: 1
+          AuthenticateOidcConfig:
+            Issuer: !ImportValue { Fn::Sub: '${AlbStackName}-OidcIssuer' }
+            AuthorizationEndpoint: !ImportValue { Fn::Sub: '${AlbStackName}-OidcAuthorizationEndpoint' }
+            TokenEndpoint: !ImportValue { Fn::Sub: '${AlbStackName}-OidcTokenEndpoint' }
+            UserInfoEndpoint: !ImportValue { Fn::Sub: '${AlbStackName}-OidcUserInfoEndpoint' }
+            ClientId: !ImportValue { Fn::Sub: '${AlbStackName}-OidcClientId' }
+            ClientSecret: '{{resolve:secretsmanager:Finops/entra-client-secret}}'
+            OnUnauthenticatedRequest: authenticate
+        - Type: forward
+          Order: 2
+          TargetGroupArn: !Ref TargetGroup
+
+Outputs:
+  ServiceUrl:
+    Value: 'https://docs.finops.audiense.us'
+  RepositoryUri:
+    Value: !GetAtt Repository.RepositoryUri

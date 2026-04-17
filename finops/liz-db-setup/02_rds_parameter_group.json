@@ -1,0 +1,237 @@
+{
+  "_comment": "=============================================================================",
+  "_comment2": "Audiense Customer Data Mart - RDS PostgreSQL 16 Parameter Group",
+  "_comment3": "Instance: db.m6g.large (2 vCPU, 8GB RAM) — small scale data mart",
+  "_comment4": "Scale: ~20k customers, ~50k prospects, activity history (<1M rows total)",
+  "_comment5": "Apply BEFORE running 01_datamart_init.sql. Reboot required after creation.",
+  "_comment6": "=============================================================================",
+
+  "parameter_group_name": "audiense-datamart-pg16",
+  "description": "Audiense data mart - analytical workload on db.m6g.large (2vCPU / 8GB)",
+  "family": "postgres16",
+
+  "parameters": [
+
+    {
+      "name": "shared_preload_libraries",
+      "value": "pg_stat_statements",
+      "apply_method": "pending-reboot",
+      "_note": "Required for pg_stat_statements. This is the only parameter that needs a reboot - do this first."
+    },
+
+    {
+      "name": "shared_buffers",
+      "value": "{DBInstanceClassMemory/4}",
+      "apply_method": "pending-reboot",
+      "_note": "25% of RAM = ~2GB on m6g.large. RDS formula syntax handles this automatically regardless of instance class - do not hardcode."
+    },
+
+    {
+      "name": "effective_cache_size",
+      "value": "{DBInstanceClassMemory*3/4}",
+      "apply_method": "immediate",
+      "_note": "75% of RAM = ~6GB. Planner hint only - no memory is allocated. Tells the planner how much OS page cache is likely available."
+    },
+
+    {
+      "name": "work_mem",
+      "value": "16384",
+      "apply_method": "immediate",
+      "_note": "16MB per sort/hash operation. Conservative for 8GB RAM. With 50 connections × 2 sorts = 100 × 16MB = 1.6GB peak - safe headroom. Increase to 32768 (32MB) if you see temp files in logs and connection count is low."
+    },
+
+    {
+      "name": "maintenance_work_mem",
+      "value": "131072",
+      "apply_method": "immediate",
+      "_note": "128MB for VACUUM, CREATE INDEX, ALTER TABLE. At this data scale, index builds will complete in seconds regardless."
+    },
+
+    {
+      "name": "max_connections",
+      "value": "50",
+      "apply_method": "pending-reboot",
+      "_note": "Conservative for m6g.large. Matches sum of all CONNECTION LIMIT values in init SQL (5+5+15+10=35) plus headroom for admin connections. Each idle connection uses ~5MB RAM on an 8GB instance."
+    },
+
+    {
+      "name": "max_parallel_workers_per_gather",
+      "value": "2",
+      "apply_method": "immediate",
+      "_note": "Match vCPU count. On a 2 vCPU instance there is no benefit to setting this higher - the second worker would compete with the leader process."
+    },
+
+    {
+      "name": "max_parallel_workers",
+      "value": "2",
+      "apply_method": "immediate",
+      "_note": "Total parallel workers. Match vCPU count on m6g.large."
+    },
+
+    {
+      "name": "max_parallel_maintenance_workers",
+      "value": "1",
+      "apply_method": "immediate",
+      "_note": "Workers for CREATE INDEX and VACUUM. 1 is sufficient at this data scale."
+    },
+
+    {
+      "name": "enable_partitionwise_join",
+      "value": "0",
+      "apply_method": "immediate",
+      "_note": "Disabled - no partitioned tables at this scale. Re-enable via parameter group update when partitioning is added via migration."
+    },
+
+    {
+      "name": "enable_partitionwise_aggregate",
+      "value": "0",
+      "apply_method": "immediate",
+      "_note": "Disabled - no partitioned tables at this scale. Re-enable when partitioning is added."
+    },
+
+    {
+      "name": "checkpoint_completion_target",
+      "value": "0.9",
+      "apply_method": "immediate",
+      "_note": "Spreads checkpoint I/O over 90% of the checkpoint interval. Already the PG16 default but explicit is better."
+    },
+
+    {
+      "name": "checkpoint_timeout",
+      "value": "600",
+      "apply_method": "immediate",
+      "_note": "10 minutes between checkpoints. Slightly shorter than the large-scale recommendation since ETL loads are smaller and more frequent."
+    },
+
+    {
+      "name": "wal_buffers",
+      "value": "8192",
+      "apply_method": "pending-reboot",
+      "_note": "64MB WAL buffer (8192 × 8KB pages). Sufficient for nightly ETL batch loads at this scale."
+    },
+
+    {
+      "name": "default_statistics_target",
+      "value": "150",
+      "apply_method": "immediate",
+      "_note": "Slightly above default (100) for better planner estimates on JSONB columns and multi-column predicates. Less aggressive than the large-scale version since tables are small."
+    },
+
+    {
+      "name": "random_page_cost",
+      "value": "1.1",
+      "apply_method": "immediate",
+      "_note": "Close to seq_page_cost for SSD/NVMe-backed gp3 storage. Encourages index usage over sequential scans. Default of 4.0 assumes spinning disk."
+    },
+
+    {
+      "name": "effective_io_concurrency",
+      "value": "200",
+      "apply_method": "immediate",
+      "_note": "200 concurrent I/O ops for SSD storage. Enables bitmap heap scan prefetching."
+    },
+
+    {
+      "name": "pg_stat_statements.track",
+      "value": "all",
+      "apply_method": "immediate",
+      "_note": "Track all statements including those inside functions. Essential for identifying slow ETL queries."
+    },
+
+    {
+      "name": "pg_stat_statements.max",
+      "value": "5000",
+      "apply_method": "pending-reboot",
+      "_note": "Default 5000 is sufficient at this scale (3 division pipelines, moderate query variety)."
+    },
+
+    {
+      "name": "log_min_duration_statement",
+      "value": "2000",
+      "apply_method": "immediate",
+      "_note": "Log queries taking longer than 2 seconds. More sensitive than the large-scale setting (5s) because at small data volumes, a 2-second query is a red flag worth investigating immediately."
+    },
+
+    {
+      "name": "log_temp_files",
+      "value": "10240",
+      "apply_method": "immediate",
+      "_note": "Log temp file creation over 10MB (lower threshold than large-scale version). At this data size, any spill to disk during a sort is a sign work_mem should be reviewed."
+    },
+
+    {
+      "name": "log_autovacuum_min_duration",
+      "value": "250",
+      "apply_method": "immediate",
+      "_note": "Log autovacuum runs over 250ms. Lower threshold than large-scale - tables are small so any slow vacuum is worth knowing about."
+    },
+
+    {
+      "name": "autovacuum_vacuum_scale_factor",
+      "value": "0.05",
+      "apply_method": "immediate",
+      "_note": "Trigger VACUUM when 5% of rows are dead (default 20%). More aggressive on small tables prevents bloat from accumulating unnoticed."
+    },
+
+    {
+      "name": "autovacuum_analyze_scale_factor",
+      "value": "0.02",
+      "apply_method": "immediate",
+      "_note": "Trigger ANALYZE when 2% of rows change. Keeps planner statistics current on staging tables that see nightly full refreshes."
+    },
+
+    {
+      "name": "idle_in_transaction_session_timeout",
+      "value": "120000",
+      "apply_method": "immediate",
+      "_note": "Kill sessions idle in a transaction for more than 2 minutes (120,000ms). Tighter than large-scale (5 min) because on a 2-vCPU instance a stuck transaction blocks VACUUM and causes visible performance degradation faster."
+    },
+
+    {
+      "name": "statement_timeout",
+      "value": "0",
+      "apply_method": "immediate",
+      "_note": "No global timeout. Per-role timeouts are set in Section 8 of 01_datamart_init.sql: svc_bi_reader=300s, svc_analyst=1800s, ETL roles=unlimited."
+    },
+
+    {
+      "name": "lock_timeout",
+      "value": "0",
+      "apply_method": "immediate",
+      "_note": "No global lock timeout. Per-role lock timeouts set in init SQL: 30s for ETL, 10s for readers. Global 0 allows the migration tool (Flyway/Alembic) to hold DDL locks without being killed."
+    },
+
+    {
+      "name": "track_io_timing",
+      "value": "1",
+      "apply_method": "immediate",
+      "_note": "Enables I/O timing in EXPLAIN ANALYZE and pg_stat_statements. Marginal CPU overhead, essential for distinguishing CPU-bound from I/O-bound queries during tuning."
+    },
+
+    {
+      "name": "track_functions",
+      "value": "all",
+      "apply_method": "immediate",
+      "_note": "Track function-level statistics. Useful once stored procedures are added for ETL transformations."
+    }
+
+  ],
+
+  "_upgrade_path": {
+    "_comment": "When to revisit this parameter group",
+    "scale_triggers": [
+      "fct_activities exceeds 1M rows → increase work_mem to 32768, consider partitioning",
+      "max_connections pressure → deploy RDS Proxy, then raise max_connections to 100",
+      "CPU consistently >60% → upgrade to db.m6g.xlarge (4 vCPU), raise max_parallel_workers to 4",
+      "Partitioning added → set enable_partitionwise_join=1, enable_partitionwise_aggregate=1"
+    ]
+  },
+
+  "_aws_cli_apply": {
+    "create_group": "aws rds create-db-parameter-group --db-parameter-group-name audiense-datamart-pg16 --db-parameter-group-family postgres16 --description 'Audiense data mart - m6g.large small scale'",
+    "apply_immediate_params": "aws rds modify-db-parameter-group --db-parameter-group-name audiense-datamart-pg16 --parameters 'ParameterName=work_mem,ParameterValue=16384,ApplyMethod=immediate' 'ParameterName=max_parallel_workers,ParameterValue=2,ApplyMethod=immediate' 'ParameterName=max_parallel_workers_per_gather,ParameterValue=2,ApplyMethod=immediate' 'ParameterName=random_page_cost,ParameterValue=1.1,ApplyMethod=immediate' 'ParameterName=effective_io_concurrency,ParameterValue=200,ApplyMethod=immediate' 'ParameterName=log_min_duration_statement,ParameterValue=2000,ApplyMethod=immediate' 'ParameterName=log_temp_files,ParameterValue=10240,ApplyMethod=immediate'",
+    "apply_reboot_params": "aws rds modify-db-parameter-group --db-parameter-group-name audiense-datamart-pg16 --parameters 'ParameterName=shared_preload_libraries,ParameterValue=pg_stat_statements,ApplyMethod=pending-reboot' 'ParameterName=max_connections,ParameterValue=50,ApplyMethod=pending-reboot'",
+    "attach_to_instance": "aws rds modify-db-instance --db-instance-identifier audiense-datamart --db-parameter-group-name audiense-datamart-pg16",
+    "reboot": "aws rds reboot-db-instance --db-instance-identifier audiense-datamart"
+  }
+}
