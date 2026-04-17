@@ -1,0 +1,7 @@
+path: f/infra/refresh_tailscale_token_schedule
+schedule: '0 */45 * * * *'
+timezone: America/Denver
+script_path: f/infra/refresh_tailscale_token
+is_flow: false
+args: {}
+enabled: true

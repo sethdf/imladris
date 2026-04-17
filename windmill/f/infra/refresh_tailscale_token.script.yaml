@@ -1,0 +1,12 @@
+summary: Refresh Tailscale OAuth2 access token (client_credentials flow)
+description: >
+  Exchanges Tailscale OAuth client credentials for a fresh access token. Stores
+  in f/devops/tailscale_access_token. Runs every 45 min. Tokens expire after 60
+  min — schedule ensures always-fresh.
+lock: '!inline f/infra/refresh_tailscale_token.script.lock'
+language: bun
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties: {}
+  required: []

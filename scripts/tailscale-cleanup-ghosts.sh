@@ -67,13 +67,29 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 0
 fi
 
-API_KEY="$(bws secret list -o json 2>/dev/null | jq -r '.[] | select(.key=="tailscale-api-key").value' || true)"
-if [ -z "$API_KEY" ] || [ "$API_KEY" = "null" ]; then
-  warn "BWS secret 'tailscale-api-key' not found — skipping ghost cleanup."
-  warn "Create one at https://login.tailscale.com/admin/settings/keys (API keys)"
-  warn "with scopes devices:core:read + devices:delete, then store as:"
-  warn "  bws secret create tailscale-api-key <value> <project-id>"
-  exit 0
+# Prefer OAuth client credentials (never expire) over static API key (expires ~90d).
+CLIENT_ID="$(bws secret list -o json 2>/dev/null | jq -r '.[] | select(.key=="tailscale-oauth-client-id").value' || true)"
+CLIENT_SECRET="$(bws secret list -o json 2>/dev/null | jq -r '.[] | select(.key=="tailscale-oauth-client-secret").value' || true)"
+
+if [ -n "$CLIENT_ID" ] && [ "$CLIENT_ID" != "null" ] && [ -n "$CLIENT_SECRET" ] && [ "$CLIENT_SECRET" != "null" ]; then
+  log "Using Tailscale OAuth client credentials (auto-refreshing)"
+  TOKEN_JSON="$(curl -sS -X POST "https://api.tailscale.com/api/v2/oauth/token" \
+    -H "Content-Type: application/x-www-form-urlencoded" \
+    -d "client_id=${CLIENT_ID}&client_secret=${CLIENT_SECRET}&grant_type=client_credentials" || true)"
+  API_KEY="$(echo "$TOKEN_JSON" | jq -r '.access_token // empty' 2>/dev/null || true)"
+  if [ -z "$API_KEY" ]; then
+    warn "OAuth token exchange failed: $(echo "$TOKEN_JSON" | head -c 200)"
+    exit 0
+  fi
+else
+  # Fallback: static API key (may be expired)
+  API_KEY="$(bws secret list -o json 2>/dev/null | jq -r '.[] | select(.key=="tailscale-api-key").value' || true)"
+  if [ -z "$API_KEY" ] || [ "$API_KEY" = "null" ]; then
+    warn "No Tailscale credentials found in BWS — skipping ghost cleanup."
+    warn "Store OAuth client: tailscale-oauth-client-id + tailscale-oauth-client-secret"
+    exit 0
+  fi
+  log "Using static API key (may expire — prefer OAuth client credentials)"
 fi
 
 API_BASE="https://api.tailscale.com/api/v2"
