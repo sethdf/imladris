@@ -18,15 +18,8 @@ sources:
       - name: deals
       - name: contacts
 
-  - name: gong
-    schema: raw
-    description: Gong conversation intelligence synced via Airbyte
-    tables:
-      - name: calls
-
   - name: chartmogul
     schema: raw_chartmogul
     description: ChartMogul subscription data via ChartMogul Destinations (push to Postgres)
     tables:
       - name: customers
-      - name: activities

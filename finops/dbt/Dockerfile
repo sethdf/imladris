@@ -10,6 +10,7 @@ COPY macros/ macros/
 COPY seeds/ seeds/
 COPY tests/ tests/
 COPY analyses/ analyses/
+COPY snapshots/ snapshots/
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

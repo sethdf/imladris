@@ -36,7 +36,23 @@ with snapshots as (
 -- Generate a daily record for each opportunity active on each date
 daily as (
     select
-        s.*,
+        s.opportunity_id,
+        s.deal_name,
+        s.account_id,
+        s.owner_id,
+        s.stage_name,
+        s.amount,
+        s.close_date,
+        s.probability,
+        s.is_won,
+        s.is_closed,
+        s.product_line,
+        s.brand,
+        s.is_partner_deal,
+        s.snapshot_date,
+        s.is_current,
+        s.is_pipeline_stage,
+        s.days_to_close_at_snapshot,
         md5(s.stage_name) as stage_id,
         s.snapshot_date as date_key,
         -- Amount at snapshot (for open pipeline value over time)

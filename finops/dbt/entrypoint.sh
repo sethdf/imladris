@@ -7,6 +7,9 @@ dbt debug --profiles-dir /dbt || echo "dbt debug had warnings (non-fatal)"
 echo "=== dbt deps ==="
 dbt deps --profiles-dir /dbt || true
 
+echo "=== dbt snapshot ==="
+dbt snapshot --profiles-dir /dbt --target prod
+
 echo "=== dbt run ==="
 dbt run --profiles-dir /dbt --target prod
 
