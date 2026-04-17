@@ -64,7 +64,7 @@ export async function main(
 
   if (owner) task.owner = { name: owner };
 
-  const inputData = JSON.stringify({ task });
+  const inputData = JSON.stringify({ task, notification: { send_notification: false } });
   const taskUrl = getSdpTaskUrl(baseUrl);
 
   const response = await fetch(taskUrl, {

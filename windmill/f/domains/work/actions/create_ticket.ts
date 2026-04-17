@@ -56,7 +56,7 @@ export async function main(
   if (category) request.category = { name: category };
   if (requester_email) request.requester = { email_id: requester_email };
 
-  const inputData = JSON.stringify({ request });
+  const inputData = JSON.stringify({ request, notification: { send_notification: false } });
 
   const response = await fetch(`${baseUrl}/requests`, {
     method: "POST",
