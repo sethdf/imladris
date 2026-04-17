@@ -16,8 +16,12 @@ const EXCLUDED_GLOBS = ["*.tmp", "*.lock"];
  * Returns true if this absolute path should be excluded from sync.
  */
 export function shouldExclude(absolutePath: string): boolean {
-  const rel = path.relative(config.watchRoot, absolutePath);
-  if (rel.startsWith("..")) return true; // outside watch root
+  // Check if the path is under ANY watched root (watchRoot + extraWatchPaths)
+  const allRoots = [config.watchRoot, ...config.extraWatchPaths];
+  const matchedRoot = allRoots.find(root => absolutePath.startsWith(root + path.sep) || absolutePath === root);
+  if (!matchedRoot) return true; // outside all watched roots
+
+  const rel = path.relative(matchedRoot, absolutePath);
 
   const parts = rel.split(path.sep);
 
@@ -40,6 +44,21 @@ export function shouldExclude(absolutePath: string): boolean {
  * The key is the path relative to watchRoot, with forward slashes.
  */
 export function toFileKey(absolutePath: string): string {
+  // Find which watched root this path belongs to
+  const allRoots = [config.watchRoot, ...config.extraWatchPaths];
+  for (const root of allRoots) {
+    if (absolutePath.startsWith(root + path.sep) || absolutePath === root) {
+      const rel = path.relative(root, absolutePath).split(path.sep).join("/");
+      // Files under extraWatchPaths get a prefix from their parent dir name
+      // e.g. ~/.claude/projects/foo.jsonl → projects/foo.jsonl
+      if (root !== config.watchRoot) {
+        const rootName = path.basename(root);
+        return `${rootName}/${rel}`;
+      }
+      return rel;
+    }
+  }
+  // Fallback: relative to watchRoot (backward compat)
   return path.relative(config.watchRoot, absolutePath).split(path.sep).join("/");
 }
 

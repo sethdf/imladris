@@ -127,10 +127,17 @@ export class SyncEngine {
     const start = Date.now();
     const result: SyncResult = { files_pushed: 0, files_skipped: 0, lines_pushed: 0, versions_archived: 0, errors: [] };
 
-    const allFiles = walkDir(config.watchRoot);
+    // Walk ALL watched roots (main + extra paths like projects/)
+    const allRoots = [config.watchRoot, ...config.extraWatchPaths];
     const batch: string[] = [];
-    for (const f of allFiles) {
-      if (!shouldExclude(f)) batch.push(f);
+    for (const root of allRoots) {
+      try {
+        for (const f of walkDir(root)) {
+          if (!shouldExclude(f)) batch.push(f);
+        }
+      } catch (e) {
+        result.errors.push(`walk ${root}: ${e}`);
+      }
     }
 
     const stats = await this.pushPaths(batch);
