@@ -20,8 +20,8 @@ This principle drives all sequencing decisions below: do the foundational things
 | 0b | [Investigate-First Pipeline](./investigate-first-pipeline) | Windmill pipeline | Platform | Ready | Nothing |
 | 0c | Fix cognitive-arch doc terminology | Docs | Docs | Trivial | Nothing |
 | 1a | [Domain-Modular Architecture](./modularization) | Directory reorg | Platform | Design done | Personal domain, new user onboarding |
-| 1b | [Docker-Modular Architecture](./docker-modular) | Infrastructure | Infra | Ready | Memory-sync (PAI containerization first) |
-| 2a | [Postgres + Sync Daemon](./memory-sync) | PAI / Postgres | Platform | Draft | Docker-Modular (1b) |
+| 1b | [Docker-Modular Architecture](./docker-modular) | Infrastructure | Infra | Revised — PAI stays on host | Windmill compose stack only |
+| 2a | [Postgres + Sync Daemon](./memory-sync) | PAI / Postgres | Platform | Draft | None (PAI containerization no longer required) |
 | 2b | [Semantic Search + Knowledge Graph](./memory-sync) | PAI / Intelligence | Platform | Draft | Postgres running (2a) |
 | 2c | [Palantír MCP Gateway](./memory-sync) | PAI / MCP | Platform | Draft | Knowledge layer (2b) |
 | 2d | [Multi-Schema + Hive](./postgres-multi-schema) | PAI / Domains | Platform | Draft | Postgres (2a) + Gateway (2c) |

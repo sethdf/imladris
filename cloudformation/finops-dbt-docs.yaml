@@ -35,19 +35,7 @@ Parameters:
     Default: latest
 
 Resources:
-  Repository:
-    Type: AWS::ECR::Repository
-    Properties:
-      RepositoryName: finops/dbt-docs
-      ImageScanningConfiguration: { ScanOnPush: true }
-      ImageTagMutability: MUTABLE
-      LifecyclePolicy:
-        LifecyclePolicyText: |
-          { "rules": [ { "rulePriority": 1, "description": "keep last 5 images",
-                         "selection": { "tagStatus": "any", "countType": "imageCountMoreThan",
-                                        "countNumber": 5 }, "action": { "type": "expire" } } ] }
-      Tags:
-        - { Key: Project, Value: !Ref ProjectTag }
+  # ECR repo finops/dbt-docs created manually (outside this stack)
 
   LogGroup:
     Type: AWS::Logs::LogGroup
@@ -184,5 +172,3 @@ Resources:
 Outputs:
   ServiceUrl:
     Value: 'https://docs.finops.audiense.us'
-  RepositoryUri:
-    Value: !GetAtt Repository.RepositoryUri
