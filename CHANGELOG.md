@@ -1,3 +1,8 @@
+## v2.8.2 (2026-04-18)
+
+### Fixes
+- Bun install on Ubuntu + install-settings graceful fallback
+
 ## v2.8.1 (2026-04-18)
 
 ### Fixes
