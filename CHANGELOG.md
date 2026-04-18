@@ -1,3 +1,8 @@
+## v2.7.1 (2026-04-18)
+
+### Fixes
+- test conventional commit hook
+
 ## v2.7.0 (2026-04-18)
 
 ### Features
