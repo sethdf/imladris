@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Enforce conventional commit format on every commit.
+# Valid prefixes: feat, fix, chore, docs, refactor, perf, test, ci, infra, style, build, release
+#
+# ✅ feat(deploy): portable single-script deployment
+# ✅ fix: corrected SDP endpoint
+# ✅ chore: cleaned up old files
+# ❌ updated stuff                     ← rejected
+# ❌ WIP                               ← rejected
+#
+# Install: git config core.hooksPath .githooks
+# Skip once: git commit --no-verify -m "..."
+
+MSG_FILE="$1"
+MSG=$(head -1 "$MSG_FILE")
+
+PATTERN="^(feat|fix|chore|docs|refactor|perf|test|ci|infra|style|build|release|Merge)(\(.+\))?(!)?: .{3,}"
+
+if ! echo "$MSG" | grep -qE "$PATTERN"; then
+  echo ""
+  echo "❌ Commit message rejected — must follow conventional format:"
+  echo ""
+  echo "   feat: add new feature"
+  echo "   fix: correct a bug"
+  echo "   chore: maintenance task"
+  echo "   docs: documentation update"
+  echo "   refactor: code restructure"
+  echo "   infra: infrastructure change"
+  echo ""
+  echo "   With scope:  feat(deploy): portable installer"
+  echo "   Breaking:    feat!: remove old API"
+  echo ""
+  echo "   Your message: $MSG"
+  echo ""
+  exit 1
+fi
