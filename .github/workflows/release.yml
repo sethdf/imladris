@@ -1,0 +1,179 @@
+name: Release
+
+# Auto-creates GitHub Releases with changelog from conventional commits.
+# Triggers on push to main. Detects version bumps from commit prefixes:
+#   feat:  → minor bump (2.6.0 → 2.7.0)
+#   fix:   → patch bump (2.6.0 → 2.6.1)
+#   feat!: → major bump (2.6.0 → 3.0.0)
+#
+# Does NOT run on every push — only when conventional commits are present.
+# Manual releases still work: git tag -a v2.7.0 && git push origin v2.7.0
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Force version bump type'
+        required: false
+        default: ''
+        type: choice
+        options:
+          - ''
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get current version
+        id: current
+        run: |
+          VERSION=$(cat VERSION 2>/dev/null || echo "0.0.0")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Current version: $VERSION"
+
+      - name: Determine bump type from commits
+        id: bump
+        run: |
+          FORCE_BUMP="${{ github.event.inputs.bump }}"
+          if [ -n "$FORCE_BUMP" ]; then
+            echo "type=$FORCE_BUMP" >> $GITHUB_OUTPUT
+            echo "Forced bump: $FORCE_BUMP"
+            exit 0
+          fi
+
+          # Find last tag
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -z "$LAST_TAG" ]; then
+            RANGE="HEAD"
+          else
+            RANGE="${LAST_TAG}..HEAD"
+          fi
+
+          COMMITS=$(git log $RANGE --pretty=format:"%s" 2>/dev/null || echo "")
+          if [ -z "$COMMITS" ]; then
+            echo "type=none" >> $GITHUB_OUTPUT
+            echo "No new commits since $LAST_TAG"
+            exit 0
+          fi
+
+          # Check for breaking changes
+          if echo "$COMMITS" | grep -qE "^(feat|fix|refactor|perf)(\(.+\))?!:"; then
+            echo "type=major" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Check for features
+          if echo "$COMMITS" | grep -qE "^feat(\(.+\))?:"; then
+            echo "type=minor" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Check for fixes
+          if echo "$COMMITS" | grep -qE "^fix(\(.+\))?:"; then
+            echo "type=patch" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Chore/docs/etc — no release
+          echo "type=none" >> $GITHUB_OUTPUT
+          echo "No releasable commits (only chore/docs/etc)"
+
+      - name: Bump version
+        if: steps.bump.outputs.type != 'none'
+        id: next
+        run: |
+          CURRENT="${{ steps.current.outputs.version }}"
+          TYPE="${{ steps.bump.outputs.type }}"
+
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+          case "$TYPE" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+          esac
+
+          NEXT="${MAJOR}.${MINOR}.${PATCH}"
+          echo "version=$NEXT" >> $GITHUB_OUTPUT
+          echo "Bumping: $CURRENT → $NEXT ($TYPE)"
+
+      - name: Generate changelog
+        if: steps.bump.outputs.type != 'none'
+        id: changelog
+        run: |
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          RANGE="${LAST_TAG:+${LAST_TAG}..}HEAD"
+          NEXT="v${{ steps.next.outputs.version }}"
+
+          {
+            echo "## $NEXT ($(date -u +%Y-%m-%d))"
+            echo ""
+
+            # Features
+            FEATS=$(git log $RANGE --pretty=format:"- %s" --grep="^feat" 2>/dev/null || true)
+            if [ -n "$FEATS" ]; then
+              echo "### Features"
+              echo "$FEATS" | sed 's/^- feat([^)]*): /- /' | sed 's/^- feat: /- /'
+              echo ""
+            fi
+
+            # Fixes
+            FIXES=$(git log $RANGE --pretty=format:"- %s" --grep="^fix" 2>/dev/null || true)
+            if [ -n "$FIXES" ]; then
+              echo "### Fixes"
+              echo "$FIXES" | sed 's/^- fix([^)]*): /- /' | sed 's/^- fix: /- /'
+              echo ""
+            fi
+
+            # Infrastructure
+            INFRA=$(git log $RANGE --pretty=format:"- %s" --grep="^infra\|^chore" 2>/dev/null || true)
+            if [ -n "$INFRA" ]; then
+              echo "### Infrastructure"
+              echo "$INFRA"
+              echo ""
+            fi
+          } > /tmp/release-notes.md
+
+          cat /tmp/release-notes.md
+
+          # Also prepend to CHANGELOG.md
+          if [ -f CHANGELOG.md ]; then
+            cat /tmp/release-notes.md CHANGELOG.md > /tmp/changelog-merged.md
+            mv /tmp/changelog-merged.md CHANGELOG.md
+          else
+            cp /tmp/release-notes.md CHANGELOG.md
+          fi
+
+      - name: Commit version bump + changelog
+        if: steps.bump.outputs.type != 'none'
+        run: |
+          NEXT="${{ steps.next.outputs.version }}"
+          echo "$NEXT" > VERSION
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add VERSION CHANGELOG.md
+          git commit -m "release: v${NEXT}" || echo "nothing to commit"
+          git tag -a "v${NEXT}" -m "v${NEXT}"
+          git push origin main --tags
+
+      - name: Create GitHub Release
+        if: steps.bump.outputs.type != 'none'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NEXT="v${{ steps.next.outputs.version }}"
+          gh release create "$NEXT" \
+            --title "$NEXT" \
+            --notes-file /tmp/release-notes.md \
+            --latest
