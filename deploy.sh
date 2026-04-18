@@ -115,9 +115,9 @@ install_packages() {
 
   local packages=(git curl unzip tmux jq)
 
-  # Eternal Terminal — available in Ubuntu/Debian repos
+  # Ubuntu/Debian extras — ET, npm (for Claude Code), Node.js
   case "$OS_ID" in
-    ubuntu|debian) packages+=(et) ;;
+    ubuntu|debian) packages+=(et nodejs npm) ;;
   esac
 
   pkg_install "${packages[@]}" 2>/dev/null || warn "Some packages failed to install"
@@ -193,7 +193,6 @@ install_tailscale() {
 # ── Install Bun ──────────────────────────────────────────────────────────────
 install_bun() {
   step "Bun"
-  # Ensure PATH includes bun location for this session
   export PATH="${IMLADRIS_HOME}/.bun/bin:${PATH}"
 
   if command -v bun >/dev/null 2>&1; then
@@ -201,9 +200,14 @@ install_bun() {
     return
   fi
   info "Installing Bun..."
-  # Install as the target user, not root
-  sudo -u "$IMLADRIS_USER" bash -c 'curl -fsSL https://bun.sh/install | bash' 2>/dev/null
-  ok "Bun installed: $(bun --version 2>/dev/null || echo 'check PATH')"
+  # Install as target user with correct HOME — Bun's script uses $HOME to decide install dir
+  sudo -u "$IMLADRIS_USER" env HOME="$IMLADRIS_HOME" bash -c 'curl -fsSL https://bun.sh/install | bash' 2>/dev/null || true
+  # Verify
+  if [ -x "${IMLADRIS_HOME}/.bun/bin/bun" ]; then
+    ok "Bun installed: $(${IMLADRIS_HOME}/.bun/bin/bun --version 2>/dev/null)"
+  else
+    warn "Bun install failed — install manually: curl -fsSL https://bun.sh/install | bash"
+  fi
 }
 
 # ── Install Claude Code ──────────────────────────────────────────────────────
@@ -218,12 +222,15 @@ install_claude() {
     return
   fi
   info "Installing Claude Code..."
-  # Try npm first (more reliable), fall back to bun
+  # Try npm first (Ubuntu has it via nodejs package), fall back to bun
   if command -v npm >/dev/null 2>&1; then
-    sudo npm install -g @anthropic-ai/claude-code 2>/dev/null && ok "Claude Code installed (npm)" && return
+    sudo npm install -g @anthropic-ai/claude-code 2>/dev/null && ok "Claude Code installed (npm)" && return || true
   fi
-  bun install -g @anthropic-ai/claude-code 2>/dev/null && ok "Claude Code installed (bun)" && return
-  warn "Claude Code install failed — install manually: npm install -g @anthropic-ai/claude-code"
+  if command -v bun >/dev/null 2>&1; then
+    sudo -u "$IMLADRIS_USER" env HOME="$IMLADRIS_HOME" PATH="${IMLADRIS_HOME}/.bun/bin:$PATH" \
+      bun install -g @anthropic-ai/claude-code 2>/dev/null && ok "Claude Code installed (bun)" && return || true
+  fi
+  warn "Claude Code install needs npm. Run: sudo apt install nodejs npm && sudo npm install -g @anthropic-ai/claude-code"
 }
 
 # ── Install BWS CLI ──────────────────────────────────────────────────────────
@@ -276,7 +283,7 @@ setup_pai() {
   step "PAI Setup"
   cd "$IMLADRIS_REPO"
   if [ -x "modules/pai/link.sh" ]; then
-    sudo -u "$IMLADRIS_USER" bash modules/pai/link.sh 2>/dev/null || bash modules/pai/link.sh
+    sudo -u "$IMLADRIS_USER" env HOME="$IMLADRIS_HOME" bash modules/pai/link.sh 2>/dev/null || bash modules/pai/link.sh
     ok "PAI symlinks created"
   else
     warn "modules/pai/link.sh not found — skipping PAI setup"
