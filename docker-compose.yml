@@ -104,9 +104,13 @@ services:
       - "127.0.0.1:5432:5432"
     volumes:
       - /home/ec2-user/.windmill/postgres:/var/lib/postgresql/data
+      - pgbackrest-data:/var/lib/pgbackrest
+      - pgbackrest-logs:/var/log/pgbackrest
     environment:
       - POSTGRES_DB=windmill
       - POSTGRES_PASSWORD=${WINDMILL_DB_PASSWORD}
+      - PGBACKREST_S3_BUCKET=${PGBACKREST_S3_BUCKET:-imladris-state-767448074758}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
     mem_limit: 4g
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
@@ -162,3 +166,9 @@ services:
     depends_on:
       windmill_server:
         condition: service_healthy
+
+volumes:
+  pgbackrest-data:
+    driver: local
+  pgbackrest-logs:
+    driver: local

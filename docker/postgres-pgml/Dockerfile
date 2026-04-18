@@ -1,8 +1,8 @@
 # =============================================================================
 # imladris/postgres:pg16
 #
-# PostgreSQL 16 + pgvector + pgml + Apache AGE + pg_cron
-# Built for linux/arm64 (EC2 Graviton) — pgml official image is PG15 only.
+# PostgreSQL 16 + pgvector + pgml + Apache AGE + pg_cron + pgBackRest
+# Multi-arch (x86_64 + arm64). pgml compiled from source (PG15-only in upstream).
 #
 # Base:    pgvector/pgvector:pg16  (Debian bookworm, PG16, pgvector pre-installed)
 # Adds:    pgml extension compiled from source (v2.10.0, pgrx=0.12.9)
@@ -82,7 +82,7 @@ RUN make PG_CONFIG=$(which pg_config) && make install PG_CONFIG=$(which pg_confi
 # ── Stage 2: Runtime image ────────────────────────────────────────────────────
 FROM pgvector/pgvector:pg16
 
-# Runtime deps: Python for pgml models + OpenMP for LightGBM/XGBoost
+# Runtime deps: Python for pgml, OpenMP for LightGBM/XGBoost, pgBackRest for backups
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3.11 \
@@ -91,7 +91,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-venv \
     libgomp1 \
     libopenblas0 \
-    && rm -rf /var/lib/apt/lists/*
+    pgbackrest \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /var/lib/pgbackrest /var/log/pgbackrest /etc/pgbackrest \
+    && chown -R postgres:postgres /var/lib/pgbackrest /var/log/pgbackrest /etc/pgbackrest
 
 # Install pgml Python runtime deps (minimum set for embeddings + extension load)
 # torch for aarch64 is on standard PyPI (no --index-url needed)
@@ -143,7 +146,11 @@ COPY --from=builder \
 ENV PGML_VENV=/var/lib/pgml/venv
 RUN mkdir -p /var/lib/pgml && chown postgres:postgres /var/lib/pgml
 
+# pgBackRest config — S3 bucket set via env var at runtime
+COPY pgbackrest.conf /etc/pgbackrest/pgbackrest.conf
+
 # Copy init scripts — run on first container start (alphabetical order)
 # 01: create pai database + core schema
 # 02: create extensions in pai database
+# 03: enable WAL archiving for pgBackRest
 COPY docker-entrypoint-initdb.d/ /docker-entrypoint-initdb.d/
