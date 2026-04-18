@@ -1,3 +1,8 @@
+## v2.8.0 (2026-04-18)
+
+### Features
+- Ubuntu 24.04 + Eternal Terminal + hardened deploy.sh
+
 ## v2.7.3 (2026-04-18)
 
 ### Fixes
