@@ -1,3 +1,11 @@
+## v2.7.0 (2026-04-18)
+
+### Features
+- auto-release from conventional commits
+
+### Infrastructure
+- chore: move finops CFN templates to sethdf/finops repo
+
 # Changelog
 
 All notable changes to imladris are documented in this file.
