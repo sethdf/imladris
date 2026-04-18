@@ -120,6 +120,14 @@ install_packages() {
     ubuntu|debian) packages+=(mosh nodejs npm) ;;
   esac
 
+  # AWS CLI v2 (needed for S3, SSM, etc. on all platforms)
+  if ! command -v aws >/dev/null 2>&1; then
+    info "Installing AWS CLI v2..."
+    curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o /tmp/awscli.zip
+    cd /tmp && unzip -qo awscli.zip && sudo ./aws/install 2>/dev/null && rm -rf /tmp/aws /tmp/awscli.zip
+    cd "$IMLADRIS_REPO" 2>/dev/null || true
+  fi
+
   pkg_install "${packages[@]}" 2>/dev/null || warn "Some packages failed to install"
   ok "System packages: git, curl, tmux, jq$(command -v et >/dev/null 2>&1 && echo ', et' || echo '')"
 }
