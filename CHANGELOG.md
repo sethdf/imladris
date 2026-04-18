@@ -1,3 +1,8 @@
+## v2.8.3 (2026-04-18)
+
+### Fixes
+- as_user helper for root execution + mosh replaces ET
+
 ## v2.8.2 (2026-04-18)
 
 ### Fixes
