@@ -1,3 +1,8 @@
+## v2.7.3 (2026-04-18)
+
+### Fixes
+- add tmux + mosh install and auto-attach on SSH
+
 ## v2.7.2 (2026-04-18)
 
 ### Fixes
