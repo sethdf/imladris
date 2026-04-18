@@ -26,8 +26,9 @@ load_secret() {
     val="$(bws secret list 2>/dev/null | awk -v k="$bws_key" -F'|' '$2 ~ k {print $3; exit}' || true)"
     if [ -n "$val" ]; then export "$var=$val"; return 0; fi
   fi
-  echo "missing secret for $var (set env or create BWS key $bws_key)" >&2
-  return 1
+  echo "missing secret for $var (set env or create BWS key $bws_key) — using placeholder" >&2
+  export "$var=PLACEHOLDER_SET_AFTER_WINDMILL_STARTS"
+  return 0
 }
 
 load_secret WINDMILL_TOKEN_IMLADRIS windmill-token-imladris

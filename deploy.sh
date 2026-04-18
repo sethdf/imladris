@@ -200,13 +200,16 @@ install_bun() {
     return
   fi
   info "Installing Bun..."
-  # Install as target user with correct HOME — Bun's script uses $HOME to decide install dir
-  sudo -u "$IMLADRIS_USER" env HOME="$IMLADRIS_HOME" bash -c 'curl -fsSL https://bun.sh/install | bash' 2>/dev/null || true
+  # Download installer and run as target user with correct HOME
+  curl -fsSL https://bun.sh/install -o /tmp/bun-install.sh
+  chmod +x /tmp/bun-install.sh
+  sudo -u "$IMLADRIS_USER" env HOME="$IMLADRIS_HOME" BUN_INSTALL="$IMLADRIS_HOME/.bun" bash /tmp/bun-install.sh 2>/dev/null || true
+  rm -f /tmp/bun-install.sh
   # Verify
   if [ -x "${IMLADRIS_HOME}/.bun/bin/bun" ]; then
     ok "Bun installed: $(${IMLADRIS_HOME}/.bun/bin/bun --version 2>/dev/null)"
   else
-    warn "Bun install failed — install manually: curl -fsSL https://bun.sh/install | bash"
+    warn "Bun install failed — install manually as ${IMLADRIS_USER}: curl -fsSL https://bun.sh/install | bash"
   fi
 }
 
