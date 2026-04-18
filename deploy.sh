@@ -89,11 +89,7 @@ install_docker() {
     if docker compose version >/dev/null 2>&1; then
       ok "Compose plugin: $(docker compose version)"
     else
-      info "Installing compose plugin..."
-      case "$OS_ID" in
-        amzn) sudo dnf install -y docker-compose-plugin ;;
-        ubuntu|debian) sudo apt-get install -y docker-compose-plugin ;;
-      esac
+      install_compose_plugin
     fi
     return
   fi
@@ -101,11 +97,10 @@ install_docker() {
   info "Installing Docker..."
   case "$OS_ID" in
     amzn)
-      sudo dnf install -y docker docker-compose-plugin
+      sudo dnf install -y docker
       ;;
     ubuntu|debian)
       curl -fsSL https://get.docker.com | sudo sh
-      sudo apt-get install -y docker-compose-plugin
       ;;
     *)
       curl -fsSL https://get.docker.com | sudo sh
@@ -114,7 +109,24 @@ install_docker() {
 
   sudo systemctl enable --now docker
   sudo usermod -aG docker "$IMLADRIS_USER"
+
+  # Install compose plugin (AL2023 doesn't package it — install from GitHub)
+  install_compose_plugin
+
   ok "Docker installed"
+}
+
+install_compose_plugin() {
+  if docker compose version >/dev/null 2>&1; then return; fi
+  info "Installing Docker Compose plugin..."
+  local COMPOSE_VERSION="v2.32.4"
+  local COMPOSE_ARCH="x86_64"
+  [ "$(uname -m)" = "aarch64" ] && COMPOSE_ARCH="aarch64"
+  sudo mkdir -p /usr/local/lib/docker/cli-plugins
+  sudo curl -fsSL "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-linux-${COMPOSE_ARCH}" \
+    -o /usr/local/lib/docker/cli-plugins/docker-compose
+  sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+  ok "Compose plugin: $(docker compose version 2>/dev/null || echo 'installed')"
 }
 
 # ── Install Tailscale ────────────────────────────────────────────────────────
