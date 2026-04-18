@@ -1,3 +1,8 @@
+## v2.8.1 (2026-04-18)
+
+### Fixes
+- handle root execution on Ubuntu — Bun HOME, npm for Claude, ET package
+
 ## v2.8.0 (2026-04-18)
 
 ### Features
