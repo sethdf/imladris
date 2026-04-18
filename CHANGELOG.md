@@ -1,3 +1,11 @@
+## v2.7.2 (2026-04-18)
+
+### Fixes
+- install Docker Compose from GitHub releases on AL2023
+
+### Infrastructure
+- chore: remove auto-clone of PAI upstream from install-deps
+
 ## v2.7.1 (2026-04-18)
 
 ### Fixes
