@@ -18,8 +18,9 @@ node_modules/
 *.swp
 *~
 
-# Not part of imladris
+# Not part of imladris — tracked in separate repos
 adeptia/
+finops/
 
 # Runtime state (should never be in this repo)
 MEMORY/
