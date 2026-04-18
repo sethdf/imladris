@@ -2,7 +2,7 @@
 # =============================================================================
 # deploy.sh — Deploy Imladris to any Linux box
 # =============================================================================
-# Works on: Amazon Linux 2023, Ubuntu 22.04+, Debian 12+
+# Works on: Ubuntu 22.04+, Debian 12+, Amazon Linux 2023
 # Targets:  AWS EC2, Hetzner Cloud/Dedicated, Proxmox LXC/VM, bare metal
 #
 # Usage:
@@ -15,11 +15,12 @@
 #   1. Installs Docker + Compose plugin
 #   2. Installs Tailscale + authenticates
 #   3. Installs Bun, Claude Code, BWS CLI
-#   4. Clones imladris repo
+#   4. Installs tmux, Eternal Terminal (ET), git
 #   5. Sets up PAI (symlinks modules/pai/ → ~/.claude/)
 #   6. Generates .env for docker-compose
 #   7. Builds custom Postgres image (pgvector + pgml + AGE)
 #   8. Starts all services via docker compose
+#   9. Sets up pai-sync daemon (systemd)
 #
 # Idempotent — safe to re-run. No AWS SDK/CLI required.
 # =============================================================================
@@ -43,7 +44,7 @@ step()    { echo -e "\n${BOLD}${BLUE}━━━ $1 ━━━${RESET}"; }
 
 # ── Config ───────────────────────────────────────────────────────────────────
 IMLADRIS_USER="${IMLADRIS_USER:-$(whoami)}"
-IMLADRIS_HOME="${IMLADRIS_HOME:-$(eval echo ~$IMLADRIS_USER)}"
+IMLADRIS_HOME="${IMLADRIS_HOME:-$(eval echo ~"$IMLADRIS_USER")}"
 IMLADRIS_REPO="${IMLADRIS_REPO:-${IMLADRIS_HOME}/repos/imladris}"
 IMLADRIS_HOSTNAME="${IMLADRIS_HOSTNAME:-imladris}"
 TAILSCALE_KEY=""
@@ -56,7 +57,9 @@ SKIP_CLAUDE=0
 for arg in "$@"; do
   case "$arg" in
     --tailscale-key=*) TAILSCALE_KEY="${arg#*=}" ;;
+    --tailscale-key)   ;; # handled below as two-word arg
     --bws-token=*)     BWS_TOKEN="${arg#*=}" ;;
+    --bws-token)       ;; # handled below
     --env-file=*)      ENV_FILE="${arg#*=}" ;;
     --skip-tailscale)  SKIP_TAILSCALE=1 ;;
     --skip-claude)     SKIP_CLAUDE=1 ;;
@@ -66,9 +69,19 @@ for arg in "$@"; do
   esac
 done
 
+# Handle --tailscale-key VALUE (space-separated)
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --tailscale-key) TAILSCALE_KEY="$2"; shift 2 ;;
+    --bws-token)     BWS_TOKEN="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+
 # ── Detect OS ────────────────────────────────────────────────────────────────
 detect_os() {
   if [ -f /etc/os-release ]; then
+    # shellcheck disable=SC1091
     . /etc/os-release
     OS_ID="$ID"
     OS_VERSION="${VERSION_ID:-unknown}"
@@ -80,12 +93,42 @@ detect_os() {
   info "Detected: ${OS_ID} ${OS_VERSION} (${ARCH})"
 }
 
+# ── Package manager helpers ──────────────────────────────────────────────────
+pkg_update() {
+  case "$OS_ID" in
+    ubuntu|debian) sudo apt-get update -qq ;;
+    amzn|fedora)   sudo dnf makecache -q ;;
+  esac
+}
+
+pkg_install() {
+  case "$OS_ID" in
+    ubuntu|debian) sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$@" ;;
+    amzn|fedora)   sudo dnf install -y "$@" ;;
+  esac
+}
+
+# ── Install system packages ─────────────────────────────────────────────────
+install_packages() {
+  step "System Packages"
+  pkg_update
+
+  local packages=(git curl unzip tmux jq)
+
+  # Eternal Terminal — available in Ubuntu/Debian repos
+  case "$OS_ID" in
+    ubuntu|debian) packages+=(et) ;;
+  esac
+
+  pkg_install "${packages[@]}" 2>/dev/null || warn "Some packages failed to install"
+  ok "System packages: git, curl, tmux, jq$(command -v et >/dev/null 2>&1 && echo ', et' || echo '')"
+}
+
 # ── Install Docker ───────────────────────────────────────────────────────────
 install_docker() {
   step "Docker"
   if command -v docker >/dev/null 2>&1; then
     ok "Docker already installed: $(docker --version | head -1)"
-    # Ensure compose plugin
     if docker compose version >/dev/null 2>&1; then
       ok "Compose plugin: $(docker compose version)"
     else
@@ -97,10 +140,7 @@ install_docker() {
   info "Installing Docker..."
   case "$OS_ID" in
     amzn)
-      sudo dnf install -y docker
-      ;;
-    ubuntu|debian)
-      curl -fsSL https://get.docker.com | sudo sh
+      pkg_install docker
       ;;
     *)
       curl -fsSL https://get.docker.com | sudo sh
@@ -109,10 +149,7 @@ install_docker() {
 
   sudo systemctl enable --now docker
   sudo usermod -aG docker "$IMLADRIS_USER"
-
-  # Install compose plugin (AL2023 doesn't package it — install from GitHub)
   install_compose_plugin
-
   ok "Docker installed"
 }
 
@@ -142,7 +179,6 @@ install_tailscale() {
     curl -fsSL https://tailscale.com/install.sh | sudo sh
   fi
 
-  # Authenticate if key provided and not already connected
   if tailscale status >/dev/null 2>&1; then
     ok "Tailscale already connected: $(tailscale status --self --peers=false | awk '{print $2}')"
   elif [ -n "$TAILSCALE_KEY" ]; then
@@ -157,14 +193,17 @@ install_tailscale() {
 # ── Install Bun ──────────────────────────────────────────────────────────────
 install_bun() {
   step "Bun"
+  # Ensure PATH includes bun location for this session
+  export PATH="${IMLADRIS_HOME}/.bun/bin:${PATH}"
+
   if command -v bun >/dev/null 2>&1; then
     ok "Bun already installed: $(bun --version)"
     return
   fi
   info "Installing Bun..."
-  curl -fsSL https://bun.sh/install | bash
-  export PATH="${IMLADRIS_HOME}/.bun/bin:$PATH"
-  ok "Bun installed: $(bun --version)"
+  # Install as the target user, not root
+  sudo -u "$IMLADRIS_USER" bash -c 'curl -fsSL https://bun.sh/install | bash' 2>/dev/null
+  ok "Bun installed: $(bun --version 2>/dev/null || echo 'check PATH')"
 }
 
 # ── Install Claude Code ──────────────────────────────────────────────────────
@@ -179,8 +218,12 @@ install_claude() {
     return
   fi
   info "Installing Claude Code..."
-  npm install -g @anthropic-ai/claude-code 2>/dev/null || bun install -g @anthropic-ai/claude-code
-  ok "Claude Code installed"
+  # Try npm first (more reliable), fall back to bun
+  if command -v npm >/dev/null 2>&1; then
+    sudo npm install -g @anthropic-ai/claude-code 2>/dev/null && ok "Claude Code installed (npm)" && return
+  fi
+  bun install -g @anthropic-ai/claude-code 2>/dev/null && ok "Claude Code installed (bun)" && return
+  warn "Claude Code install failed — install manually: npm install -g @anthropic-ai/claude-code"
 }
 
 # ── Install BWS CLI ──────────────────────────────────────────────────────────
@@ -195,10 +238,11 @@ install_bws() {
       aarch64) BWS_ARCH="aarch64-unknown-linux-gnu" ;;
       *) fail "Unsupported arch for BWS: $ARCH"; return ;;
     esac
-    BWS_VERSION="1.0.0"
+    local BWS_VERSION="1.0.0"
     curl -fsSL "https://github.com/bitwarden/sdk/releases/download/bws-v${BWS_VERSION}/bws-${BWS_ARCH}-${BWS_VERSION}.zip" -o /tmp/bws.zip
     cd /tmp && unzip -o bws.zip && sudo mv bws /usr/local/bin/bws && sudo chmod +x /usr/local/bin/bws
     rm -f /tmp/bws.zip
+    cd "$IMLADRIS_REPO" 2>/dev/null || true
     ok "BWS installed"
   fi
 
@@ -215,36 +259,40 @@ clone_repo() {
   step "Imladris Repo"
   if [ -d "${IMLADRIS_REPO}/.git" ]; then
     ok "Repo already at ${IMLADRIS_REPO}"
-    cd "$IMLADRIS_REPO" && git pull --ff-only 2>/dev/null || true
+    cd "$IMLADRIS_REPO"
+    git config --global --add safe.directory "$IMLADRIS_REPO" 2>/dev/null || true
+    git pull --ff-only 2>/dev/null || true
     return
   fi
   info "Cloning imladris..."
   mkdir -p "$(dirname "$IMLADRIS_REPO")"
   git clone https://github.com/sethdf/imladris.git "$IMLADRIS_REPO"
+  cd "$IMLADRIS_REPO"
   ok "Cloned to ${IMLADRIS_REPO}"
 }
 
 # ── Set up PAI ───────────────────────────────────────────────────────────────
 setup_pai() {
   step "PAI Setup"
-  if [ -x "${IMLADRIS_REPO}/modules/pai/link.sh" ]; then
-    bash "${IMLADRIS_REPO}/modules/pai/link.sh"
+  cd "$IMLADRIS_REPO"
+  if [ -x "modules/pai/link.sh" ]; then
+    sudo -u "$IMLADRIS_USER" bash modules/pai/link.sh 2>/dev/null || bash modules/pai/link.sh
     ok "PAI symlinks created"
   else
     warn "modules/pai/link.sh not found — skipping PAI setup"
   fi
 
-  # Install external deps (Ruflo, PAI upstream)
-  if [ -x "${IMLADRIS_REPO}/scripts/install-deps.sh" ]; then
-    bash "${IMLADRIS_REPO}/scripts/install-deps.sh"
-    ok "External dependencies installed"
+  if [ -x "scripts/install-deps.sh" ]; then
+    bash scripts/install-deps.sh 2>/dev/null || true
+    ok "External dependencies checked"
   fi
 }
 
 # ── Generate .env ────────────────────────────────────────────────────────────
 generate_env() {
   step "Environment"
-  local env_path="${IMLADRIS_REPO}/.env"
+  cd "$IMLADRIS_REPO"
+  local env_path=".env"
 
   if [ -n "$ENV_FILE" ] && [ -f "$ENV_FILE" ]; then
     cp "$ENV_FILE" "$env_path"
@@ -258,9 +306,8 @@ generate_env() {
   fi
 
   info "Generating .env..."
-  local db_pass
+  local db_pass admin_secret
   db_pass="$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)"
-  local admin_secret
   admin_secret="$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)"
 
   cat > "$env_path" <<ENVEOF
@@ -271,7 +318,8 @@ WINDMILL_ADMIN_SECRET=${admin_secret}
 ENVEOF
 
   chmod 600 "$env_path"
-  ok ".env generated (Windmill DB password + admin secret)"
+  chown "$IMLADRIS_USER:$IMLADRIS_USER" "$env_path" 2>/dev/null || true
+  ok ".env generated"
 }
 
 # ── Create directories ───────────────────────────────────────────────────────
@@ -289,28 +337,16 @@ create_dirs() {
     if [ ! -d "$d" ]; then
       sudo mkdir -p "$d"
       sudo chown "$IMLADRIS_USER:$IMLADRIS_USER" "$d"
-      info "Created $d"
     fi
   done
 
   # Cache dir — use NVMe if available, otherwise local
   if [ -d "/local" ]; then
-    ok "NVMe instance store detected at /local"
+    ok "NVMe instance store at /local"
   else
     sudo mkdir -p /local/cache
     sudo chown "$IMLADRIS_USER:$IMLADRIS_USER" /local/cache
-    info "Created /local/cache (no NVMe — using root filesystem)"
   fi
-
-  # Install tmux + mosh if missing
-  for pkg in tmux mosh; do
-    if ! command -v "$pkg" >/dev/null 2>&1; then
-      case "$OS_ID" in
-        amzn) sudo dnf install -y "$pkg" 2>/dev/null ;;
-        ubuntu|debian) sudo apt-get install -y "$pkg" 2>/dev/null ;;
-      esac
-    fi
-  done
 
   # tmux auto-attach on SSH login
   if ! grep -q "tmux auto-attach" "${IMLADRIS_HOME}/.bashrc" 2>/dev/null; then
@@ -322,28 +358,40 @@ if command -v tmux &>/dev/null && [ -n "$SSH_CONNECTION" ] && [ -z "$TMUX" ]; th
 fi
 # END - tmux auto-attach
 TMUXRC
-    info "tmux auto-attach added to .bashrc"
   fi
 
-  ok "Directories ready"
+  # Git hooks
+  cd "$IMLADRIS_REPO" 2>/dev/null && git config core.hooksPath .githooks 2>/dev/null || true
+
+  # Write deployed version
+  sudo tee /etc/imladris-version > /dev/null <<VEREOF
+version=$(cat "${IMLADRIS_REPO}/VERSION" 2>/dev/null || echo "unknown")
+deployed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+git_sha=$(git -C "$IMLADRIS_REPO" rev-parse --short HEAD 2>/dev/null || echo "unknown")
+os=${OS_ID} ${OS_VERSION}
+arch=${ARCH}
+VEREOF
+
+  ok "Directories + shell config ready"
 }
 
 # ── Build Postgres image ─────────────────────────────────────────────────────
 build_postgres() {
   step "Postgres Image"
+  cd "$IMLADRIS_REPO"
   if docker image inspect imladris/postgres:pg16 >/dev/null 2>&1; then
     ok "imladris/postgres:pg16 already built"
     return
   fi
 
-  local dockerfile="${IMLADRIS_REPO}/docker/postgres-pgml/Dockerfile"
+  local dockerfile="docker/postgres-pgml/Dockerfile"
   if [ ! -f "$dockerfile" ]; then
     fail "Dockerfile not found at ${dockerfile}"
     return 1
   fi
 
   info "Building imladris/postgres:pg16 (this takes 5-15 min on first run)..."
-  docker build -t imladris/postgres:pg16 -f "$dockerfile" "${IMLADRIS_REPO}/docker/postgres-pgml/"
+  docker build -t imladris/postgres:pg16 -f "$dockerfile" "docker/postgres-pgml/"
   ok "Postgres image built"
 }
 
@@ -356,46 +404,42 @@ start_services() {
   docker compose up -d
   ok "All services started"
 
-  # Wait for Windmill health
   info "Waiting for Windmill..."
   local retries=30
   while [ $retries -gt 0 ]; do
     if curl -sf http://localhost:8000/api/version >/dev/null 2>&1; then
-      ok "Windmill healthy"
+      ok "Windmill healthy: $(curl -sf http://localhost:8000/api/version 2>/dev/null)"
       break
     fi
     retries=$((retries - 1))
     sleep 2
   done
-  [ $retries -eq 0 ] && warn "Windmill not healthy after 60s — check docker compose logs"
+  [ $retries -eq 0 ] && warn "Windmill not healthy after 60s — check: docker compose logs"
 }
 
 # ── Set up pai-sync daemon ───────────────────────────────────────────────────
 setup_pai_sync() {
   step "PAI Sync Daemon"
-  local sync_dir="${IMLADRIS_REPO}/scripts/pai-sync"
+  cd "$IMLADRIS_REPO"
+  local sync_dir="scripts/pai-sync"
   if [ ! -f "${sync_dir}/daemon.ts" ]; then
     warn "pai-sync source not found — skipping"
     return
   fi
 
-  # Build daemon binary
   if [ ! -f /usr/local/bin/pai-sync-daemon ] || [ "${sync_dir}/daemon.ts" -nt /usr/local/bin/pai-sync-daemon ]; then
     info "Compiling pai-sync daemon..."
     cd "$sync_dir" && bun install --frozen-lockfile 2>/dev/null || bun install
     bun build --compile daemon.ts --outfile /tmp/pai-sync-daemon
     sudo mv /tmp/pai-sync-daemon /usr/local/bin/pai-sync-daemon
     sudo chmod 755 /usr/local/bin/pai-sync-daemon
-    ok "pai-sync daemon compiled"
-  fi
-
-  if [ ! -f /usr/local/bin/pai-sync ]; then
     bun build --compile cli.ts --outfile /tmp/pai-sync
     sudo mv /tmp/pai-sync /usr/local/bin/pai-sync
     sudo chmod 755 /usr/local/bin/pai-sync
+    cd "$IMLADRIS_REPO"
+    ok "pai-sync compiled"
   fi
 
-  # Create env file
   local db_pass
   db_pass="$(grep WINDMILL_DB_PASSWORD "${IMLADRIS_REPO}/.env" | cut -d= -f2)"
   sudo mkdir -p /etc/pai-sync
@@ -409,7 +453,6 @@ PAI_EMBED_INTERVAL_MS=60000
 SYNCENV
   sudo chmod 640 /etc/pai-sync/env
 
-  # Install systemd service
   sudo tee /etc/systemd/system/pai-sync.service > /dev/null <<SVCEOF
 [Unit]
 Description=PAI Memory Sync Daemon
@@ -421,8 +464,7 @@ Type=simple
 User=${IMLADRIS_USER}
 ExecStart=/usr/local/bin/pai-sync-daemon
 Restart=always
-RestartSec=5
-WatchdogSec=120
+RestartSec=10
 EnvironmentFile=/etc/pai-sync/env
 
 [Install]
@@ -436,21 +478,25 @@ SVCEOF
 
 # ── Summary ──────────────────────────────────────────────────────────────────
 print_summary() {
+  local ts_ip
+  ts_ip="$(tailscale status --self --peers=false 2>/dev/null | awk '{print $1}' || echo 'not connected')"
+  local version
+  version="$(cat "${IMLADRIS_REPO}/VERSION" 2>/dev/null || echo 'unknown')"
+
   echo ""
   echo -e "${BOLD}${GREEN}═══════════════════════════════════════════════${RESET}"
-  echo -e "${BOLD}  Imladris deployed successfully${RESET}"
+  echo -e "${BOLD}  Imladris v${version} deployed successfully${RESET}"
   echo -e "${GREEN}═══════════════════════════════════════════════${RESET}"
   echo ""
+  echo -e "  ${GRAY}OS:${RESET}         ${OS_ID} ${OS_VERSION} (${ARCH})"
   echo -e "  ${GRAY}Windmill:${RESET}   http://localhost:8000"
-  echo -e "  ${GRAY}Tailscale:${RESET}  $(tailscale status --self --peers=false 2>/dev/null | awk '{print $1}' || echo 'not connected')"
+  echo -e "  ${GRAY}Tailscale:${RESET}  ${ts_ip}"
   echo -e "  ${GRAY}Repo:${RESET}       ${IMLADRIS_REPO}"
-  echo -e "  ${GRAY}PAI:${RESET}        ~/.claude/ → modules/pai/"
-  echo -e "  ${GRAY}Postgres:${RESET}   localhost:5432 (user: postgres)"
+  echo -e "  ${GRAY}Postgres:${RESET}   localhost:5432"
   echo ""
-  echo -e "  ${GRAY}Next steps:${RESET}"
-  echo -e "    1. Open Windmill at http://localhost:8000"
-  echo -e "    2. Start Claude Code: claude"
-  echo -e "    3. Connect via Tailscale: ssh ${IMLADRIS_USER}@${IMLADRIS_HOSTNAME}"
+  echo -e "  ${GRAY}Connect:${RESET}    et ${IMLADRIS_USER}@${IMLADRIS_HOSTNAME}"
+  echo -e "  ${GRAY}Fallback:${RESET}   ssh ${IMLADRIS_USER}@${IMLADRIS_HOSTNAME}"
+  echo -e "  ${GRAY}Start AI:${RESET}   claude"
   echo ""
 }
 
@@ -459,6 +505,7 @@ main() {
   echo -e "\n${BOLD}${BLUE}Imladris Deploy${RESET} ${GRAY}— portable cloud workstation${RESET}\n"
 
   detect_os
+  install_packages
   install_docker
   install_tailscale
   install_bun

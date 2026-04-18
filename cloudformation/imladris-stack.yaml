@@ -24,7 +24,7 @@ Parameters:
   AmiId:
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
     Default: /imladris/ami-id
-    Description: SSM parameter containing baked AMI ID from Packer. Must match instance architecture (x86_64 for m7i/m7id/m7a, arm64 for m7gd). Update this SSM param when switching architectures.
+    Description: SSM parameter for AMI ID. Default distro is Ubuntu 24.04 LTS (x86_64). Update with aws ssm put-parameter --name /imladris/ami-id --value ami-xxx.
 
   AdminPrincipalArn:
     Type: String
@@ -449,29 +449,37 @@ Resources:
               --region ${AWS::Region} 2>/dev/null || true
           }
 
-          # Clone imladris repo (Ansible + tools pre-installed in baked AMI)
+          # Detect user — Ubuntu uses 'ubuntu', AL2023 uses 'ec2-user'
+          if id ubuntu >/dev/null 2>&1; then
+            DEPLOY_USER=ubuntu
+          else
+            DEPLOY_USER=ec2-user
+          fi
+          DEPLOY_HOME=$(eval echo ~$DEPLOY_USER)
+
+          # Install git (Ubuntu minimal may not have it)
+          apt-get update -qq && apt-get install -y -qq git 2>/dev/null || dnf install -y git 2>/dev/null || true
+
+          # Clone imladris repo
           progress "cloning repo"
-          mkdir -p /home/ec2-user/repos
+          mkdir -p "$DEPLOY_HOME/repos"
           for i in $(seq 1 3); do
-            if git clone https://github.com/sethdf/imladris.git /home/ec2-user/repos/imladris; then
+            if git clone https://github.com/sethdf/imladris.git "$DEPLOY_HOME/repos/imladris"; then
               break
             fi
-            echo "git clone failed (attempt $i/3), retrying in 10s..."
-            rm -rf /home/ec2-user/repos/imladris
+            echo "git clone failed (attempt $i/3), retrying..."
+            rm -rf "$DEPLOY_HOME/repos/imladris"
             sleep 10
           done
-          chown -R ec2-user:ec2-user /home/ec2-user/repos
+          chown -R "$DEPLOY_USER:$DEPLOY_USER" "$DEPLOY_HOME/repos"
           progress "repo cloned"
 
-          # Run boot-only Ansible playbook (bake-phase roles already in AMI)
-          # --limit imladris-local: only target localhost (imladris inventory entry is for remote runs from Aurora)
-          progress "starting ansible"
-          cd /home/ec2-user/repos/imladris/ansible
-          sudo -u ec2-user /usr/local/bin/ansible-playbook \
-            site-boot.yml \
-            --limit imladris-local \
-            -e "tailscale_auth_key=$TAILSCALE_AUTH_KEY"
-          progress "ansible complete"
+          # Run deploy.sh — installs everything (Docker, Tailscale, Bun, Claude, etc.)
+          progress "starting deploy"
+          cd "$DEPLOY_HOME/repos/imladris"
+          IMLADRIS_USER=$DEPLOY_USER IMLADRIS_HOME=$DEPLOY_HOME IMLADRIS_HOSTNAME=imladris \
+            bash deploy.sh --tailscale-key "$TAILSCALE_AUTH_KEY"
+          progress "deploy complete"
       Tags:
         - Key: Name
           Value: Imladris
