@@ -16,16 +16,12 @@ else
   echo "ruflo already present: $(which ruflo)"
 fi
 
-# --- PAI upstream (reference clone — not a fork) ---
-# upstream: https://github.com/danielmiessler/PAI
-if [ ! -d "${REPOS_DIR}/PAI/.git" ]; then
-  echo "cloning danielmiessler/PAI -> ${REPOS_DIR}/PAI"
-  git clone https://github.com/danielmiessler/PAI.git "${REPOS_DIR}/PAI"
-else
-  echo "PAI upstream already cloned at ${REPOS_DIR}/PAI"
-fi
+# --- PAI upstream: not cloned automatically ---
+# Clone manually if you need to compare against upstream:
+#   git clone https://github.com/danielmiessler/PAI.git ~/repos/PAI
 
 # --- Add future external references here (Fabric etc.) ---
 # Pattern: check-if-present, then install/clone from upstream. Never vendor.
+# Example: go install github.com/danielmiessler/fabric@latest
 
 echo "done."
