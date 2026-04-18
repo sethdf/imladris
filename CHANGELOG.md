@@ -1,3 +1,8 @@
+## v2.8.4 (2026-04-18)
+
+### Fixes
+- add AWS CLI v2 install + mosh for Ubuntu
+
 ## v2.8.3 (2026-04-18)
 
 ### Fixes
