@@ -115,9 +115,9 @@ install_packages() {
 
   local packages=(git curl unzip tmux jq)
 
-  # Ubuntu/Debian extras — ET, npm (for Claude Code), Node.js
+  # Ubuntu/Debian extras — mosh (resilient terminal), npm (for Claude Code)
   case "$OS_ID" in
-    ubuntu|debian) packages+=(et nodejs npm) ;;
+    ubuntu|debian) packages+=(mosh nodejs npm) ;;
   esac
 
   pkg_install "${packages[@]}" 2>/dev/null || warn "Some packages failed to install"
@@ -191,25 +191,29 @@ install_tailscale() {
 }
 
 # ── Install Bun ──────────────────────────────────────────────────────────────
+# ── Helper: run command as the target user ───────────────────────────────────
+as_user() {
+  if [ "$(whoami)" = "$IMLADRIS_USER" ]; then
+    eval "$@"
+  else
+    su - "$IMLADRIS_USER" -c "$*"
+  fi
+}
+
 install_bun() {
   step "Bun"
   export PATH="${IMLADRIS_HOME}/.bun/bin:${PATH}"
 
-  if command -v bun >/dev/null 2>&1; then
-    ok "Bun already installed: $(bun --version)"
+  if as_user "bun --version" >/dev/null 2>&1; then
+    ok "Bun already installed: $(as_user 'bun --version')"
     return
   fi
   info "Installing Bun..."
-  # Download installer and run as target user with correct HOME
-  curl -fsSL https://bun.sh/install -o /tmp/bun-install.sh
-  chmod +x /tmp/bun-install.sh
-  sudo -u "$IMLADRIS_USER" env HOME="$IMLADRIS_HOME" BUN_INSTALL="$IMLADRIS_HOME/.bun" bash /tmp/bun-install.sh 2>/dev/null || true
-  rm -f /tmp/bun-install.sh
-  # Verify
+  as_user 'curl -fsSL https://bun.sh/install | bash' 2>/dev/null || true
   if [ -x "${IMLADRIS_HOME}/.bun/bin/bun" ]; then
-    ok "Bun installed: $(${IMLADRIS_HOME}/.bun/bin/bun --version 2>/dev/null)"
+    ok "Bun installed: $(as_user 'bun --version' 2>/dev/null)"
   else
-    warn "Bun install failed — install manually as ${IMLADRIS_USER}: curl -fsSL https://bun.sh/install | bash"
+    warn "Bun install failed — SSH in and run: curl -fsSL https://bun.sh/install | bash"
   fi
 }
 
@@ -220,20 +224,18 @@ install_claude() {
     warn "Skipped (--skip-claude)"
     return
   fi
-  if command -v claude >/dev/null 2>&1; then
+  if command -v claude >/dev/null 2>&1 || as_user "command -v claude" >/dev/null 2>&1; then
     ok "Claude Code already installed"
     return
   fi
   info "Installing Claude Code..."
-  # Try npm first (Ubuntu has it via nodejs package), fall back to bun
   if command -v npm >/dev/null 2>&1; then
     sudo npm install -g @anthropic-ai/claude-code 2>/dev/null && ok "Claude Code installed (npm)" && return || true
   fi
-  if command -v bun >/dev/null 2>&1; then
-    sudo -u "$IMLADRIS_USER" env HOME="$IMLADRIS_HOME" PATH="${IMLADRIS_HOME}/.bun/bin:$PATH" \
-      bun install -g @anthropic-ai/claude-code 2>/dev/null && ok "Claude Code installed (bun)" && return || true
+  if [ -x "${IMLADRIS_HOME}/.bun/bin/bun" ]; then
+    as_user "bun install -g @anthropic-ai/claude-code" 2>/dev/null && ok "Claude Code installed (bun)" && return || true
   fi
-  warn "Claude Code install needs npm. Run: sudo apt install nodejs npm && sudo npm install -g @anthropic-ai/claude-code"
+  warn "Claude Code: install manually — sudo npm install -g @anthropic-ai/claude-code"
 }
 
 # ── Install BWS CLI ──────────────────────────────────────────────────────────
@@ -286,7 +288,7 @@ setup_pai() {
   step "PAI Setup"
   cd "$IMLADRIS_REPO"
   if [ -x "modules/pai/link.sh" ]; then
-    sudo -u "$IMLADRIS_USER" env HOME="$IMLADRIS_HOME" bash modules/pai/link.sh 2>/dev/null || bash modules/pai/link.sh
+    as_user "cd $IMLADRIS_REPO && bash modules/pai/link.sh" 2>/dev/null || bash modules/pai/link.sh
     ok "PAI symlinks created"
   else
     warn "modules/pai/link.sh not found — skipping PAI setup"
@@ -504,7 +506,7 @@ print_summary() {
   echo -e "  ${GRAY}Repo:${RESET}       ${IMLADRIS_REPO}"
   echo -e "  ${GRAY}Postgres:${RESET}   localhost:5432"
   echo ""
-  echo -e "  ${GRAY}Connect:${RESET}    et ${IMLADRIS_USER}@${IMLADRIS_HOSTNAME}"
+  echo -e "  ${GRAY}Connect:${RESET}    mosh ${IMLADRIS_USER}@${IMLADRIS_HOSTNAME}"
   echo -e "  ${GRAY}Fallback:${RESET}   ssh ${IMLADRIS_USER}@${IMLADRIS_HOSTNAME}"
   echo -e "  ${GRAY}Start AI:${RESET}   claude"
   echo ""
