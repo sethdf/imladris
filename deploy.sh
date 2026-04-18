@@ -302,6 +302,29 @@ create_dirs() {
     info "Created /local/cache (no NVMe — using root filesystem)"
   fi
 
+  # Install tmux + mosh if missing
+  for pkg in tmux mosh; do
+    if ! command -v "$pkg" >/dev/null 2>&1; then
+      case "$OS_ID" in
+        amzn) sudo dnf install -y "$pkg" 2>/dev/null ;;
+        ubuntu|debian) sudo apt-get install -y "$pkg" 2>/dev/null ;;
+      esac
+    fi
+  done
+
+  # tmux auto-attach on SSH login
+  if ! grep -q "tmux auto-attach" "${IMLADRIS_HOME}/.bashrc" 2>/dev/null; then
+    cat >> "${IMLADRIS_HOME}/.bashrc" <<'TMUXRC'
+
+# BEGIN - tmux auto-attach
+if command -v tmux &>/dev/null && [ -n "$SSH_CONNECTION" ] && [ -z "$TMUX" ]; then
+  tmux attach -t work 2>/dev/null || tmux new -s work
+fi
+# END - tmux auto-attach
+TMUXRC
+    info "tmux auto-attach added to .bashrc"
+  fi
+
   ok "Directories ready"
 }
 
