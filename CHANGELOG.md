@@ -1,3 +1,9 @@
+## v2.8.5 (2026-04-21)
+
+### Fixes
+- resolve tool paths to f/domains/work/sources/
+- adapt dbt models to actual Airbyte column names
+
 ## v2.8.4 (2026-04-18)
 
 ### Fixes
