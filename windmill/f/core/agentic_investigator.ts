@@ -5,7 +5,7 @@
 //   - Runs the PAI Algorithm adapted for autonomous operation
 //   - Algorithm loaded at runtime from ~/.claude/PAI/Algorithm/ (auto-updates with PAI)
 //   - Phases: OBSERVE → THINK → INVESTIGATE → VERIFY → SUBMIT
-//   - 20 investigation tools from f/investigate/ executed via Windmill HTTP API
+//   - 20+ investigation tools from f/domains/work/sources/ executed via Windmill HTTP API
 //   - Max 8 rounds, nudge at round 6, parallel tool execution
 //   - Evidence chain + differential diagnosis validation before acceptance
 //   - Cost: ~$0.85/investigation at 5/day
@@ -959,11 +959,28 @@ const TOOLS: ToolConfiguration = {
 
 // ── Tool Execution ──
 
+// Tool path resolution — maps tool names to their current Windmill workspace paths.
+// Scripts were migrated from f/investigate/ to f/domains/work/sources/ in Phase 1a.
+// Some tools remain at legacy paths; virtual tools are handled in-code.
+const TOOL_PATH_OVERRIDES: Record<string, string> = {
+  query_vendors: "f/domains/work/infra/query_vendors",
+  search_alert_history: "f/investigate/search_alert_history",
+  triage_overview: "f/investigate/triage_overview",
+  load_domain_knowledge: "f/investigate/load_domain_knowledge",
+  context7_resolve_library: "f/investigate/context7_resolve_library",
+  context7_query_docs: "f/investigate/context7_query_docs",
+};
+
+function resolveToolPath(toolName: string): string {
+  if (TOOL_PATH_OVERRIDES[toolName]) return TOOL_PATH_OVERRIDES[toolName];
+  return `f/domains/work/sources/${toolName}`;
+}
+
 async function callWindmillTool(
   toolName: string,
   input: Record<string, unknown>,
 ): Promise<{ success: boolean; result: unknown; error?: string }> {
-  const scriptPath = `f/investigate/${toolName}`;
+  const scriptPath = resolveToolPath(toolName);
   const url = `${WM_BASE}/api/w/${WM_WORKSPACE}/jobs/run_wait_result/p/${scriptPath}`;
 
   try {
